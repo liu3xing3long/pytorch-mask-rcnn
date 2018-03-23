@@ -27,7 +27,9 @@ class Config(object):
     NAME = None  # Override in sub-classes
 
     # Path to pretrained imagenet model
-    IMAGENET_MODEL_PATH = os.path.join(os.getcwd(), "resnet50_imagenet.pth")
+    IMAGENET_PRETRAIN_MODEL_PATH = os.path.join(os.getcwd(), 'data', "resnet50_imagenet.pth")
+    # Path to pretrained weights file
+    COCO_PRETRAIN_MODEL_PATH = os.path.join(os.getcwd(), 'data', 'mask_rcnn_coco.pth')
 
     # NUMBER OF GPUs to use. For CPU use 0
     GPU_COUNT = 1
@@ -148,7 +150,7 @@ class Config(object):
     # train the RPN.
     USE_RPN_ROIS = True
 
-    def __init__(self):
+    def _set_value(self):
         """Set values of computed attributes."""
         # Effective batch size
         if self.GPU_COUNT > 0:
@@ -157,7 +159,7 @@ class Config(object):
             self.BATCH_SIZE = self.IMAGES_PER_GPU
 
         # Adjust step size based on batch size
-        self.STEPS_PER_EPOCH = self.BATCH_SIZE * self.STEPS_PER_EPOCH
+        self.STEPS_PER_EPOCH *= self.BATCH_SIZE
 
         # Input image size
         self.IMAGE_SHAPE = np.array(
