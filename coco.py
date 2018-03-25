@@ -76,6 +76,12 @@ class CocoConfig(Config):
         if self.NAME == 'hyli_default':
             self.IMAGES_PER_GPU = 16
             self.GPU_COUNT = 1
+        elif self.NAME == 'default2':
+            self.IMAGES_PER_GPU = 16
+            self.GPU_COUNT = 2
+        else:
+            print('invalid config name')
+            exit()
 
         self._set_value()
 
@@ -405,7 +411,7 @@ if __name__ == '__main__':
                         metavar="/path/to/logs/",
                         help='Logs and checkpoints directory (default=logs/)')
     parser.add_argument('--config',
-                        default='hyli_default')
+                        default='default2')
 
     parser.add_argument('--year', required=False,
                         default=DEFAULT_DATASET_YEAR,
@@ -448,7 +454,10 @@ if __name__ == '__main__':
     else:
         model = modellib.MaskRCNN(config=config, model_dir=args.logs)
     if config.GPU_COUNT:
-        model = model.cuda()
+        if config.GPU_COUNT == 1:
+            model = model.cuda()
+        else:
+            model = torch.nn.DataParallel(model).cuda()
 
     # Select weights file to load
     if args.model:
