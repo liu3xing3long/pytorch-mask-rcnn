@@ -80,7 +80,7 @@ class CocoConfig(Config):
             self.IMAGES_PER_GPU = 16
             self.GPU_COUNT = 2
         elif self.NAME == 'hyli2':
-            self.IMAGES_PER_GPU = 64
+            self.IMAGES_PER_GPU = 256
             self.GPU_COUNT = 1
         else:
             print('invalid config name')
