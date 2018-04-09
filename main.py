@@ -27,19 +27,10 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
     python3 coco.py evaluate --dataset=/path/to/coco/ --model=last
 """
 
-#import torch
+import torch
 import os
 import time
 import numpy as np
-# Download and install the Python COCO tools from https://github.com/waleedka/coco
-# That's a fork from the original https://github.com/pdollar/coco with a bug
-# fix for Python 3.
-# I submitted a pull request https://github.com/cocodataset/cocoapi/pull/50
-# If the PR is merged then use the original repo.
-# Note: Edit PythonAPI/Makefile and replace "python" with "python3".
-from pycocotools.coco import COCO
-from pycocotools.cocoeval import COCOeval
-from pycocotools import mask as maskUtils
 
 import zipfile
 import urllib.request
@@ -48,7 +39,18 @@ import shutil
 from config import Config
 import utils
 import model as modellib
-import torch
+
+from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
+from pycocotools import mask as maskUtils
+# Download and install the Python COCO tools from https://github.com/waleedka/coco
+# That's a fork from the original https://github.com/pdollar/coco with a bug
+# fix for Python 3.
+# I submitted a pull request https://github.com/cocodataset/cocoapi/pull/50
+# If the PR is merged then use the original repo.
+# Note: Edit PythonAPI/Makefile and replace "python" with "python3".
+
+
 
 # Root directory of the project
 DEFAULT_DATASET_PATH = os.path.join('/home/hongyang/dataset/coco')
@@ -95,7 +97,7 @@ class CocoConfig(Config):
 ############################################################
 class CocoDataset(utils.Dataset):
     def load_coco(self, dataset_dir, subset, year=DEFAULT_DATASET_YEAR, class_ids=None,
-                  class_map=None, return_coco=False, auto_download=False):
+                  class_map=None, return_coco_api=False, auto_download=False):
         """Load a subset of the COCO dataset.
         dataset_dir: The root directory of the COCO dataset.
         subset: What to load (train, val, minival, valminusminival)
@@ -144,7 +146,7 @@ class CocoDataset(utils.Dataset):
                 height=coco.imgs[i]["height"],
                 annotations=coco.loadAnns(coco.getAnnIds(
                     imgIds=[i], catIds=class_ids, iscrowd=None)))
-        if return_coco:
+        if return_coco_api:
             return coco
 
     def auto_download(self, dataDir, dataType, dataYear):
@@ -340,7 +342,7 @@ def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
     return results
 
 
-def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=None):
+def evaluate_coco(model, dataset, coco_api, eval_type="bbox", limit=0, image_ids=None):
     """Runs official COCO evaluation.
     dataset: A Dataset object with valiadtion data
     eval_type: "bbox" or "segm" for bounding box or segmentation evaluation
@@ -366,20 +368,24 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
 
         # Run detection
         t = time.time()
-        r = model.detect([image])[0]
+        res_raw = model.detect([image])[0]
         t_prediction += (time.time() - t)
 
         # Convert results to COCO format
         image_results = build_coco_results(dataset, coco_image_ids[i:i + 1],
-                                           r["rois"], r["class_ids"],
-                                           r["scores"], r["masks"])
+                                           res_raw["rois"], res_raw["class_ids"],
+                                           res_raw["scores"], res_raw["masks"])
         results.extend(image_results)
 
+        if i % 500 == 0 or i == len(image_ids):
+            print('eval progress (single gpu)\t{:4d}/{:4d} ...'.format(i, len(image_ids)))
+
     # Load results. This modifies results with additional attributes.
-    coco_results = coco.loadRes(results)
+    coco_results = coco_api.loadRes(results)
 
     # Evaluate
-    cocoEval = COCOeval(coco, coco_results, eval_type)
+    print('begin to evaluate ...')
+    cocoEval = COCOeval(coco_api, coco_results, eval_type)
     cocoEval.params.imgIds = coco_image_ids
     cocoEval.evaluate()
     cocoEval.accumulate()
@@ -400,14 +406,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Train Mask R-CNN on MS COCO.')
     parser.add_argument('--phase',
-                        default='train',
-                        help="'train' or 'evaluate' on MS COCO")
+                        default='evaluate',
+                        help='train or evaluate')
     parser.add_argument('--dataset_path', required=False,
                         default=DEFAULT_DATASET_PATH,
                         metavar="/path/to/coco/",
                         help='Directory of the MS-COCO dataset')
     parser.add_argument('--model',
-                        default='coco',
+                        default='last',
                         metavar="/path/to/weights.pth",
                         help="Path to weights .pth file or 'coco/imagenet/last'")
     parser.add_argument('--logs', required=False,
@@ -415,14 +421,14 @@ if __name__ == '__main__':
                         metavar="/path/to/logs/",
                         help='Logs and checkpoints directory (default=logs/)')
     parser.add_argument('--config',
-                        default='default2')
+                        default='hyli_default')
 
     parser.add_argument('--year', required=False,
                         default=DEFAULT_DATASET_YEAR,
                         metavar="<year>",
                         help='Year of the MS-COCO dataset (2014 or 2017) (default=2014)')
     parser.add_argument('--limit', required=False,
-                        default=500,
+                        default=-1,
                         metavar="<image count>",
                         help='Images to use for evaluation (default=500)')
     parser.add_argument('--download', required=False,
@@ -449,10 +455,11 @@ if __name__ == '__main__':
             GPU_COUNT = 1
             IMAGES_PER_GPU = 1
             DETECTION_MIN_CONFIDENCE = 0
-        config = InferenceConfig()
+        config = InferenceConfig(config_name=args.config)
     config.display()
 
     # Create model
+    print('building network ...')
     if args.phase == "train":
         model = modellib.MaskRCNN(config=config, model_dir=args.logs)
     else:
@@ -466,22 +473,25 @@ if __name__ == '__main__':
 
     # Select weights file to load
     if args.model:
-        if args.model.lower() == "coco":
-            # Start from COCO trained weights
+        if args.model.lower() == "coco_pretrain":
             model_path = config.COCO_PRETRAIN_MODEL_PATH
-        elif args.model.lower() == "imagenet":
-            # Start from ImageNet trained weights
+            suffix = 'coco pretrain'
+        elif args.model.lower() == "imagenet_pretrain":
             model_path = config.IMAGENET_PRETRAIN_MODEL_PATH
+            suffix = 'imagenet pretrain'
         elif args.model.lower() == "last":
             # Find last trained weights
             model_path = model.find_last()[1]
+            suffix = 'last trained model for resume or eval'
         else:
             model_path = args.model
+            suffix = 'designated'
     else:
         model_path = ""
+        suffix = 'empty!!!'
 
     # Load weights
-    print("Loading weights (empty, resumed or pre-trained) ", model_path)
+    print("Loading weights ({:s})\t{:s}".format(suffix, model_path))
     model.load_weights(model_path)
 
     # Train or evaluate
@@ -525,11 +535,12 @@ if __name__ == '__main__':
     elif args.phase == "evaluate":
         # Validation dataset
         dataset_val = CocoDataset()
-        coco = dataset_val.load_coco(args.dataset, "minival", year=args.year, return_coco=True, auto_download=args.download)
+        coco_api = dataset_val.load_coco(args.dataset_path, "minival", year=args.year,
+                                     return_coco_api=True, auto_download=args.download)
         dataset_val.prepare()
         print("Running COCO evaluation on {} images.".format(args.limit))
-        evaluate_coco(model, dataset_val, coco, "bbox", limit=int(args.limit))
-        evaluate_coco(model, dataset_val, coco, "segm", limit=int(args.limit))
+        evaluate_coco(model, dataset_val, coco_api, "bbox", limit=int(args.limit))
+        # evaluate_coco(model, dataset_val, coco, "segm", limit=int(args.limit))
     else:
         print("'{}' is not recognized. "
               "Use 'train' or 'evaluate'".format(args.phase))

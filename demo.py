@@ -9,7 +9,7 @@ import skimage.io
 import matplotlib
 import matplotlib.pyplot as plt
 
-import coco
+import main
 import utils
 import model as modellib
 import visualize
@@ -32,7 +32,7 @@ COCO_MODEL_PATH = os.path.join(ROOT_DIR, 'data', 'mask_rcnn_coco.pth')
 IMAGE_DIR = os.path.join(ROOT_DIR, "images")
 
 
-class InferenceConfig(coco.CocoConfig):
+class InferenceConfig(main.CocoConfig):
     # Set batch size to 1 since we'll be running inference on
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     # GPU_COUNT = 0 for CPU
