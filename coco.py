@@ -27,7 +27,7 @@ Usage: import the module (see Jupyter notebooks for examples), or run from
     python3 coco.py evaluate --dataset=/path/to/coco/ --model=last
 """
 
-import torch
+#import torch
 import os
 import time
 import numpy as np
@@ -48,6 +48,7 @@ import shutil
 from config import Config
 import utils
 import model as modellib
+import torch
 
 # Root directory of the project
 DEFAULT_DATASET_PATH = os.path.join('/home/hongyang/dataset/coco')
