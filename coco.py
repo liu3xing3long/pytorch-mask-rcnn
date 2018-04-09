@@ -460,7 +460,8 @@ if __name__ == '__main__':
         if config.GPU_COUNT == 1:
             model = model.cuda()
         else:
-            model = torch.nn.DataParallel(model).cuda()
+            model = model.cuda()
+            # model = torch.nn.DataParallel(model).cuda()
 
     # Select weights file to load
     if args.model:
