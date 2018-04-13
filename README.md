@@ -1,17 +1,17 @@
 # Mask-RCNN
-### A PyTorch Implementation, adaption from a public
-[repository](https://github.com/multimodallearning/pytorch-mask-rcnn).
+### A PyTorch Implementation, adaption from a public [repository](https://github.com/multimodallearning/pytorch-mask-rcnn).
 
 
 
 
 
 ```Shell
-This is a Pytorch implementation of [Mask R-CNN](https://arxiv.org/abs/1703.06870) that is in large parts based on Matterport's
-[Mask_RCNN](https://github.com/matterport/Mask_RCNN). Matterport's repository is an implementation on Keras and TensorFlow.
-The following parts of the README are excerpts from the Matterport README. Details on the requirements, training on MS COCO
-and detection results for this repository can be found at the end of the document. The Mask R-CNN model generates bounding boxes and segmentation masks for each instance of an object in the image. It's based
-on Feature Pyramid Network (FPN) and a ResNet101 backbone.
+This is a Pytorch implementation of [Mask R-CNN](https://arxiv.org/abs/1703.06870) that is in large parts
+based on Matterport's [Mask_RCNN](https://github.com/matterport/Mask_RCNN). Matterport's repository
+is an implementation on Keras and TensorFlow. The following parts of the README are excerpts from the Matterport README.
+Details on the requirements, training on MS COCO and detection results for this repository can be found
+at the end of the document. The Mask R-CNN model generates bounding boxes and segmentation masks
+for each instance of an object in the image. It's based on Feature Pyramid Network (FPN) and a ResNet101 backbone.
 ```
 
 
