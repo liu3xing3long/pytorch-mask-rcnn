@@ -1,6 +1,6 @@
 # Mask-RCNN
-### A PyTorch Implementation
-#### Adaption from a public [repo](https://github.com/multimodallearning/pytorch-mask-rcnn)
+### A PyTorch Implementation, adaption from a public
+[repository](https://github.com/multimodallearning/pytorch-mask-rcnn).
 
 
 
@@ -10,8 +10,7 @@
 This is a Pytorch implementation of [Mask R-CNN](https://arxiv.org/abs/1703.06870) that is in large parts based on Matterport's
 [Mask_RCNN](https://github.com/matterport/Mask_RCNN). Matterport's repository is an implementation on Keras and TensorFlow.
 The following parts of the README are excerpts from the Matterport README. Details on the requirements, training on MS COCO
-and detection results for this repository can be found at the end of the document.
-The Mask R-CNN model generates bounding boxes and segmentation masks for each instance of an object in the image. It's based
+and detection results for this repository can be found at the end of the document. The Mask R-CNN model generates bounding boxes and segmentation masks for each instance of an object in the image. It's based
 on Feature Pyramid Network (FPN) and a ResNet101 backbone.
 ```
 
@@ -58,35 +57,10 @@ It works on CPU or GPU and the result should look like this:
 ![](assets/park.png)
 
 ## Training on COCO
-Training and evaluation code is in coco.py. You can run it from the command
-line as such:
+See the    `script` folder to get a sense of training/evaluation commands in terminal.
 
-    # Train a new model starting from pre-trained COCO weights
-    python main.py train --dataset=/path/to/coco/ --model=coco
-
-    # Train a new model starting from ImageNet weights
-    python main.py train --dataset=/path/to/coco/ --model=imagenet
-
-    # Continue training a model that you had trained earlier
-    python main.py train --dataset=/path/to/coco/ --model=/path/to/weights.h5
-
-    # Continue training the last model you trained. This will find
-    # the last trained weights in the model directory.
-    python main.py train --dataset=/path/to/coco/ --model=last
-
-If you have not yet downloaded the COCO dataset you should run the command
-with the download option set:
-
-    # Train a new model starting from pre-trained COCO weights
-    python main.py train --dataset=/path/to/coco/ --model=coco --download=true
-
-You can also run the COCO evaluation code with:
-
-    # Run COCO evaluation on the last trained model
-    python main.py evaluate --dataset=/path/to/coco/ --model=last
-
-The training schedule, learning rate, and other parameters can be set in the `class'
-object of `CocoConfig' in `lib/config.py'.
+The training schedule, learning rate, and other parameters can be set in the `class`
+object of `CocoConfig` in `lib/config.py`.
 
 ## Results
 
