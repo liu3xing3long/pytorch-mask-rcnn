@@ -436,7 +436,7 @@ def evaluate_coco(model, dataset, coco_api, eval_type="bbox", limit=0, image_ids
                                            res_raw["scores"], res_raw["masks"])
         results.extend(image_results)
 
-        if i % 500 == 0 or i == len(image_ids):
+        if i % 1000 == 0 or i == len(image_ids):
             print('eval progress (single gpu)\t{:4d}/{:4d} ...'.format(i, len(image_ids)))
 
     # Load results. This modifies results with additional attributes.
