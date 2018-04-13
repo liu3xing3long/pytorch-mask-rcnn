@@ -1,21 +1,13 @@
+import os
+import random
+
+import matplotlib.pyplot as plt
+import skimage.io
 import torch
 
-import os
-import sys
-import random
-import math
-import numpy as np
-import skimage.io
-import matplotlib
-import matplotlib.pyplot as plt
-
 import main
-import utils
-import model as modellib
-import visualize
-
-
-
+from lib import model as modellib
+from tools import visualize
 
 # Root directory of the project
 ROOT_DIR = os.getcwd()
@@ -26,7 +18,7 @@ MODEL_DIR = os.path.join(ROOT_DIR, "logs")
 # Path to trained weights file
 # Download this file and place in the root of your
 # project (See README file for details)
-COCO_MODEL_PATH = os.path.join(ROOT_DIR, 'data', 'mask_rcnn_coco.pth')
+COCO_MODEL_PATH = os.path.join(ROOT_DIR, 'datasets', 'mask_rcnn_coco.pth')
 
 # Directory of images to run detection on
 IMAGE_DIR = os.path.join(ROOT_DIR, "images")

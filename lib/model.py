@@ -19,12 +19,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torch.utils.data
+import utils
+from roialign.roi_align.crop_and_resize import CropAndResizeFunction
 from torch.autograd import Variable
 
-import utils
-import visualize
-from nms.nms_wrapper import nms
-from roialign.roi_align.crop_and_resize import CropAndResizeFunction
+from lib.nms.nms_wrapper import nms
+from tools import visualize
 
 
 ############################################################
@@ -1138,7 +1138,7 @@ def compute_losses(rpn_match, rpn_bbox, rpn_class_logits, rpn_pred_bbox, target_
 
 def load_image_gt(dataset, config, image_id, augment=False,
                   use_mini_mask=False):
-    """Load and return ground truth data for an image (image, mask, bounding boxes).
+    """Load and return ground truth datasets for an image (image, mask, bounding boxes).
 
     augment: If true, apply random image augmentation. Currently, only
         horizontal flipping is offered.
@@ -1190,7 +1190,7 @@ def load_image_gt(dataset, config, image_id, augment=False,
     if use_mini_mask:
         mask = utils.minimize_mask(bbox, mask, config.MINI_MASK_SHAPE)
 
-    # Image meta data
+    # Image meta datasets
     image_meta = compose_image_meta(image_id, shape, window, active_class_ids)
 
     return image, image_meta, class_ids, bbox, mask
@@ -1310,7 +1310,7 @@ class Dataset(torch.utils.data.Dataset):
         """A generator that returns images and corresponding target class ids,
             bounding box deltas, and masks.
 
-            dataset: The Dataset object to pick data from
+            dataset: The Dataset object to pick datasets from
             config: The model config object
             shuffle: If True, shuffles the samples before every epoch
             augment: If True, applies image augmentation to images (currently only
@@ -1346,10 +1346,10 @@ class Dataset(torch.utils.data.Dataset):
         # Anchors
         # [anchor_count, (y1, x1, y2, x2)]
         self.anchors = utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,
-                                                 config.RPN_ANCHOR_RATIOS,
-                                                 config.BACKBONE_SHAPES,
-                                                 config.BACKBONE_STRIDES,
-                                                 config.RPN_ANCHOR_STRIDE)
+                                                      config.RPN_ANCHOR_RATIOS,
+                                                      config.BACKBONE_SHAPES,
+                                                      config.BACKBONE_STRIDES,
+                                                      config.RPN_ANCHOR_STRIDE)
 
     def __getitem__(self, image_index):
         # Get GT bounding boxes and masks for image.
@@ -1949,7 +1949,7 @@ class MaskRCNN(nn.Module):
 
         Returns 3 Numpy matricies:
         molded_images: [N, h, w, 3]. Images resized and normalized.
-        image_metas: [N, length of meta data]. Details about each image.
+        image_metas: [N, length of meta datasets]. Details about each image.
         windows: [N, (y1, x1, y2, x2)]. The portion of the image that has the
             original image (padding excluded).
         """

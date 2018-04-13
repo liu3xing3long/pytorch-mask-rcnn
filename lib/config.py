@@ -6,7 +6,6 @@ Copyright (c) 2017 Matterport, Inc.
 Licensed under the MIT License (see LICENSE for details)
 Written by Waleed Abdulla
 """
-
 import math
 import numpy as np
 import os
@@ -15,7 +14,6 @@ import os
 # Base Configuration Class
 # Don't use this class directly. Instead, sub-class it and override
 # the configurations you need to change.
-
 class Config(object):
     """Base configuration class. For custom configurations, create a
     sub-class that inherits from this one and override properties
@@ -27,9 +25,9 @@ class Config(object):
     NAME = None  # Override in sub-classes
 
     # Path to pretrained imagenet model
-    IMAGENET_PRETRAIN_MODEL_PATH = os.path.join(os.getcwd(), 'data', "resnet50_imagenet.pth")
+    IMAGENET_PRETRAIN_MODEL_PATH = os.path.join(os.getcwd(), 'datasets', "resnet50_imagenet.pth")
     # Path to pretrained weights file
-    COCO_PRETRAIN_MODEL_PATH = os.path.join(os.getcwd(), 'data', 'mask_rcnn_coco.pth')
+    COCO_PRETRAIN_MODEL_PATH = os.path.join(os.getcwd(), 'datasets', 'mask_rcnn_coco.pth')
 
     # NUMBER OF GPUs to use. For CPU use 0
     GPU_COUNT = 1
@@ -178,3 +176,32 @@ class Config(object):
             if not a.startswith("__") and not callable(getattr(self, a)):
                 print("{:30} {}".format(a, getattr(self, a)))
         print("\n")
+
+
+class CocoConfig(Config):
+    """Configuration for training on MS COCO.
+    Derives from the base Config class and overrides values specific
+    to the COCO dataset.
+    """
+
+    # Number of classes (including background)
+    NUM_CLASSES = 1 + 80  # COCO has 80 classes
+
+    def __init__(self, config_name, args):
+        super(CocoConfig, self).__init__()
+
+        self.DEVICE_ID = [int(x) for x in args[0].split(',')]
+        self.GPU_COUNT = len(self.DEVICE_ID)
+
+        self.NAME = config_name
+        if self.NAME == 'hyli_default' or self.NAME == 'hyli_default_old':
+            self.IMAGES_PER_GPU = 16
+            # self.GPU_COUNT = 1
+        elif self.NAME == 'all_new':
+            self.IMAGES_PER_GPU = 16
+
+        else:
+            # print('unknown config name!!!')
+            raise NameError('unknown config name!!!')
+
+        self._set_value()
