@@ -6,6 +6,10 @@ from torch.autograd import Variable
 import tools.utils as utils
 import torch.optim as optim
 from tools import visualize
+import time
+from datasets.pycocotools import mask as maskUtils
+from datasets.pycocotools.cocoeval import COCOeval
+import numpy as np
 
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
@@ -325,10 +329,8 @@ def compute_losses(rpn_match, rpn_bbox, inputs):
     return sum(outputs), outputs
 
 
-
-
 # TODO: the following is a long to-do list
-def valid_epoch(self, datagenerator, steps):
+def valid_epoch(model, datagenerator, steps):
 
     step, loss_sum = 0, 0
 
@@ -394,7 +396,66 @@ def valid_epoch(self, datagenerator, steps):
 
     return loss_sum
 
-def detect(self, images):
+
+############################################################
+#  COCO Evaluation
+############################################################
+def evaluate_coco(model, dataset, coco_api, eval_type="bbox", limit=0, image_ids=None):
+    """
+        Runs official COCO evaluation.
+        dataset:    A Dataset object with validation datasets
+        eval_type:  "bbox" or "segm" for bounding box or segmentation evaluation
+        limit:      the number of images to use for evaluation
+    """
+    # Pick COCO images from the dataset
+    image_ids = image_ids or dataset.image_ids
+
+    # Limit to a subset
+    if limit:
+        image_ids = image_ids[:limit]
+
+    # Get corresponding COCO image IDs.
+    coco_image_ids = [dataset.image_info[id]["id"] for id in image_ids]
+
+    t_prediction = 0
+    t_start = time.time()
+
+    results = []
+    for i, image_id in enumerate(image_ids):
+        # Load image
+        image = dataset.load_image(image_id)
+
+        # Run detection
+        t = time.time()
+        res_raw = detect(model, [image])[0]
+        t_prediction += (time.time() - t)
+
+        # Convert results to COCO format
+        image_results = build_coco_results(dataset, coco_image_ids[i:i + 1],
+                                           res_raw["rois"], res_raw["class_ids"],
+                                           res_raw["scores"], res_raw["masks"])
+        results.extend(image_results)
+
+        if i % 500 == 0 or i == len(image_ids):
+            print('eval progress (single gpu)\t{:4d}/{:4d} ...'.format(i, len(image_ids)))
+
+    # Load results. This modifies results with additional attributes.
+    coco_results = coco_api.loadRes(results)
+
+    # Evaluate
+    print('begin to evaluate ...')
+    cocoEval = COCOeval(coco_api, coco_results, eval_type)
+    cocoEval.params.imgIds = coco_image_ids
+    cocoEval.evaluate()
+    cocoEval.accumulate()
+    cocoEval.summarize()
+
+    print("Prediction time: {}. Average {}/image".format(
+        t_prediction, t_prediction / len(image_ids)))
+    print("Total time: ", time.time() - t_start)
+
+
+def detect(model, images):
     """
         'forward' method FOR EVALUATION ONLY.
         Runs the detection pipeline.
@@ -408,20 +469,14 @@ def detect(self, images):
     """
 
     # Mold inputs to format expected by the neural network
-    molded_images, image_metas, windows = self.mold_inputs(images)
+    molded_images, image_metas, windows = mold_inputs(model, images)
 
     # Convert images to torch tensor
     molded_images = torch.from_numpy(molded_images.transpose(0, 3, 1, 2)).float()
-
-    # To GPU
-    if self.config.GPU_COUNT:
-        molded_images = molded_images.cuda()
-
-    # Wrap in variable
-    molded_images = Variable(molded_images, volatile=True)
+    molded_images = Variable(molded_images.cuda(), volatile=True)
 
     # Run object detection
-    detections, mrcnn_mask = self.predict([molded_images, image_metas], mode='inference')
+    detections, mrcnn_mask = model([molded_images, image_metas], mode='inference')
 
     # Convert to numpy
     detections = detections.data.cpu().numpy()
@@ -431,8 +486,7 @@ def detect(self, images):
     results = []
     for i, image in enumerate(images):
         final_rois, final_class_ids, final_scores, final_masks =\
-            self.unmold_detections(detections[i], mrcnn_mask[i],
-                                   image.shape, windows[i])
+            unmold_detections(detections[i], mrcnn_mask[i], image.shape, windows[i])
         results.append({
             "rois": final_rois,
             "class_ids": final_class_ids,
@@ -441,7 +495,8 @@ def detect(self, images):
         })
     return results
 
-def mold_inputs(self, images):
+
+def mold_inputs(model, images):
     """
         FOR EVALUATION ONLY.
         Takes a list of images and modifies them to the format expected as an input to the neural network.
@@ -461,14 +516,14 @@ def mold_inputs(self, images):
         # TODO: move resizing to mold_image()
         molded_image, window, scale, padding = utils.resize_image(
             image,
-            min_dim=self.config.IMAGE_MIN_DIM,
-            max_dim=self.config.IMAGE_MAX_DIM,
-            padding=self.config.IMAGE_PADDING)
-        molded_image = utils.mold_image(molded_image, self.config)
+            min_dim=model.config.IMAGE_MIN_DIM,
+            max_dim=model.config.IMAGE_MAX_DIM,
+            padding=model.config.IMAGE_PADDING)
+        molded_image = utils.mold_image(molded_image, model.config)
         # Build image_meta
         image_meta = utils.compose_image_meta(
             0, image.shape, window,
-            np.zeros([self.config.NUM_CLASSES], dtype=np.int32))
+            np.zeros([model.config.NUM_CLASSES], dtype=np.int32))
         # Append
         molded_images.append(molded_image)
         windows.append(window)
@@ -479,7 +534,8 @@ def mold_inputs(self, images):
     windows = np.stack(windows)
     return molded_images, image_metas, windows
 
-def unmold_detections(self, detections, mrcnn_mask, image_shape, window):
+
+def unmold_detections(detections, mrcnn_mask, image_shape, window):
     """
         FOR EVALUATION ONLY.
         Reformats the detections of one image from the format of the neural
@@ -541,4 +597,28 @@ def unmold_detections(self, detections, mrcnn_mask, image_shape, window):
     return boxes, class_ids, scores, full_masks
 
 
+def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
+    """Arrange resutls to match COCO specs in http://cocodataset.org/#format
+    """
+    # If no results, return an empty list
+    if rois is None:
+        return []
 
+    results = []
+    for image_id in image_ids:
+        # Loop through detections
+        for i in range(rois.shape[0]):
+            class_id = class_ids[i]
+            score = scores[i]
+            bbox = np.around(rois[i], 1)
+            mask = masks[:, :, i]
+
+            result = {
+                "image_id": image_id,
+                "category_id": dataset.get_source_class_id(class_id, "coco"),
+                "bbox": [bbox[1], bbox[0], bbox[3] - bbox[1], bbox[2] - bbox[0]],
+                "score": score,
+                "segmentation": maskUtils.encode(np.asfortranarray(mask))
+            }
+            results.append(result)
+    return results

@@ -10,7 +10,6 @@ Written by Waleed Abdulla
 import argparse
 import torch
 import torch.utils.data
-from tools.utils import evaluate_coco
 import lib.network as network
 from lib.config import CocoConfig
 from lib.model import *
@@ -29,7 +28,7 @@ if __name__ == '__main__':
         description='Train Mask R-CNN on MS COCO.')
     parser.add_argument('--phase',
                         required=False,
-                        default='train',
+                        default='evaluate',
                         help='train or evaluate')
     parser.add_argument('--config',
                         required=False,
@@ -83,7 +82,7 @@ if __name__ == '__main__':
             GPU_COUNT = 1
             IMAGES_PER_GPU = 1
             DETECTION_MIN_CONFIDENCE = 0
-        config = InferenceConfig(config_name=args.config)
+        config = InferenceConfig(config_name=args.config, args=[args.device_id])
     config.display()
 
     # Create model
@@ -165,7 +164,8 @@ if __name__ == '__main__':
         coco_api = dataset_val.load_coco(args.dataset_path, "minival", year=args.year,
                                          return_coco_api=True, auto_download=args.download)
         dataset_val.prepare()
-        print("Running COCO evaluation on {} images.".format(args.limit))
+        val_num = dataset_val.num_images if args.limit == -1 else args.limit
+        print("Running COCO evaluation on {} images.".format(val_num))
         evaluate_coco(model, dataset_val, coco_api, "bbox", limit=int(args.limit))
         # evaluate_coco(model, dataset_val, coco, "segm", limit=int(args.limit))
     else:
