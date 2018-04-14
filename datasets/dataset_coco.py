@@ -11,6 +11,7 @@ import skimage.io
 
 import torch
 import tools.utils as utils
+import torch.utils.data
 
 
 ############################################################
@@ -473,4 +474,33 @@ class DatasetPack(torch.utils.data.Dataset):
     def __len__(self):
         return self.image_ids.shape[0]
 
+
+def get_data(config, args):
+
+    # validation data
+    dset_val = CocoDataset()
+    print('VAL:: load minival')
+    dset_val.load_coco(args.dataset_path, "minival", year=args.year, auto_download=args.download)
+    dset_val.prepare()
+
+    # train data
+    if not args.debug:
+        dset_train = CocoDataset()
+        print('TRAIN:: load train')
+        dset_train.load_coco(args.dataset_path, "train", year=args.year, auto_download=args.download)
+        print('TRAIN:: load val_minus_minival')
+        dset_train.load_coco(args.dataset_path, "valminusminival", year=args.year, auto_download=args.download)
+        dset_train.prepare()
+
+    # data generators
+    val_set = DatasetPack(dset_val, config, augment=True)
+    val_generator = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=True, num_workers=4)
+
+    if not args.debug:
+        train_set = DatasetPack(dset_train, config, augment=True)
+    else:
+        train_set = val_set
+    train_generator = torch.utils.data.DataLoader(train_set, batch_size=1, shuffle=True, num_workers=4)
+
+    return train_generator, val_generator
 

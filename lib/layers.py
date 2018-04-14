@@ -8,6 +8,7 @@ from lib.roialign.roi_align.crop_and_resize import CropAndResizeFunction
 from lib.nms.nms_wrapper import nms
 import torch.nn.functional as F
 
+
 ############################################################
 #  FPN Graph
 ############################################################
@@ -836,12 +837,12 @@ def refine_detections(rois, probs, deltas, window, config):
 
     # TODO: Filter out boxes with zero area
     # Filter out background boxes
-    keep_bool = class_ids>0
+    keep_bool = class_ids > 0
 
     # Filter out low confidence boxes
     if config.DETECTION_MIN_CONFIDENCE:
         keep_bool = keep_bool & (class_scores >= config.DETECTION_MIN_CONFIDENCE)
-    keep = torch.nonzero(keep_bool)[:,0]
+    keep = torch.nonzero(keep_bool)[:, 0]   # TODO: high priority; default_hyli_old, ep40 model
 
     # Apply per-class NMS
     pre_nms_class_ids = class_ids[keep.data]
@@ -863,7 +864,7 @@ def refine_detections(rois, probs, deltas, window, config):
         # Map indicies
         class_keep = keep[ixs[order[class_keep].data].data]
 
-        if i==0:
+        if i == 0:
             nms_keep = class_keep
         else:
             nms_keep = utils.unique1d(torch.cat((nms_keep, class_keep)))

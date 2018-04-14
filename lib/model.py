@@ -10,6 +10,7 @@ import time
 from datasets.pycocotools import mask as maskUtils
 from datasets.pycocotools.cocoeval import COCOeval
 import numpy as np
+from tools.utils import print_log
 
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
@@ -49,20 +50,14 @@ def train_model(model, train_generator, val_generator,
     """
     stage_name = layers.upper()
     if model.epoch > total_ep_curr_call:
-        print('skip {:s} stage ...'.format(stage_name))
+        print_log('skip {:s} stage ...'.format(stage_name), model.config.LOG_FILE)
         return None
 
     if layers in LAYER_REGEX.keys():
         layers = LAYER_REGEX[layers]
-
     model.set_trainable(layers)
-    # original data generator here. [MOVED to main.py]
-    # Train
-    utils.log('\nStarting at epoch {}. LR={}'.format(model.epoch+1, lr))
-    utils.log('Checkpoint Path: {}'.format(model.checkpoint_path))
 
-    # Optimizer object
-    # Add L2 Regularization
+    # Optimizer object, add L2 Regularization
     # Skip gamma and beta weights of batch normalization layers.
     trainables_wo_bn = [param for name, param in model.named_parameters() if param.requires_grad and not 'bn' in name]
     trainables_only_bn = [param for name, param in model.named_parameters() if param.requires_grad and 'bn' in name]
@@ -71,30 +66,38 @@ def train_model(model, train_generator, val_generator,
         {'params': trainables_only_bn}
     ], lr=lr, momentum=model.config.LEARNING_MOMENTUM)
 
+    # original data generator here. [MOVED to main.py]
+    print_log('\nStart training at epoch {:d}. LR={:.4f}'.format(model.epoch+1, lr), model.config.LOG_FILE)
+
     for epoch in range(model.epoch+1, total_ep_curr_call+1):
 
-        utils.log("Epoch {}/{}.".format(epoch, total_ep_curr_call))
+        epoch_str = "[Epoch {}/{}]".format(epoch, total_ep_curr_call)
+        print_log(epoch_str, model.config.LOG_FILE)
         # Training
         loss = train_epoch(model, train_generator, optimizer,
-                           model.config.STEPS_PER_EPOCH, stage_name)
+                           model.config.STEPS_PER_EPOCH, stage_name, epoch_str)
         # Validation
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
+
         # Statistics
         model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
-        visualize.plot_loss(model.loss_history, model.val_loss_history, save=True, log_dir=model.log_dir)
+        visualize.plot_loss(model.loss_history, model.val_loss_history,
+                            save=True, log_dir=model.log_dir)
         # Save model
-        torch.save(model.state_dict(), model.checkpoint_path.format(epoch))
+        model_file = model.checkpoint_path.format(epoch)
+        print_log('saving model: {:s}\n'.format(model_file), model.config.LOG_FILE)
+        torch.save(model.state_dict(), model_file)
 
     # update the epoch info
     model.epoch = total_ep_curr_call
 
 
-def train_epoch(model, datagenerator, optimizer, steps, stage_name):
+def train_epoch(model, datagenerator, optimizer, steps, stage_name, epoch_str):
     batch_count, loss_sum, step = 0, 0, 0
-    # while True:
+
     for inputs in datagenerator:
-        # inputs = next(datagenerator)
+
         batch_count += 1
 
         images = Variable(inputs[0]).cuda()
@@ -123,20 +126,16 @@ def train_epoch(model, datagenerator, optimizer, steps, stage_name):
             batch_count = 0
 
         # Progress
-        # if step % 1 == 0:
         if step % model.config.SHOW_INTERVAL == 0:
-            utils.printProgressBar(step+1, steps,
-                                   prefix="\t[stage {:s}]\t{}/{}".format(stage_name, step+1, steps),
-                                   suffix="Complete - loss: {:.5f} - rpn_class_loss: {:.5f} - rpn_bbox_loss: {:.5f} "
-                                          "- mrcnn_class_loss: {:.5f} - mrcnn_bbox_loss: {:.5f} "
-                                          "- mrcnn_mask_loss: {:.5f}".format(
-                                       loss.data.cpu()[0],
-                                       detailed_losses[0].data.cpu()[0],
-                                       detailed_losses[1].data.cpu()[0],
-                                       detailed_losses[2].data.cpu()[0],
-                                       detailed_losses[3].data.cpu()[0],
-                                       detailed_losses[4].data.cpu()[0]),
-                                   length=10)
+            print_log('[{:s}][stage {:s}]{:s}\t{}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
+                      '- mrcnn_cls: {:.5f} - mrcnn_bbox: {:.5f} - mrcnn_mask_loss: {:.5f}'.
+                      format(model.config.NAME, stage_name, epoch_str, step+1, steps,
+                             loss.data.cpu()[0],
+                             detailed_losses[0].data.cpu()[0],
+                             detailed_losses[1].data.cpu()[0],
+                             detailed_losses[2].data.cpu()[0],
+                             detailed_losses[3].data.cpu()[0],
+                             detailed_losses[4].data.cpu()[0]), model.config.LOG_FILE)
         # Statistics
         loss_sum += loss.data.cpu()[0]/steps
 
@@ -145,7 +144,6 @@ def train_epoch(model, datagenerator, optimizer, steps, stage_name):
         if step == steps-1:
             break
         step += 1
-
     return loss_sum
 
 
@@ -173,6 +171,37 @@ def find_last(config, model_dir):
         return dir_name, None
     checkpoint = os.path.join(dir_name, checkpoints[-1])
     return dir_name, checkpoint
+
+
+def select_weights(args, config, network):
+
+    if args.model:
+        if args.model.lower() == 'coco_pretrain':
+            model_path = config.PRETRAIN_COCO_MODEL_PATH
+            suffix = 'coco pretrain'
+        elif args.model.lower() == "imagenet_pretrain":
+            model_path = config.PRETRAIN_IMAGENET_MODEL_PATH
+            suffix = 'imagenet pretrain'
+        elif args.model.lower() == "last":
+            # Find last trained weights
+            model_path = find_last(config, args.results)[1]
+            suffix = 'last trained model for resume or eval'
+        else:
+            model_path = args.model
+            suffix = 'designated model'
+    else:
+        model_path = ''
+        suffix = 'empty!!! train from scratch!!!'
+    print('loading weights ({:s})\t{:s}\n'.format(suffix, model_path))
+
+    network.load_weights(model_path)
+    # add new info to config
+    config.START_MODEL_FILE = model_path
+    config.START_EPOCH = network.epoch
+    config.LOG_FILE = os.path.join(network.log_dir,
+                                   'log_start_ep_{:d}.txt'.format(network.epoch))
+    config.CHECKPOINT_PATH = network.checkpoint_path
+    return config
 
 
 ############################################################
@@ -329,72 +358,72 @@ def compute_losses(rpn_match, rpn_bbox, inputs):
     return sum(outputs), outputs
 
 
-# TODO: the following is a long to-do list
-def valid_epoch(model, datagenerator, steps):
-
-    step, loss_sum = 0, 0
-
-    for inputs in datagenerator:
-        images = inputs[0]
-        image_metas = inputs[1]
-        rpn_match = inputs[2]
-        rpn_bbox = inputs[3]
-        gt_class_ids = inputs[4]
-        gt_boxes = inputs[5]
-        gt_masks = inputs[6]
-
-        # image_metas as numpy array
-        image_metas = image_metas.numpy()
-
-        # Wrap in variables
-        images = Variable(images, volatile=True)
-        rpn_match = Variable(rpn_match, volatile=True)
-        rpn_bbox = Variable(rpn_bbox, volatile=True)
-        gt_class_ids = Variable(gt_class_ids, volatile=True)
-        gt_boxes = Variable(gt_boxes, volatile=True)
-        gt_masks = Variable(gt_masks, volatile=True)
-
-        # To GPU
-        if self.config.GPU_COUNT:
-            images = images.cuda()
-            rpn_match = rpn_match.cuda()
-            rpn_bbox = rpn_bbox.cuda()
-            gt_class_ids = gt_class_ids.cuda()
-            gt_boxes = gt_boxes.cuda()
-            gt_masks = gt_masks.cuda()
-
-        # Run object detection
-        rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, \
-            target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
-            self.predict([images, image_metas, gt_class_ids, gt_boxes, gt_masks], mode='training')
-
-        if not target_class_ids.size():
-            continue
-
-        # Compute losses
-        rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss = \
-            compute_losses(rpn_match, rpn_bbox, rpn_class_logits, rpn_pred_bbox, target_class_ids,
-                           mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask)
-        loss = rpn_class_loss + rpn_bbox_loss + mrcnn_class_loss + mrcnn_bbox_loss + mrcnn_mask_loss
-
-        # Progress
-        utils.printProgressBar(step + 1, steps, prefix="\t{}/{}".format(step + 1, steps),
-                               suffix="Complete - loss: {:.5f} - rpn_class_loss: {:.5f} - rpn_bbox_loss: {:.5f} - "
-                                      "mrcnn_class_loss: {:.5f} - mrcnn_bbox_loss: {:.5f} - "
-                                      "mrcnn_mask_loss: {:.5f}".format(
-                                   loss.data.cpu()[0],
-                                   rpn_class_loss.data.cpu()[0], rpn_bbox_loss.data.cpu()[0],
-                                   mrcnn_class_loss.data.cpu()[0], mrcnn_bbox_loss.data.cpu()[0],
-                                   mrcnn_mask_loss.data.cpu()[0]), length=10)
-        # Statistics
-        loss_sum += loss.data.cpu()[0]/steps
-
-        # Break after 'steps' steps
-        if step == steps-1:
-            break
-        step += 1
-
-    return loss_sum
+# TODO
+# def valid_epoch(model, datagenerator, steps):
+#
+#     step, loss_sum = 0, 0
+#
+#     for inputs in datagenerator:
+#         images = inputs[0]
+#         image_metas = inputs[1]
+#         rpn_match = inputs[2]
+#         rpn_bbox = inputs[3]
+#         gt_class_ids = inputs[4]
+#         gt_boxes = inputs[5]
+#         gt_masks = inputs[6]
+#
+#         # image_metas as numpy array
+#         image_metas = image_metas.numpy()
+#
+#         # Wrap in variables
+#         images = Variable(images, volatile=True)
+#         rpn_match = Variable(rpn_match, volatile=True)
+#         rpn_bbox = Variable(rpn_bbox, volatile=True)
+#         gt_class_ids = Variable(gt_class_ids, volatile=True)
+#         gt_boxes = Variable(gt_boxes, volatile=True)
+#         gt_masks = Variable(gt_masks, volatile=True)
+#
+#         # To GPU
+#         if self.config.GPU_COUNT:
+#             images = images.cuda()
+#             rpn_match = rpn_match.cuda()
+#             rpn_bbox = rpn_bbox.cuda()
+#             gt_class_ids = gt_class_ids.cuda()
+#             gt_boxes = gt_boxes.cuda()
+#             gt_masks = gt_masks.cuda()
+#
+#         # Run object detection
+#         rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, \
+#             target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
+#             self.predict([images, image_metas, gt_class_ids, gt_boxes, gt_masks], mode='training')
+#
+#         if not target_class_ids.size():
+#             continue
+#
+#         # Compute losses
+#         rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss = \
+#             compute_losses(rpn_match, rpn_bbox, rpn_class_logits, rpn_pred_bbox, target_class_ids,
+#                            mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask)
+#         loss = rpn_class_loss + rpn_bbox_loss + mrcnn_class_loss + mrcnn_bbox_loss + mrcnn_mask_loss
+#
+#         # Progress
+#         utils.printProgressBar(step + 1, steps, prefix="\t{}/{}".format(step + 1, steps),
+#                                suffix="Complete - loss: {:.5f} - rpn_class_loss: {:.5f} - rpn_bbox_loss: {:.5f} - "
+#                                       "mrcnn_class_loss: {:.5f} - mrcnn_bbox_loss: {:.5f} - "
+#                                       "mrcnn_mask_loss: {:.5f}".format(
+#                                    loss.data.cpu()[0],
+#                                    rpn_class_loss.data.cpu()[0], rpn_bbox_loss.data.cpu()[0],
+#                                    mrcnn_class_loss.data.cpu()[0], mrcnn_bbox_loss.data.cpu()[0],
+#                                    mrcnn_mask_loss.data.cpu()[0]), length=10)
+#         # Statistics
+#         loss_sum += loss.data.cpu()[0]/steps
+#
+#         # Break after 'steps' steps
+#         if step == steps-1:
+#             break
+#         step += 1
+#
+#     return loss_sum
 
 
 ############################################################
@@ -436,8 +465,9 @@ def evaluate_coco(model, dataset, coco_api, eval_type="bbox", limit=0, image_ids
                                            res_raw["scores"], res_raw["masks"])
         results.extend(image_results)
 
-        if i % 1000 == 0 or i == len(image_ids):
-            print('eval progress (single gpu)\t{:4d}/{:4d} ...'.format(i, len(image_ids)))
+        if i % (model.config.SHOW_INTERVAL*10) == 0 or i == len(image_ids):
+            print_log('[{:s}] eval progress (single gpu)\t{:4d}/{:4d} ...'.
+                      format(model.config.NAME, i, len(image_ids)), model.config.LOG_FILE)
 
     # Load results. This modifies results with additional attributes.
     coco_results = coco_api.loadRes(results)
@@ -453,6 +483,9 @@ def evaluate_coco(model, dataset, coco_api, eval_type="bbox", limit=0, image_ids
     print("Prediction time: {}. Average {}/image".format(
         t_prediction, t_prediction / len(image_ids)))
     print("Total time: ", time.time() - t_start)
+    print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
+              format(model.config.NAME, model.config.START_MODEL_FILE, cocoEval.stats[0]),
+              model.config.LOG_FILE)
 
 
 def detect(model, images):

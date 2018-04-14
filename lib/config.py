@@ -1,14 +1,7 @@
-"""
-Mask R-CNN
-Base Configurations class.
-
-Copyright (c) 2017 Matterport, Inc.
-Licensed under the MIT License (see LICENSE for details)
-Written by Waleed Abdulla
-"""
 import math
 import numpy as np
 import os
+from tools.utils import print_log
 
 
 # Base Configuration Class
@@ -47,6 +40,7 @@ class Config(object):
     # a lot of time on validation stats.
     STEPS_PER_EPOCH = 1000
 
+    # TODO: deprecated already
     # Number of validation steps to run at the end of every training epoch.
     # A bigger number improves accuracy of validation stats, but slows
     # down the training.
@@ -158,7 +152,6 @@ class Config(object):
             self.BATCH_SIZE = self.IMAGES_PER_GPU * self.GPU_COUNT
         else:
             self.BATCH_SIZE = self.IMAGES_PER_GPU
-
         # Adjust step size based on batch size
         self.STEPS_PER_EPOCH *= self.BATCH_SIZE
 
@@ -172,13 +165,16 @@ class Config(object):
               int(math.ceil(self.IMAGE_SHAPE[1] / stride))]
              for stride in self.BACKBONE_STRIDES])
 
-    def display(self):
+        if self.DEBUG:
+            self.SHOW_INTERVAL = 1
+
+    def display(self, log_file):
         """Display Configuration values."""
-        print("\nConfigurations:")
+        print_log("\nConfigurations:", file=log_file, init=True)
         for a in dir(self):
             if not a.startswith("__") and not callable(getattr(self, a)):
-                print("{:30} {}".format(a, getattr(self, a)))
-        print("\n")
+                print_log("{:30} {}".format(a, getattr(self, a)), log_file)
+        print_log("\n", log_file)
 
 
 class CocoConfig(Config):
@@ -193,7 +189,9 @@ class CocoConfig(Config):
     def __init__(self, config_name, args):
         super(CocoConfig, self).__init__()
 
-        self.DEVICE_ID = [int(x) for x in args[0].split(',')]
+        self.PHASE = args.phase
+        self.DEBUG = args.debug
+        self.DEVICE_ID = [int(x) for x in args.device_id.split(',')]
         self.GPU_COUNT = len(self.DEVICE_ID)
 
         self.NAME = config_name
