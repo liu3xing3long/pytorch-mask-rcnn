@@ -214,6 +214,9 @@ class CocoConfig(Config):
             self.IMAGE_MAX_DIM = 320
             self.USE_MINI_MASK = False
             # self.MINI_MASK_SHAPE = (28, 28)
+        elif self.NAME == 'all_new_2':
+            self.BATCH_SIZE = 8
+            self.MODEL_FILE_CHOICE = 'imagenet_pretrain'
         else:
             # print('unknown config name!!!')
             raise NameError('unknown config name!!!')

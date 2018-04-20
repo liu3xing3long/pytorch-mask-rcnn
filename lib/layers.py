@@ -505,7 +505,7 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
         image_area = image_area.cuda()
     roi_level = 4 + utils.log2(torch.sqrt(h*w)/(224.0/torch.sqrt(image_area)))
     roi_level = roi_level.round().int()
-    roi_level = roi_level.clamp(2,5)
+    roi_level = roi_level.clamp(2, 5)
 
     # Loop through levels and apply ROI pooling to each. P2 to P5.
     pooled = []
