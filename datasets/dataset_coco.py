@@ -12,6 +12,7 @@ import skimage.io
 import torch
 import tools.utils as utils
 import torch.utils.data
+from torch.autograd import Variable
 
 
 ############################################################
@@ -220,8 +221,7 @@ class CocoDataset(Dataset):
                 height=coco.imgs[i]["height"],
                 annotations=coco.loadAnns(coco.getAnnIds(
                     imgIds=[i], catIds=class_ids, iscrowd=None)))
-        if return_coco_api:
-            return coco
+        return coco
 
     def auto_download(self, dataDir, dataType, dataYear):
         """Download the COCO dataset/annotations if requested.
@@ -390,29 +390,27 @@ class DatasetPack(torch.utils.data.Dataset):
         """A generator that returns images and corresponding target class ids,
             bounding box deltas, and masks.
 
-            dataset: The Dataset object to pick datasets from
-            config: The model config object
-            shuffle: If True, shuffles the samples before every epoch
-            augment: If True, applies image augmentation to images (currently only
-                     horizontal flips are supported)
+            dataset:    The Dataset object to pick datasets from
+            config:     The model config object
+            shuffle:    If True, shuffles the samples before every epoch
+            augment:    If True, applies image augmentation to images (currently only horizontal flips are supported)
 
             Returns a Python generator. Upon calling next() on it, the
-            generator returns two lists, inputs and outputs. The containtes
+            generator returns two lists, inputs and outputs. The containers
             of the lists differs depending on the received arguments:
             inputs list:
-            - images: [batch, H, W, C]
-            - image_metas: [batch, size of image meta]
-            - rpn_match: [batch, N] Integer (1=positive anchor, -1=negative, 0=neutral)
-            - rpn_bbox: [batch, N, (dy, dx, log(dh), log(dw))] Anchor bbox deltas.
+            - images:       [batch, H, W, C]
+            - image_metas:  [batch, size of image meta]
+            - rpn_match:    [batch, N] Integer (1=positive anchor, -1=negative, 0=neutral)
+            - rpn_bbox:     [batch, N, (dy, dx, log(dh), log(dw))] Anchor bbox deltas.
             - gt_class_ids: [batch, MAX_GT_INSTANCES] Integer class IDs
-            - gt_boxes: [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)]
-            - gt_masks: [batch, height, width, MAX_GT_INSTANCES]. The height and width
-                        are those of the image unless use_mini_mask is True, in which
-                        case they are defined in MINI_MASK_SHAPE.
+            - gt_boxes:     [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)]
+            - gt_masks:     [batch, height, width, MAX_GT_INSTANCES]. The height and width
+                                are those of the image unless use_mini_mask is True, in which
+                                case they are defined in MINI_MASK_SHAPE.
 
             outputs list: Usually empty in regular training. But if detection_targets
-                is True then the outputs list contains target class_ids, bbox deltas,
-                and masks.
+                is True then the outputs list contains target class_ids, bbox deltas, and masks.
             """
         self.b = 0  # batch item index
         self.image_index = -1
@@ -436,7 +434,7 @@ class DatasetPack(torch.utils.data.Dataset):
         image_id = self.image_ids[image_index]
         image, image_metas, gt_class_ids, gt_boxes, gt_masks = \
             utils.load_image_gt(self.dataset, self.config, image_id, augment=self.augment,
-                          use_mini_mask=self.config.USE_MINI_MASK)
+                                use_mini_mask=self.config.USE_MINI_MASK)
 
         # Skip images that have no instances. This can happen in cases
         # where we train on a subset of classes and the image doesn't
@@ -445,8 +443,7 @@ class DatasetPack(torch.utils.data.Dataset):
             return None
 
         # RPN Targets
-        rpn_match, rpn_bbox = utils.build_rpn_targets(image.shape, self.anchors,
-                                                gt_class_ids, gt_boxes, self.config)
+        rpn_match, rpn_bbox = utils.build_rpn_targets(self.anchors, gt_class_ids, gt_boxes, self.config)
 
         # If more instances than fits in the array, sub-sample from them.
         if gt_boxes.shape[0] > self.config.MAX_GT_INSTANCES:
@@ -460,7 +457,7 @@ class DatasetPack(torch.utils.data.Dataset):
         rpn_match = rpn_match[:, np.newaxis]
         images = utils.mold_image(image.astype(np.float32), self.config)
 
-        # Convert
+        # Convert to Tensors
         images = torch.from_numpy(images.transpose(2, 0, 1)).float()
         image_metas = torch.from_numpy(image_metas)
         rpn_match = torch.from_numpy(rpn_match)
@@ -475,16 +472,36 @@ class DatasetPack(torch.utils.data.Dataset):
         return self.image_ids.shape[0]
 
 
+def detection_collate(batch):
+    """Custom collate function for dealing with batches of images that have a different
+    number of associated object annotations (bounding boxes).
+    """
+    imgs = []
+    imgs_metas = []
+    rpn_match, rpn_bbox = [], []
+    gt_class_ids, gt_boxes, gt_masks = [], [], []
+    for sample in batch:
+        imgs.append(sample[0])
+        imgs_metas.append(sample[1])
+        rpn_match.append(sample[2])
+        rpn_bbox.append(sample[3])
+        gt_class_ids.append(sample[4])
+        gt_boxes.append(sample[5])
+        gt_masks.append(sample[6])
+    return torch.stack(imgs, 0), torch.stack(imgs_metas, 0), \
+           torch.stack(rpn_match, 0), torch.stack(rpn_bbox, 0), gt_class_ids, gt_boxes, gt_masks
+
+
 def get_data(config, args):
 
     # validation data
     dset_val = CocoDataset()
     print('VAL:: load minival')
-    dset_val.load_coco(args.dataset_path, "minival", year=args.year, auto_download=args.download)
+    val_coco_api = dset_val.load_coco(args.dataset_path, "minival", year=args.year, auto_download=args.download)
     dset_val.prepare()
 
     # train data
-    if not args.debug:
+    if not args.debug and args.phase == 'training':
         dset_train = CocoDataset()
         print('TRAIN:: load train')
         dset_train.load_coco(args.dataset_path, "train", year=args.year, auto_download=args.download)
@@ -494,13 +511,24 @@ def get_data(config, args):
 
     # data generators
     val_set = DatasetPack(dset_val, config, augment=True)
-    val_generator = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=True, num_workers=4)
 
-    if not args.debug:
-        train_set = DatasetPack(dset_train, config, augment=True)
+    if args.phase == 'training':
+        if not args.debug:
+            train_set = DatasetPack(dset_train, config, augment=True)
+        else:
+            train_set = val_set
+
+    if config.old_scheme:
+        # old stuff
+        val_generator = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=True, num_workers=4)
+        train_generator = None if args.phase == 'inference' else \
+            torch.utils.data.DataLoader(train_set, batch_size=1, shuffle=True, num_workers=4)
     else:
-        train_set = val_set
-    train_generator = torch.utils.data.DataLoader(train_set, batch_size=1, shuffle=True, num_workers=4)
+        val_generator = torch.utils.data.DataLoader(val_set, batch_size=config.BATCH_SIZE,
+                                                    shuffle=True, num_workers=4, collate_fn=detection_collate)
+        train_generator = None if args.phase == 'inference' else \
+            torch.utils.data.DataLoader(train_set, batch_size=config.BATCH_SIZE,
+                                        shuffle=True, num_workers=4, collate_fn=detection_collate)
 
-    return train_generator, val_generator
+    return train_generator, val_generator, val_coco_api
 

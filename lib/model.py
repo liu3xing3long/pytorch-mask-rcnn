@@ -1,16 +1,13 @@
 import os
-import torch
-import torch.nn.functional as F
-import torch.utils.data
-from torch.autograd import Variable
-import tools.utils as utils
 import torch.optim as optim
 from tools import visualize
 import time
+from lib.layers import *
 from datasets.pycocotools import mask as maskUtils
 from datasets.pycocotools.cocoeval import COCOeval
 import numpy as np
 from tools.utils import print_log
+import torch.nn as nn
 
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
@@ -27,18 +24,19 @@ LAYER_REGEX = {
 }
 
 
-def train_model(model, train_generator, val_generator,
-                lr, total_ep_curr_call, layers):
+def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_call, layers):
     """
-    train_dataset, val_dataset:
-            Training and validation Dataset objects.
-    learning_rate:
+    Args:
+        input_model:
+        train_generator:
+        val_generator:
+        lr:
             The learning rate to train with
-    epochs:
+        total_ep_curr_call:
             Number of training epochs. Note that previous training epochs
             are considered to be done alreay, so this actually determines
             the epochs to train in total rather than in this particaular call.
-    layers:
+        layers:
             Allows selecting wich layers to train. It can be:
                 - A regular expression to match layer names to train
                 - One of these predefined values:
@@ -49,6 +47,12 @@ def train_model(model, train_generator, val_generator,
                 5+: Train Resnet stage 5 and up
     """
     stage_name = layers.upper()
+    if isinstance(input_model, nn.DataParallel):
+        model = input_model.module
+    else:
+        # single-gpu
+        model = input_model
+
     if model.epoch > total_ep_curr_call:
         print_log('skip {:s} stage ...'.format(stage_name), model.config.LOG_FILE)
         return None
@@ -59,7 +63,7 @@ def train_model(model, train_generator, val_generator,
 
     # Optimizer object, add L2 Regularization
     # Skip gamma and beta weights of batch normalization layers.
-    trainables_wo_bn = [param for name, param in model.named_parameters() if param.requires_grad and not 'bn' in name]
+    trainables_wo_bn = [param for name, param in model.named_parameters() if param.requires_grad and 'bn' not in name]
     trainables_only_bn = [param for name, param in model.named_parameters() if param.requires_grad and 'bn' in name]
     optimizer = optim.SGD([
         {'params': trainables_wo_bn, 'weight_decay': model.config.WEIGHT_DECAY},
@@ -74,8 +78,12 @@ def train_model(model, train_generator, val_generator,
         epoch_str = "[Epoch {}/{}]".format(epoch, total_ep_curr_call)
         print_log(epoch_str, model.config.LOG_FILE)
         # Training
-        loss = train_epoch(model, train_generator, optimizer,
-                           model.config.STEPS_PER_EPOCH, stage_name, epoch_str)
+        if model.config.old_scheme:
+            loss = train_epoch(input_model, train_generator, optimizer,
+                               model.config.STEPS_PER_EPOCH, stage_name, epoch_str)
+        else:
+            loss = train_epoch_new(input_model, train_generator, optimizer,
+                                   stage_name=stage_name, epoch_str=epoch_str, config=model.config)
         # Validation
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
@@ -90,7 +98,71 @@ def train_model(model, train_generator, val_generator,
         torch.save(model.state_dict(), model_file)
 
     # update the epoch info
+    # TODO: check here
     model.epoch = total_ep_curr_call
+
+
+def train_epoch_new(input_model, data_loader, optimizer, **args):
+    """new training flow scheme"""
+    if isinstance(input_model, nn.DataParallel):
+        model = input_model.module
+    else:
+        # single-gpu
+        model = input_model
+
+    loss_sum = 0
+    config = args['config']
+    data_iterator = iter(data_loader)
+    iter_per_epoch = math.ceil(len(data_loader)/config.BATCH_SIZE)
+
+    for iter_ind in range(iter_per_epoch):
+
+        inputs = next(data_iterator)
+
+        images = Variable(inputs[0].cuda())
+        # image_metas = inputs[1].numpy()
+        image_metas = Variable(inputs[1].cuda())
+        rpn_match = Variable(inputs[2].cuda())
+        rpn_bbox = Variable(inputs[3].cuda())
+        curr_bs = images.size(0)
+        for i in range(curr_bs):
+            inputs[4][i] = Variable(inputs[4][i].expand(config.GPU_COUNT, inputs[4][i].size(0)).cuda())
+            inputs[5][i] = Variable(inputs[5][i].expand(config.GPU_COUNT,
+                                                        inputs[5][i].size(0), inputs[5][i].size(1)).cuda())
+            inputs[6][i] = Variable(inputs[6][i].expand(config.GPU_COUNT,
+                                                        inputs[6][i].size(0),
+                                                        inputs[6][i].size(1), inputs[6][i].size(2)).cuda())
+        gt_class_ids = inputs[4]
+        gt_boxes = inputs[5]
+        gt_masks = inputs[6]
+
+        # Run object detection
+        outputs = \
+            input_model([images, image_metas, gt_class_ids, gt_boxes, gt_masks], mode='training')
+
+        # Compute losses
+        loss, detailed_losses = compute_losses(rpn_match, rpn_bbox, outputs)
+
+        optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm(input_model.parameters(), 5.0)
+        optimizer.step()
+
+        # Progress
+        if iter_ind % model.config.SHOW_INTERVAL == 0:
+            print_log('[{:s}][stage {:s}]{:s}\t{}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
+                      '- mrcnn_cls: {:.5f} - mrcnn_bbox: {:.5f} - mrcnn_mask_loss: {:.5f}'.
+                      format(model.config.NAME, args['stage_name'], args['epoch_str'], iter_ind+1, iter_per_epoch,
+                             loss.data.cpu()[0],
+                             detailed_losses[0].data.cpu()[0],
+                             detailed_losses[1].data.cpu()[0],
+                             detailed_losses[2].data.cpu()[0],
+                             detailed_losses[3].data.cpu()[0],
+                             detailed_losses[4].data.cpu()[0]), model.config.LOG_FILE)
+        # Statistics
+        loss_sum += loss.data.cpu()[0]/iter_per_epoch
+
+    return loss_sum
 
 
 def train_epoch(model, datagenerator, optimizer, steps, stage_name, epoch_str):
@@ -102,9 +174,9 @@ def train_epoch(model, datagenerator, optimizer, steps, stage_name, epoch_str):
 
         images = Variable(inputs[0]).cuda()
         image_metas = inputs[1].numpy()
-        gt_class_ids = Variable(inputs[4]).cuda()
-        gt_boxes = Variable(inputs[5]).cuda()
-        gt_masks = Variable(inputs[6]).cuda()
+        gt_class_ids = inputs[4]
+        gt_boxes = inputs[5]
+        gt_masks = inputs[6]
 
         # Run object detection
         outputs = \
@@ -175,19 +247,20 @@ def find_last(config, model_dir):
 
 def select_weights(args, config, network):
 
-    if args.model:
-        if args.model.lower() == 'coco_pretrain':
+    choice = config.MODEL_FILE_CHOICE
+    if choice:
+        if choice.lower() == 'coco_pretrain':
             model_path = config.PRETRAIN_COCO_MODEL_PATH
             suffix = 'coco pretrain'
-        elif args.model.lower() == "imagenet_pretrain":
+        elif choice.lower() == "imagenet_pretrain":
             model_path = config.PRETRAIN_IMAGENET_MODEL_PATH
             suffix = 'imagenet pretrain'
-        elif args.model.lower() == "last":
+        elif choice.lower() == "last":
             # Find last trained weights
             model_path = find_last(config, args.results)[1]
             suffix = 'last trained model for resume or eval'
         else:
-            model_path = args.model
+            model_path = choice
             suffix = 'designated model'
     else:
         model_path = ''
@@ -204,152 +277,14 @@ def select_weights(args, config, network):
     return config
 
 
-############################################################
-#  Loss Functions
-############################################################
-def compute_rpn_class_loss(rpn_match, rpn_class_logits):
-    """RPN anchor classifier loss.
-
-    rpn_match: [batch, anchors, 1]. Anchor match type. 1=positive,
-               -1=negative, 0=neutral anchor.
-    rpn_class_logits: [batch, anchors, 2]. RPN classifier logits for FG/BG.
-    """
-
-    # Squeeze last dim to simplify
-    rpn_match = rpn_match.squeeze(2)
-
-    # Get anchor classes. Convert the -1/+1 match to 0/1 values.
-    anchor_class = (rpn_match == 1).long()
-
-    # Positive and Negative anchors contribute to the loss,
-    # but neutral anchors (match value = 0) don't.
-    indices = torch.nonzero(rpn_match != 0)
-
-    # Pick rows that contribute to the loss and filter out the rest.
-    rpn_class_logits = rpn_class_logits[indices.data[:,0],indices.data[:,1],:]
-    anchor_class = anchor_class[indices.data[:,0],indices.data[:,1]]
-
-    # Crossentropy loss
-    loss = F.cross_entropy(rpn_class_logits, anchor_class)
-
-    return loss
-
-
-def compute_rpn_bbox_loss(target_bbox, rpn_match, rpn_bbox):
-    """Return the RPN bounding box loss graph.
-
-    target_bbox: [batch, max positive anchors, (dy, dx, log(dh), log(dw))].
-        Uses 0 padding to fill in unsed bbox deltas.
-    rpn_match: [batch, anchors, 1]. Anchor match type. 1=positive,
-               -1=negative, 0=neutral anchor.
-    rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
-    """
-
-    # Squeeze last dim to simplify
-    rpn_match = rpn_match.squeeze(2)
-
-    # Positive anchors contribute to the loss, but negative and
-    # neutral anchors (match value of 0 or -1) don't.
-    indices = torch.nonzero(rpn_match==1)
-
-    # Pick bbox deltas that contribute to the loss
-    rpn_bbox = rpn_bbox[indices.data[:,0],indices.data[:,1]]
-
-    # Trim target bounding box deltas to the same length as rpn_bbox.
-    target_bbox = target_bbox[0,:rpn_bbox.size()[0],:]
-
-    # Smooth L1 loss
-    loss = F.smooth_l1_loss(rpn_bbox, target_bbox)
-
-    return loss
-
-
-def compute_mrcnn_class_loss(target_class_ids, pred_class_logits):
-    """Loss for the classifier head of Mask RCNN.
-
-    target_class_ids: [batch, num_rois]. Integer class IDs. Uses zero
-        padding to fill in the array.
-    pred_class_logits: [batch, num_rois, num_classes]
-    """
-
-    # Loss
-    if target_class_ids.size():
-        loss = F.cross_entropy(pred_class_logits,target_class_ids.long())
-    else:
-        loss = Variable(torch.FloatTensor([0]), requires_grad=False)
-        if target_class_ids.is_cuda:
-            loss = loss.cuda()
-
-    return loss
-
-
-def compute_mrcnn_bbox_loss(target_bbox, target_class_ids, pred_bbox):
-    """Loss for Mask R-CNN bounding box refinement.
-
-    target_bbox: [batch, num_rois, (dy, dx, log(dh), log(dw))]
-    target_class_ids: [batch, num_rois]. Integer class IDs.
-    pred_bbox: [batch, num_rois, num_classes, (dy, dx, log(dh), log(dw))]
-    """
-
-    if target_class_ids.size():
-        # Only positive ROIs contribute to the loss. And only
-        # the right class_id of each ROI. Get their indicies.
-        positive_roi_ix = torch.nonzero(target_class_ids > 0)[:, 0]
-        positive_roi_class_ids = target_class_ids[positive_roi_ix.data].long()
-        indices = torch.stack((positive_roi_ix,positive_roi_class_ids), dim=1)
-
-        # Gather the deltas (predicted and true) that contribute to loss
-        target_bbox = target_bbox[indices[:,0].data,:]
-        pred_bbox = pred_bbox[indices[:,0].data,indices[:,1].data,:]
-
-        # Smooth L1 loss
-        loss = F.smooth_l1_loss(pred_bbox, target_bbox)
-    else:
-        loss = Variable(torch.FloatTensor([0]), requires_grad=False)
-        if target_class_ids.is_cuda:
-            loss = loss.cuda()
-
-    return loss
-
-
-def compute_mrcnn_mask_loss(target_masks, target_class_ids, pred_masks):
-    """Mask binary cross-entropy loss for the masks head.
-
-    target_masks: [batch, num_rois, height, width].
-        A float32 tensor of values 0 or 1. Uses zero padding to fill array.
-    target_class_ids: [batch, num_rois]. Integer class IDs. Zero padded.
-    pred_masks: [batch, proposals, height, width, num_classes] float32 tensor
-                with values from 0 to 1.
-    """
-    if target_class_ids.size():
-        # Only positive ROIs contribute to the loss. And only
-        # the class specific mask of each ROI.
-        positive_ix = torch.nonzero(target_class_ids > 0)[:, 0]
-        positive_class_ids = target_class_ids[positive_ix.data].long()
-        indices = torch.stack((positive_ix, positive_class_ids), dim=1)
-
-        # Gather the masks (predicted and true) that contribute to loss
-        y_true = target_masks[indices[:,0].data,:,:]
-        y_pred = pred_masks[indices[:,0].data,indices[:,1].data,:,:]
-
-        # Binary cross entropy
-        loss = F.binary_cross_entropy(y_pred, y_true)
-    else:
-        loss = Variable(torch.FloatTensor([0]), requires_grad=False)
-        if target_class_ids.is_cuda:
-            loss = loss.cuda()
-
-    return loss
-
-
-def compute_losses(rpn_match, rpn_bbox, inputs):
+def compute_losses(rpn_match, target_bbox, inputs):
 
     rpn_class_logits, rpn_pred_bbox, target_class_ids, \
-        mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
-        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], inputs[7]
+        mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask, valid_rois_list = \
+        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], inputs[7], inputs[8]
 
     rpn_class_loss = compute_rpn_class_loss(rpn_match, rpn_class_logits)
-    rpn_bbox_loss = compute_rpn_bbox_loss(rpn_bbox, rpn_match, rpn_pred_bbox)
+    rpn_bbox_loss = compute_rpn_bbox_loss(target_bbox, rpn_match, rpn_pred_bbox)
     mrcnn_class_loss = compute_mrcnn_class_loss(target_class_ids, mrcnn_class_logits)
     mrcnn_bbox_loss = compute_mrcnn_bbox_loss(target_deltas, target_class_ids, mrcnn_bbox)
     mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
@@ -357,8 +292,7 @@ def compute_losses(rpn_match, rpn_bbox, inputs):
     outputs = [rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss]
     return sum(outputs), outputs
 
-
-# TODO
+# TODO(low: valid epoch during training)
 # def valid_epoch(model, datagenerator, steps):
 #
 #     step, loss_sum = 0, 0
@@ -429,35 +363,76 @@ def compute_losses(rpn_match, rpn_bbox, inputs):
 ############################################################
 #  COCO Evaluation
 ############################################################
-def evaluate_coco(model, dataset, coco_api, eval_type="bbox", limit=0, image_ids=None):
+def test_model(input_model, dataloader, coco_api, limit=-1, image_ids=None):
     """
-        Runs official COCO evaluation.
-        dataset:    A Dataset object with validation datasets
-        eval_type:  "bbox" or "segm" for bounding box or segmentation evaluation
-        limit:      the number of images to use for evaluation
+        Test the trained model
+        Args:
+            input_model:
+            dataloader: validation dataloader
+            coco_api:
+            eval_type:  "bbox" or "segm" for bounding box or segmentation evaluation
+            limit:      the number of images to use for evaluation
+            image_ids:  a certain image
     """
+    if isinstance(input_model, nn.DataParallel):
+        model = input_model.module
+    else:
+        # single-gpu
+        model = input_model
+
+    dataset = dataloader.dataset
+    print("Running COCO evaluation on {} images.".format(dataset.num_images))
+
     # Pick COCO images from the dataset
     image_ids = image_ids or dataset.image_ids
-
     # Limit to a subset
-    if limit:
+    if limit > 0:
         image_ids = image_ids[:limit]
 
     # Get corresponding COCO image IDs.
-    coco_image_ids = [dataset.image_info[id]["id"] for id in image_ids]
+    coco_image_ids = [dataset.image_info[ind]["id"] for ind in image_ids]
 
     t_prediction = 0
     t_start = time.time()
 
     results = []
-    for i, image_id in enumerate(image_ids):
+    total_iter = math.ceil(dataset.num_images / model.config.BATCH_SIZE)
+    # for i, image_id in enumerate(image_ids):
+    for iter_ind in range(total_iter):
         # Load image
         image = dataset.load_image(image_id)
 
         # Run detection
-        t = time.time()
-        res_raw = detect(model, [image])[0]
-        t_prediction += (time.time() - t)
+        t_pred_start = time.time()
+
+        # res_raw = run_inference(model, [image])[0]
+        # Mold inputs to format expected by the neural network
+        molded_images, image_metas, windows = _mold_inputs(model, images)
+
+        # Convert images to torch tensor
+        molded_images = torch.from_numpy(molded_images.transpose(0, 3, 1, 2)).float()
+        molded_images = Variable(molded_images.cuda(), volatile=True)
+
+        # Run object detection
+        detections, mrcnn_mask = input_model([molded_images, image_metas], mode='inference')
+
+        # Convert to numpy
+        detections = detections.data.cpu().numpy()
+        mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
+
+        # Process detections
+        results = []
+        for i, image in enumerate(images):
+            final_rois, final_class_ids, final_scores, final_masks = _unmold_detections(
+                detections[i], mrcnn_mask[i], image.shape, windows[i])
+            results.append({
+                "rois": final_rois,
+                "class_ids": final_class_ids,
+                "scores": final_scores,
+                "masks": final_masks,
+            })
+
+        t_prediction += (time.time() - t_pred_start)
 
         # Convert results to COCO format
         image_results = build_coco_results(dataset, coco_image_ids[i:i + 1],
@@ -466,7 +441,7 @@ def evaluate_coco(model, dataset, coco_api, eval_type="bbox", limit=0, image_ids
         results.extend(image_results)
 
         if i % (model.config.SHOW_INTERVAL*10) == 0 or i == len(image_ids):
-            print_log('[{:s}] eval progress (single gpu)\t{:4d}/{:4d} ...'.
+            print_log('[{:s}] evaluation progress \t{:4d}/{:4d} ...'.
                       format(model.config.NAME, i, len(image_ids)), model.config.LOG_FILE)
 
     # Load results. This modifies results with additional attributes.
@@ -474,6 +449,7 @@ def evaluate_coco(model, dataset, coco_api, eval_type="bbox", limit=0, image_ids
 
     # Evaluate
     print('begin to evaluate ...')
+    eval_type = "bbox"
     cocoEval = COCOeval(coco_api, coco_results, eval_type)
     cocoEval.params.imgIds = coco_image_ids
     cocoEval.evaluate()
@@ -488,48 +464,7 @@ def evaluate_coco(model, dataset, coco_api, eval_type="bbox", limit=0, image_ids
               model.config.LOG_FILE)
 
 
-def detect(model, images):
-    """
-        'forward' method FOR EVALUATION ONLY.
-        Runs the detection pipeline.
-        images: List of images, potentially of different sizes.
-
-        Returns a list of dicts, one dict per image. The dict contains:
-            rois: [N, (y1, x1, y2, x2)] detection bounding boxes
-            class_ids: [N] int class IDs
-            scores: [N] float probability scores for the class IDs
-            masks: [H, W, N] instance binary masks
-    """
-
-    # Mold inputs to format expected by the neural network
-    molded_images, image_metas, windows = mold_inputs(model, images)
-
-    # Convert images to torch tensor
-    molded_images = torch.from_numpy(molded_images.transpose(0, 3, 1, 2)).float()
-    molded_images = Variable(molded_images.cuda(), volatile=True)
-
-    # Run object detection
-    detections, mrcnn_mask = model([molded_images, image_metas], mode='inference')
-
-    # Convert to numpy
-    detections = detections.data.cpu().numpy()
-    mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
-
-    # Process detections
-    results = []
-    for i, image in enumerate(images):
-        final_rois, final_class_ids, final_scores, final_masks =\
-            unmold_detections(detections[i], mrcnn_mask[i], image.shape, windows[i])
-        results.append({
-            "rois": final_rois,
-            "class_ids": final_class_ids,
-            "scores": final_scores,
-            "masks": final_masks,
-        })
-    return results
-
-
-def mold_inputs(model, images):
+def _mold_inputs(model, images):
     """
         FOR EVALUATION ONLY.
         Takes a list of images and modifies them to the format expected as an input to the neural network.
@@ -568,7 +503,7 @@ def mold_inputs(model, images):
     return molded_images, image_metas, windows
 
 
-def unmold_detections(detections, mrcnn_mask, image_shape, window):
+def _unmold_detections(detections, mrcnn_mask, image_shape, window):
     """
         FOR EVALUATION ONLY.
         Reformats the detections of one image from the format of the neural
@@ -631,7 +566,7 @@ def unmold_detections(detections, mrcnn_mask, image_shape, window):
 
 
 def build_coco_results(dataset, image_ids, rois, class_ids, scores, masks):
-    """Arrange resutls to match COCO specs in http://cocodataset.org/#format
+    """Arrange results to match COCO specs in http://cocodataset.org/#format
     """
     # If no results, return an empty list
     if rois is None:

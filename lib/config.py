@@ -21,6 +21,7 @@ class Config(object):
     PRETRAIN_IMAGENET_MODEL_PATH = os.path.join(os.getcwd(), 'datasets/pretrain_model', "resnet50_imagenet.pth")
     # Path to pretrained weights file
     PRETRAIN_COCO_MODEL_PATH = os.path.join(os.getcwd(), 'datasets/pretrain_model', 'mask_rcnn_coco.pth')
+    MODEL_FILE_CHOICE = 'last'  # or file (xxx.pth)
 
     # NUMBER OF GPUs to use. For CPU use 0
     GPU_COUNT = 1
@@ -148,12 +149,19 @@ class Config(object):
     def _set_value(self):
         """Set values of computed attributes."""
         # Effective batch size
-        if self.GPU_COUNT > 0:
-            self.BATCH_SIZE = self.IMAGES_PER_GPU * self.GPU_COUNT
+        if hasattr(self, 'BATCH_SIZE'):
+            print('use the new BATCH_SIZE scheme!')
+            self.old_scheme = False
         else:
-            self.BATCH_SIZE = self.IMAGES_PER_GPU
-        # Adjust step size based on batch size
-        self.STEPS_PER_EPOCH *= self.BATCH_SIZE
+            print('use the old BATCH_SIZE scheme!')
+            # TODO: will be deprecated forever
+            if self.GPU_COUNT > 0:
+                self.BATCH_SIZE = self.IMAGES_PER_GPU * self.GPU_COUNT
+            else:
+                self.BATCH_SIZE = self.IMAGES_PER_GPU
+            # Adjust step size based on batch size
+            self.STEPS_PER_EPOCH *= self.BATCH_SIZE
+            self.old_scheme = True
 
         # Input image size
         self.IMAGE_SHAPE = np.array(
@@ -200,8 +208,12 @@ class CocoConfig(Config):
             # self.GPU_COUNT = 1
 
         elif self.NAME == 'all_new':
-            self.IMAGES_PER_GPU = 16
-
+            self.BATCH_SIZE = 6
+            self.MODEL_FILE_CHOICE = 'coco_pretrain'
+            self.IMAGE_MIN_DIM = 256
+            self.IMAGE_MAX_DIM = 320
+            self.USE_MINI_MASK = False
+            # self.MINI_MASK_SHAPE = (28, 28)
         else:
             # print('unknown config name!!!')
             raise NameError('unknown config name!!!')
