@@ -501,7 +501,7 @@ def get_data(config, args):
     dset_val.prepare()
 
     # train data
-    if not args.debug and args.phase == 'training':
+    if not args.debug and args.phase == 'train':
         dset_train = CocoDataset()
         print('TRAIN:: load train')
         dset_train.load_coco(args.dataset_path, "train", year=args.year, auto_download=args.download)
@@ -512,7 +512,7 @@ def get_data(config, args):
     # data generators
     val_set = DatasetPack(dset_val, config, augment=True)
 
-    if args.phase == 'training':
+    if args.phase == 'train':
         if not args.debug:
             train_set = DatasetPack(dset_train, config, augment=True)
         else:

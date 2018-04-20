@@ -23,7 +23,7 @@ if __name__ == '__main__':
                         default='all_new')
                         # default='hyli_default_old')
     parser.add_argument('--debug',
-                        default=True, type=bool)
+                        default=1, type=int)
     parser.add_argument('--device_id',
                         default='0,1', type=str)
     parser.add_argument('--dataset_path',
