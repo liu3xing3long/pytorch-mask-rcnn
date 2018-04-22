@@ -1,6 +1,7 @@
 import math
 import numpy as np
 import os
+import datetime
 from tools.utils import print_log
 
 
@@ -178,7 +179,9 @@ class Config(object):
 
     def display(self, log_file):
         """Display Configuration values."""
-        print_log("\nConfigurations:", file=log_file, init=True)
+        now = datetime.datetime.now()
+        print_log('start timestamp: {:%Y%m%dT%H%M}'.format(now), file=log_file, init=True)
+        print_log("\nConfigurations:", file=log_file)
         for a in dir(self):
             if not a.startswith("__") and not callable(getattr(self, a)):
                 print_log("{:30} {}".format(a, getattr(self, a)), log_file)
@@ -201,8 +204,11 @@ class CocoConfig(Config):
         self.DEBUG = args.debug
         self.DEVICE_ID = [int(x) for x in args.device_id.split(',')]
         self.GPU_COUNT = len(self.DEVICE_ID)
-
         self.NAME = config_name
+
+        if self.PHASE == 'inference':
+            self.DETECTION_MIN_CONFIDENCE = 0
+
         if self.NAME == 'hyli_default' or self.NAME == 'hyli_default_old':
             self.IMAGES_PER_GPU = 16
             # self.GPU_COUNT = 1
@@ -214,11 +220,13 @@ class CocoConfig(Config):
             self.IMAGE_MAX_DIM = 320
             self.USE_MINI_MASK = False
             # self.MINI_MASK_SHAPE = (28, 28)
+            self.DETECTION_NMS_THRESHOLD = 0.3
+
         elif self.NAME == 'all_new_2':
             self.BATCH_SIZE = 8
             self.MODEL_FILE_CHOICE = 'coco_pretrain'
         else:
-            # print('unknown config name!!!')
-            raise NameError('unknown config name!!!')
+            print('WARNING: unknown config name!!! use default setting.')
+            # raise NameError('unknown config name!!!')
 
         self._set_value()

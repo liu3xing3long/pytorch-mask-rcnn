@@ -19,42 +19,9 @@ class MaskRCNN(nn.Module):
         self.loss_history = []
         self.val_loss_history = []
 
-        self._set_log_dir()
         self._build(config=config)
         self._initialize_weights()
-
-    def _set_log_dir(self, model_path=None):
-        """
-            Sets the model log directory and epoch counter.
-            model_path:
-                If None, or a format different from what this code uses
-                then set a new log directory and start epochs from 0. Otherwise,
-                extract the log directory and the epoch counter from the file name.
-        """
-
-        # Set date and epoch counter as if starting a new model
-        self.epoch = 0
-        now = datetime.datetime.now()
-
-        # If we have a model path with date and epochs use them
-        if model_path:
-            # Continue from we left of. Get epoch and date from the file name
-            # A sample model path might look like:
-            # /path/to/results/coco20171029T2315/mask_rcnn_coco_0001.h5
-            regex = r".*/\w+(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})/mask\_rcnn\_\w+(\d{4})\.pth"
-            m = re.match(regex, model_path)
-            if m:
-                now = datetime.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)),
-                                        int(m.group(4)), int(m.group(5)))
-                self.epoch = int(m.group(6))
-
-        # Directory for training results
-        # e.g., results/hyli_default_20180409T2105
-        self.log_dir = os.path.join(self.model_dir, "{}_{:%Y%m%dT%H%M}".format(self.config.NAME.lower(), now))
-
-        # Path to save after each epoch. Include placeholders that get filled by Keras.
-        self.checkpoint_path = os.path.join(self.log_dir, "mask_rcnn_{}_*epoch*.pth".format(self.config.NAME.lower()))
-        self.checkpoint_path = self.checkpoint_path.replace("*epoch*", "{:04d}")
+        self._set_log_dir()
 
     def _build(self, config):
         """Build Mask R-CNN architecture: fpn, rpn, classifier, mask"""
@@ -117,22 +84,33 @@ class MaskRCNN(nn.Module):
                 m.weight.data.normal_(0, 0.01)
                 m.bias.data.zero_()
 
-    def load_weights(self, filepath):
-        """called in main.py"""
-        if os.path.exists(filepath):
-            self.load_state_dict(torch.load(filepath))
-        else:
-            print("Weight file not found ...")
+    def _set_log_dir(self):
 
-        # Update the log directory
-        self._set_log_dir(filepath)
+        # Setup directory
+        # e.g., results/hyli_default/train(or inference)/
+        self.log_dir = os.path.join(self.model_dir, self.config.NAME.lower(), self.config.PHASE)
+
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
 
+        # Path to save after each epoch; used for training
+        self.checkpoint_path = os.path.join(self.log_dir, "mask_rcnn_*epoch*.pth")
+        self.checkpoint_path = self.checkpoint_path.replace("*epoch*", "{:04d}")
+
+    def load_weights(self, filepath):
+        """called in model.py"""
+        if filepath is not None:
+            if os.path.exists(filepath):
+                # TODO: find start_iter within epoch
+                self.load_state_dict(torch.load(filepath))
+                # self.start_epoch
+                # self.start_iter
+            else:
+                raise Exception("Weight file not found ...")
+
     def set_trainable(self, layer_regex):
-        """
-            called in 'model.py'
-            Sets model layers as trainable if their names match the given regular expression.
+        """called in 'model.py'
+        Sets model layers as trainable if their names match the given regular expression.
         """
         for param in self.named_parameters():
             layer_name = param[0]
@@ -188,41 +166,39 @@ class MaskRCNN(nn.Module):
                                    nms_threshold=self.config.RPN_NMS_THRESHOLD,
                                    anchors=self.anchors,
                                    config=self.config)
-        # _mrcnn_feature_maps = [p2_out, p3_out, p4_out, p5_out]
+        _mrcnn_feature_maps = [p2_out, p3_out, p4_out, p5_out]
+
+        # Normalize coordinates
+        h, w = self.config.IMAGE_SHAPE[:2]
+        scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False)
+        if self.config.GPU_COUNT:
+            scale = scale.cuda()
+
+        start_sample_ind = curr_gpu_id*sample_per_gpu
+        end_sample_ind = start_sample_ind+sample_per_gpu
+
         if mode == 'inference':
             # Network Heads
             # Proposal classifier and BBox regressor heads
-            mrcnn_class_logits, mrcnn_class, mrcnn_bbox = self.classifier(mrcnn_feature_maps, rpn_rois)
+            _, mrcnn_class, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _rpn_rois)
 
             # Detections
-            image_metas = input[1]
-            # output is [batch, num_detections, (y1, x1, y2, x2, class_id, score)] in image coordinates
-            detections = detection_layer(self.config, rpn_rois, mrcnn_class, mrcnn_bbox, image_metas)
+            image_metas = input[1][start_sample_ind:end_sample_ind]  # (3, 89), ndarray
+            # output is [batch, num_detections (say 100), (y1, x1, y2, x2, class_id, score)] in image coordinates
+            detections = detection_layer(_rpn_rois, mrcnn_class, mrcnn_bbox, image_metas, self.config)
 
             # Convert boxes to normalized coordinates
-            # TODO: let DetectionLayer return normalized coordinates to avoid unnecessary conversions
-            h, w = self.config.IMAGE_SHAPE[:2]
-            scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False)
-            if self.config.GPU_COUNT:
-                scale = scale.cuda()
-            detection_boxes = detections[:, :4] / scale
-
-            # Add back batch dimension
-            detection_boxes = detection_boxes.unsqueeze(0)
+            normalize_boxes = detections[:, :, :4] / scale
             # Create masks for detections
-            mrcnn_mask = self.mask(mrcnn_feature_maps, detection_boxes)
-            # Add back batch dimension
-            detections = detections.unsqueeze(0)
-            mrcnn_mask = mrcnn_mask.unsqueeze(0)
-            return [detections, mrcnn_mask]
-        elif mode == 'training':
-            # Normalize coordinates
-            h, w = self.config.IMAGE_SHAPE[:2]
-            scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False)
-            if self.config.GPU_COUNT:
-                scale = scale.cuda()
+            mrcnn_mask = self.mask(_mrcnn_feature_maps, normalize_boxes)
+            # shape: batch, num_detections, 81, 28, 28
+            mrcnn_mask = mrcnn_mask.view(sample_per_gpu, -1,
+                                         mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
 
-            start_sample_ind = curr_gpu_id*sample_per_gpu
+            return [detections, mrcnn_mask]
+
+        elif mode == 'training':
+
             target_class_ids_out, mrcnn_class_logits_out = [], []
             target_deltas_out, mrcnn_bbox_out = [], []
             target_mask_out, mrcnn_mask_out = [], []

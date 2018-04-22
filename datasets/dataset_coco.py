@@ -520,15 +520,12 @@ def get_data(config, args):
 
     if config.old_scheme:
         # old stuff
-        val_generator = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=True, num_workers=4)
         train_generator = None if args.phase == 'inference' else \
             torch.utils.data.DataLoader(train_set, batch_size=1, shuffle=True, num_workers=4)
     else:
-        val_generator = torch.utils.data.DataLoader(val_set, batch_size=config.BATCH_SIZE,
-                                                    shuffle=True, num_workers=4, collate_fn=detection_collate)
         train_generator = None if args.phase == 'inference' else \
             torch.utils.data.DataLoader(train_set, batch_size=config.BATCH_SIZE,
-                                        shuffle=True, num_workers=4, collate_fn=detection_collate)
+                                        shuffle=True, num_workers=8, collate_fn=detection_collate)
 
-    return train_generator, val_generator, val_coco_api
+    return train_generator, val_set, val_coco_api
 

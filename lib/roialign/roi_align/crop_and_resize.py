@@ -1,9 +1,6 @@
-import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.autograd import Function
-
 from ._ext import crop_and_resize as _backend
 
 
@@ -50,18 +47,18 @@ class CropAndResizeFunction(Function):
         return grad_image, None, None
 
 
-class CropAndResize(nn.Module):
-    """
-    Crop and resize ported from tensorflow
-    See more details on https://www.tensorflow.org/api_docs/python/tf/image/crop_and_resize
-    """
-
-    def __init__(self, crop_height, crop_width, extrapolation_value=0):
-        super(CropAndResize, self).__init__()
-
-        self.crop_height = crop_height
-        self.crop_width = crop_width
-        self.extrapolation_value = extrapolation_value
-
-    def forward(self, image, boxes, box_ind):
-        return CropAndResizeFunction(self.crop_height, self.crop_width, self.extrapolation_value)(image, boxes, box_ind)
+# class CropAndResize(nn.Module):
+#     """
+#     Crop and resize ported from tensorflow
+#     See more details on https://www.tensorflow.org/api_docs/python/tf/image/crop_and_resize
+#     """
+#
+#     def __init__(self, crop_height, crop_width, extrapolation_value=0):
+#         super(CropAndResize, self).__init__()
+#
+#         self.crop_height = crop_height
+#         self.crop_width = crop_width
+#         self.extrapolation_value = extrapolation_value
+#
+#     def forward(self, image, boxes, box_ind):
+#         return CropAndResizeFunction(self.crop_height, self.crop_width, self.extrapolation_value)(image, boxes, box_ind)

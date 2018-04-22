@@ -3,7 +3,7 @@ from ._ext import nms
 
 
 def pth_nms(dets, thresh):
-    """dets has to be a tensor (N, 4), no batch size dim"""
+    """dets has to be a Tensor (N, 4), no batch size dim"""
     if not dets.is_cuda:
         x1 = dets[:, 1]
         y1 = dets[:, 0]

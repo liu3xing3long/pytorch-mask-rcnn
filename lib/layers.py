@@ -13,18 +13,47 @@ import torch.nn.functional as F
 #  FPN Graph
 ############################################################
 # not used
-class TopDownLayer(nn.Module):
+# class TopDownLayer(nn.Module):
+#
+#     def __init__(self, in_channels, out_channels):
+#         super(TopDownLayer, self).__init__()
+#         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1)
+#         self.padding2 = SamePad2d(kernel_size=3, stride=1)
+#         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1)
+#
+#     def forward(self, x, y):
+#         y = F.upsample(y, scale_factor=2)
+#         x = self.conv1(x)
+#         return self.conv2(self.padding2(x+y))
 
-    def __init__(self, in_channels, out_channels):
-        super(TopDownLayer, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1)
-        self.padding2 = SamePad2d(kernel_size=3, stride=1)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1)
 
-    def forward(self, x, y):
-        y = F.upsample(y, scale_factor=2)
-        x = self.conv1(x)
-        return self.conv2(self.padding2(x+y))
+class SamePad2d(nn.Module):
+    """
+        Mimic tensorflow's 'SAME' padding.
+    """
+
+    def __init__(self, kernel_size, stride):
+        super(SamePad2d, self).__init__()
+        self.kernel_size = torch.nn.modules.utils._pair(kernel_size)
+        self.stride = torch.nn.modules.utils._pair(stride)
+
+    def forward(self, input):
+        in_width = input.size()[2]
+        in_height = input.size()[3]
+        out_width = math.ceil(float(in_width) / float(self.stride[0]))
+        out_height = math.ceil(float(in_height) / float(self.stride[1]))
+        pad_along_width = ((out_width - 1) * self.stride[0] +
+                           self.kernel_size[0] - in_width)
+        pad_along_height = ((out_height - 1) * self.stride[1] +
+                            self.kernel_size[1] - in_height)
+        pad_left = math.floor(pad_along_width / 2)
+        pad_top = math.floor(pad_along_height / 2)
+        pad_right = pad_along_width - pad_left
+        pad_bottom = pad_along_height - pad_top
+        return F.pad(input, (pad_left, pad_right, pad_top, pad_bottom), 'constant', 0)
+
+    def __repr__(self):
+        return self.__class__.__name__
 
 
 class FPN(nn.Module):
@@ -203,7 +232,7 @@ class Classifier(nn.Module):
         self.linear_bbox = nn.Linear(1024, num_classes * 4)
 
     def forward(self, x, rois):
-        x = pyramid_roi_align([rois]+x, self.pool_size, self.image_shape)
+        x = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -243,7 +272,7 @@ class Mask(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x, rois):
-        x = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)
+        x = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)   # 3000 (3x1000), 256, 7, 7
         x = self.conv1(self.padding(x))
         x = self.bn1(x)
         x = self.relu(x)
@@ -264,42 +293,14 @@ class Mask(nn.Module):
         return x
 
 
-class SamePad2d(nn.Module):
-    """
-        Mimic tensorflow's 'SAME' padding.
-    """
-
-    def __init__(self, kernel_size, stride):
-        super(SamePad2d, self).__init__()
-        self.kernel_size = torch.nn.modules.utils._pair(kernel_size)
-        self.stride = torch.nn.modules.utils._pair(stride)
-
-    def forward(self, input):
-        in_width = input.size()[2]
-        in_height = input.size()[3]
-        out_width = math.ceil(float(in_width) / float(self.stride[0]))
-        out_height = math.ceil(float(in_height) / float(self.stride[1]))
-        pad_along_width = ((out_width - 1) * self.stride[0] +
-                           self.kernel_size[0] - in_width)
-        pad_along_height = ((out_height - 1) * self.stride[1] +
-                            self.kernel_size[1] - in_height)
-        pad_left = math.floor(pad_along_width / 2)
-        pad_top = math.floor(pad_along_height / 2)
-        pad_right = pad_along_width - pad_left
-        pad_bottom = pad_along_height - pad_top
-        return F.pad(input, (pad_left, pad_right, pad_top, pad_bottom), 'constant', 0)
-
-    def __repr__(self):
-        return self.__class__.__name__
-
-
 ############################################################
 #  Proposal Layer
 ############################################################
 def apply_box_deltas(boxes, deltas):
     """Applies the given deltas to the given boxes.
-    boxes: [bs, N, 4] where each row is y1, x1, y2, x2
-    deltas: [bs, N, 4] where each row is [dy, dx, log(dh), log(dw)]
+    Args:
+        boxes: [bs, N, 4] where each row is y1, x1, y2, x2
+        deltas: [bs, N, 4] where each row is [dy, dx, log(dh), log(dw)]
     """
     # Convert to y, x, h, w
     height = boxes[:, :, 2] - boxes[:, :, 0]
@@ -321,17 +322,32 @@ def apply_box_deltas(boxes, deltas):
 
 
 def clip_boxes(boxes, window):
+    """ used also in the detection (inference) layer
+    Args:
+        boxes: [bs, N, 4] each col is y1, x1, y2, x2
+        window: [4] in the form y1, x1, y2, x2
     """
-    boxes: [bs, N, 4] each col is y1, x1, y2, x2
-    window: [4] in the form y1, x1, y2, x2
-    """
-    boxes = torch.stack([
-        boxes[:, :, 0].clamp(float(window[0]), float(window[2])),
-        boxes[:, :, 1].clamp(float(window[1]), float(window[3])),
-        boxes[:, :, 2].clamp(float(window[0]), float(window[2])),
-        boxes[:, :, 3].clamp(float(window[1]), float(window[3]))
-    ], 2)
-    return boxes
+    if window.ndim == 1:
+        boxes_out = torch.stack([
+            boxes[:, :, 0].clamp(float(window[0]), float(window[2])),
+            boxes[:, :, 1].clamp(float(window[1]), float(window[3])),
+            boxes[:, :, 2].clamp(float(window[0]), float(window[2])),
+            boxes[:, :, 3].clamp(float(window[1]), float(window[3]))
+        ], 2)
+    elif window.ndim == 2:
+        bs = window.shape[0]
+        boxes = boxes.view(bs, -1, 4)
+        boxes_out = Variable(torch.zeros(boxes.size()).cuda())
+        for i in range(bs):
+            boxes_out[i, :, :] = torch.stack([
+                boxes[i, :, 0].clamp(float(window[i, 0]), float(window[i, 2])),
+                boxes[i, :, 1].clamp(float(window[i, 1]), float(window[i, 3])),
+                boxes[i, :, 2].clamp(float(window[i, 0]), float(window[i, 2])),
+                boxes[i, :, 3].clamp(float(window[i, 1]), float(window[i, 3]))
+            ], 1)
+        boxes_out = boxes_out.view(-1, 4)
+
+    return boxes_out
 
 
 def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
@@ -340,9 +356,14 @@ def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
     non-max suppression to remove overlaps. It also applies bounding
     box refinement details to anchors.
 
-    Inputs:
-        rpn_probs: [batch, anchors, (bg prob, fg prob)]
-        rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
+    Args:
+        inputs
+            rpn_probs: [batch, anchors, (bg prob, fg prob)]
+            rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
+        proposal_count
+        nms_threshold
+        anchors
+        config
 
     Returns:
         Proposals in normalized coordinates [batch, rois, (y1, x1, y2, x2)]
@@ -391,9 +412,9 @@ def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
     # Non-max suppression
     keep = nms(torch.cat((boxes, scores.unsqueeze(2)), 2).data, nms_threshold)
     keep = keep[:, :proposal_count]
-    boxes_keep = Variable(torch.FloatTensor(bs, keep.shape[1], 4).cuda())
+    boxes_keep = Variable(torch.FloatTensor(bs, keep.shape[1], 4).cuda())  # bs, proposal_count(1000), 4
     for i in range(bs):
-        boxes_keep[i] = boxes[i][keep[0], :]
+        boxes_keep[i] = boxes[i][keep[i], :]   # TODO(high): in earlier version, it is "keep[0]"
 
     # Normalize dimensions to range of 0 to 1.
     norm = Variable(torch.from_numpy(np.array([height, width, height, width])).float(), requires_grad=False)
@@ -452,7 +473,7 @@ class RPN(nn.Module):
         rpn_bbox = self.conv_bbox(x)
 
         # Reshape to [batch, 4, anchors]
-        rpn_bbox = rpn_bbox.permute(0,2,3,1)
+        rpn_bbox = rpn_bbox.permute(0, 2, 3, 1)
         rpn_bbox = rpn_bbox.contiguous()
         rpn_bbox = rpn_bbox.view(x.size()[0], -1, 4)
 
@@ -464,26 +485,18 @@ class RPN(nn.Module):
 ############################################################
 def pyramid_roi_align(inputs, pool_size, image_shape):
     """Implements ROI Pooling on multiple levels of the feature pyramid.
+    Args:
+        pool_size: [height, width] of the output pooled regions. Usually [7, 7]
+        image_shape: [height, width, channels]. Shape of input image in pixels
 
-    Params:
-    - pool_size: [height, width] of the output pooled regions. Usually [7, 7]
-    - image_shape: [height, width, channels]. Shape of input image in pixels
-
-    Inputs:
-    - boxes: [batch, num_boxes, (y1, x1, y2, x2)] in normalized
-             coordinates.
-    - Feature maps: List of feature maps from different levels of the pyramid.
-                    Each is [batch, channels, height, width]
-
+        inputs:
+            - boxes: [batch, num_boxes, (y1, x1, y2, x2)] in normalized coordinates.
+            - Feature maps: List of feature maps from different levels of the pyramid.
+                        Each is [batch, channels, height, width]
     Output:
-    Pooled regions in the shape: [num_boxes, height, width, channels].
-    The width and height are those specific in the pool_shape in the layer
-    constructor.
+        Pooled regions in the shape: [num_boxes, height, width, channels].
+        The width and height are those specific in the pool_shape in the layer constructor.
     """
-
-    # Currently only supports batchsize 1
-    for i in range(len(inputs)):
-        inputs[i] = inputs[i].squeeze(0)
 
     # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coords
     boxes = inputs[0]
@@ -493,7 +506,7 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
     feature_maps = inputs[1:]
 
     # Assign each ROI to a level in the pyramid based on the ROI area.
-    y1, x1, y2, x2 = boxes.chunk(4, dim=1)
+    y1, x1, y2, x2 = boxes.chunk(4, dim=2)
     h = y2 - y1
     w = x2 - x1
 
@@ -505,7 +518,7 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
         image_area = image_area.cuda()
     roi_level = 4 + utils.log2(torch.sqrt(h*w)/(224.0/torch.sqrt(image_area)))
     roi_level = roi_level.round().int()
-    roi_level = roi_level.clamp(2, 5)
+    roi_level = roi_level.clamp(2, 5).squeeze()   # size: [bs, num_roi], say [3, 1000 or 2000]
 
     # Loop through levels and apply ROI pooling to each. P2 to P5.
     pooled = []
@@ -514,13 +527,13 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
         ix = roi_level == level
         if not ix.any():
             continue
-        ix = torch.nonzero(ix)[:,0]
-        level_boxes = boxes[ix.data, :]
+        index = torch.nonzero(ix)    # ix: bs, 1000; index: say, 2670 x 2
+        level_boxes = boxes[index[:, 0].data, index[:, 1].data, :]    # from boxes: [bs, 1000, 4] -> [index[0], 4]
 
         # Keep track of which box is mapped to which level
-        box_to_level.append(ix.data)
+        box_to_level.append(index.data)
 
-        # Stop gradient propogation to ROI proposals
+        # Stop gradient propagation to ROI proposals
         level_boxes = level_boxes.detach()
 
         # Crop and Resize
@@ -532,25 +545,33 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
         # Here we use the simplified approach of a single value per bin,
         # which is how it's done in tf.crop_and_resize()
         # Result: [batch * num_boxes, pool_height, pool_width, channels]
-        ind = Variable(torch.zeros(level_boxes.size()[0]),requires_grad=False).int()
-        if level_boxes.is_cuda:
-            ind = ind.cuda()
-        feature_maps[i] = feature_maps[i].unsqueeze(0)  #CropAndResizeFunction needs batch dimension
-        pooled_features = CropAndResizeFunction(pool_size, pool_size, 0)(feature_maps[i], level_boxes, ind)
+
+        # ind = Variable(torch.zeros(level_boxes.size(0)), requires_grad=False).int()
+        # if level_boxes.is_cuda:
+        #     ind = ind.cuda()
+        box_ind = index[:, 0].int()
+
+        curr_feature_maps = feature_maps[i]
+        pooled_features = CropAndResizeFunction(pool_size, pool_size, 0)(curr_feature_maps, level_boxes, box_ind)
         pooled.append(pooled_features)
 
     # Pack pooled features into one tensor
     pooled = torch.cat(pooled, dim=0)
-
     # Pack box_to_level mapping into one array and add another
     # column representing the order of pooled boxes
     box_to_level = torch.cat(box_to_level, dim=0)
 
     # Rearrange pooled features to match the order of the original boxes
-    _, box_to_level = torch.sort(box_to_level)
-    pooled = pooled[box_to_level, :, :]
+    # _, box_to_level = torch.sort(box_to_level)
+    # pooled = pooled[box_to_level, :, :]
 
-    return pooled
+    pooled_out = Variable(torch.zeros(
+        boxes.size(0), boxes.size(1), pooled.size(1), pooled.size(2), pooled.size(3)).cuda())
+    pooled_out[box_to_level[:, 0], box_to_level[:, 1], :, :, :] = pooled
+    # 3, 1000, 256, 7, 7 -> 3000, 256, 7, 7
+    pooled_out = pooled_out.view(-1, pooled_out.size(2), pooled_out.size(3), pooled_out.size(4))
+
+    return pooled_out
 
 
 ############################################################
@@ -558,7 +579,9 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
 ############################################################
 def bbox_overlaps(boxes1, boxes2):
     """Computes IoU overlaps between two sets of boxes.
-    boxes1, boxes2: [N, (y1, x1, y2, x2)].
+    Args:
+        boxes1: [N, (y1, x1, y2, x2)]
+        boxes2: [N, (y1, x1, y2, x2)]
     """
     # 1. Tile boxes2 and repeat boxes1. This allows us to compare
     # every boxes1 against every boxes2 without loops.
@@ -782,128 +805,133 @@ def prepare_detection_target(proposals, gt_class_ids, gt_boxes, gt_masks, config
 ############################################################
 #  Detection Layer (for evaluation)
 ############################################################
-def clip_to_window(window, boxes):
+def conduct_nms(class_ids, refined_rois, class_scores, keep, config):
+    """per SAMPLE operation; no batch size dim!
+    Args:
+        class_ids
+        refined_rois
+        class_scores
+        keep            [True, False, ...]
+        config
+    Returns:
+        detection:      [DETECTION_MAX_INSTANCES, (y1, x1, y2, x2, class_id, class_score)]
     """
-        window: (y1, x1, y2, x2). The window in the image we want to clip to.
-        boxes: [N, (y1, x1, y2, x2)]
+    pre_nms_class_ids = class_ids[keep]
+    pre_nms_scores = class_scores[keep]
+    pre_nms_rois = refined_rois[torch.nonzero(keep).squeeze(), :]
+    _indx = torch.nonzero(keep)
+
+    # conduct nms per CLASS
+    for i, class_id in enumerate(utils.unique1d(pre_nms_class_ids)):
+
+        # Pick detections of this class
+        ixs = torch.nonzero(class_id == pre_nms_class_ids).squeeze()
+
+        ix_scores = pre_nms_scores[ixs]
+        ix_rois = pre_nms_rois[ixs, :]
+
+        # Sort
+        ix_scores, order = ix_scores.sort(descending=True)
+        ix_rois = ix_rois[order, :]
+
+        class_keep = nms(torch.cat((ix_rois, ix_scores.unsqueeze(1)), dim=1).unsqueeze(0).data,
+                         config.DETECTION_NMS_THRESHOLD)[0]
+
+        # Map indices
+        class_keep = _indx[ixs[order[class_keep.tolist()]]]  # TODO: why not order[class_keep] directly?
+
+        if i == 0:
+            nms_keep = class_keep
+        else:
+            nms_keep = utils.unique1d(torch.cat((nms_keep, class_keep)))
+
+    nms_indx = utils.intersect1d(_indx, nms_keep)
+
+    # Keep top detections
+    roi_count = config.DETECTION_MAX_INSTANCES
+    top_ids = class_scores[nms_indx].sort(descending=True)[1][:roi_count]
+    final_index = _indx[top_ids].squeeze()
+
+    # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
+    # Coordinates are in image domain.
+    detections = torch.cat((refined_rois[final_index],
+                            class_ids[final_index].unsqueeze(1).float(),
+                            class_scores[final_index].unsqueeze(1)), dim=1)
+    return detections
+
+
+def detection_layer(rois, probs, deltas, image_meta, config):
+    """Takes classified proposal boxes and their bounding box deltas and
+    returns the final detection boxes.
+
+    Args:
+        config
+        rois:                   [bs, 1000 (just an example), 4 (y1, x1, y2, x2)], in normalized coordinates
+        probs (mrcnn_class):    [bs*1000, 81]
+        deltas (mrcnn_bbox):    [bs*1000, 81, 4], (dy, dx, log(dh), log(dw))
+        image_meta:             [bs, 89] numpy data
+    Returns:
+        detections:             [batch, num_detections, (y1, x1, y2, x2, class_id, class_score)]
     """
-    boxes[:, 0] = boxes[:, 0].clamp(float(window[0]), float(window[2]))
-    boxes[:, 1] = boxes[:, 1].clamp(float(window[1]), float(window[3]))
-    boxes[:, 2] = boxes[:, 2].clamp(float(window[0]), float(window[2]))
-    boxes[:, 3] = boxes[:, 3].clamp(float(window[1]), float(window[3]))
+    bs = rois.size(0)
+    box_num_per_sample = rois.size(1)
+    detections = Variable(torch.zeros(bs, config.DETECTION_MAX_INSTANCES, 6).cuda(), volatile=True)
 
-    return boxes
-
-
-def refine_detections(rois, probs, deltas, window, config):
-    """Refine classified proposals and filter overlaps and return final
-    detections.
-
-    Inputs:
-        rois: [N, (y1, x1, y2, x2)] in normalized coordinates
-        probs: [N, num_classes]. Class probabilities.
-        deltas: [N, num_classes, (dy, dx, log(dh), log(dw))]. Class-specific
-                bounding box deltas.
-        window: (y1, x1, y2, x2) in image coordinates. The part of the image
-            that contains the image excluding the padding.
-
-    Returns detections shaped: [N, (y1, x1, y2, x2, class_id, score)]
-    """
-
+    # windows: (y1, x1, y2, x2) in image coordinates.
+    # The part of the image that contains the image excluding the padding.
+    _, _, windows, _ = utils.parse_image_meta(image_meta)
     # Class IDs per ROI
-    _, class_ids = torch.max(probs, dim=1)
+    class_scores, class_ids = torch.max(probs, dim=1)
 
     # Class probability of the top class of each ROI
     # Class-specific bounding box deltas
-    idx = torch.arange(class_ids.size()[0]).long()
+    _idx = torch.arange(class_ids.size(0)).long()
     if config.GPU_COUNT:
-        idx = idx.cuda()
-    class_scores = probs[idx, class_ids.data]
-    deltas_specific = deltas[idx, class_ids.data]
+        _idx = _idx.cuda()
+    deltas_specific = deltas[_idx, class_ids]
 
     # Apply bounding box deltas
     # Shape: [boxes, (y1, x1, y2, x2)] in normalized coordinates
     std_dev = Variable(torch.from_numpy(np.reshape(config.RPN_BBOX_STD_DEV, [1, 4])).float(), requires_grad=False)
     if config.GPU_COUNT:
         std_dev = std_dev.cuda()
-    refined_rois = apply_box_deltas(rois, deltas_specific * std_dev)
+    deltas_specific *= std_dev
 
-    # Convert coordiates to image domain
+    rois = rois.view(-1, 4)
+    refined_rois = apply_box_deltas(rois.unsqueeze(0), deltas_specific.unsqueeze(0))
+    # Convert coordinates to image domain
     height, width = config.IMAGE_SHAPE[:2]
     scale = Variable(torch.from_numpy(np.array([height, width, height, width])).float(), requires_grad=False)
     if config.GPU_COUNT:
         scale = scale.cuda()
     refined_rois *= scale
-
     # Clip boxes to image window
-    refined_rois = clip_to_window(window, refined_rois)
-
-    # Round and cast to int since we're deadling with pixels now
+    refined_rois = clip_boxes(refined_rois, windows)
+    # Round and cast to int since we're dealing with pixels now
     refined_rois = torch.round(refined_rois)
 
-    # TODO: Filter out boxes with zero area
-    # Filter out background boxes
-    keep_bool = class_ids > 0
+    # Filter out background boxes, low confidence boxes and zero area boxes
+    box_area = (refined_rois[:, 0] - refined_rois[:, 2])*(refined_rois[:, 1] - refined_rois[:, 3])
+    keep_bool = (class_ids > 0) & (class_scores >= config.DETECTION_MIN_CONFIDENCE) & (box_area > 0)
 
-    # Filter out low confidence boxes
-    if config.DETECTION_MIN_CONFIDENCE:
-        keep_bool = keep_bool & (class_scores >= config.DETECTION_MIN_CONFIDENCE)
-    keep = torch.nonzero(keep_bool)[:, 0]   # TODO: high priority; default_hyli_old, ep40 model
+    if torch.nonzero(keep_bool).dim() == 0:
+        # indicate no detected boxes!
+        return detections
 
-    # Apply per-class NMS
-    pre_nms_class_ids = class_ids[keep.data]
-    pre_nms_scores = class_scores[keep.data]
-    pre_nms_rois = refined_rois[keep.data]
-
-    for i, class_id in enumerate(utils.unique1d(pre_nms_class_ids)):
-        # Pick detections of this class
-        ixs = torch.nonzero(pre_nms_class_ids == class_id)[:,0]
-
-        # Sort
-        ix_rois = pre_nms_rois[ixs.data]
-        ix_scores = pre_nms_scores[ixs]
-        ix_scores, order = ix_scores.sort(descending=True)
-        ix_rois = ix_rois[order.data,:]
-
-        class_keep = nms(torch.cat((ix_rois, ix_scores.unsqueeze(1)), dim=1).data, config.DETECTION_NMS_THRESHOLD)
-
-        # Map indicies
-        class_keep = keep[ixs[order[class_keep].data].data]
-
-        if i == 0:
-            nms_keep = class_keep
-        else:
-            nms_keep = utils.unique1d(torch.cat((nms_keep, class_keep)))
-    keep = utils.intersect1d(keep, nms_keep)
-
-    # Keep top detections
-    roi_count = config.DETECTION_MAX_INSTANCES
-    top_ids = class_scores[keep.data].sort(descending=True)[1][:roi_count]
-    keep = keep[top_ids.data]
-
-    # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
-    # Coordinates are in image domain.
-    result = torch.cat((refined_rois[keep.data],
-                        class_ids[keep.data].unsqueeze(1).float(),
-                        class_scores[keep.data].unsqueeze(1)), dim=1)
-
-    return result
-
-
-def detection_layer(config, rois, mrcnn_class, mrcnn_bbox, image_meta):
-    """Takes classified proposal boxes and their bounding box deltas and
-    returns the final detection boxes.
-
-    Returns:
-    [batch, num_detections, (y1, x1, y2, x2, class_score)] in pixels
-    """
-
-    # Currently only supports batchsize 1
-    rois = rois.squeeze(0)
-
-    _, _, window, _ = utils.parse_image_meta(image_meta)
-    window = window[0]
-    detections = refine_detections(rois, mrcnn_class, mrcnn_bbox, window, config)
+    # conduct nms per sample
+    for i in range(bs):
+        curr_start = i*box_num_per_sample
+        curr_end = i*box_num_per_sample + box_num_per_sample
+        curr_keep_bool = keep_bool[curr_start:curr_end]
+        if torch.sum(curr_keep_bool.long()).data[0] == 0:
+            continue
+        curr_dets = conduct_nms(class_ids[curr_start:curr_end],
+                                refined_rois[curr_start:curr_end, :],
+                                class_scores[curr_start:curr_end],
+                                curr_keep_bool,
+                                config)
+        actual_dets_num = curr_dets.size(0)
+        detections[i, :actual_dets_num, :] = curr_dets
 
     return detections
 
