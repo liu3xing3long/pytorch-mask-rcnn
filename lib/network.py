@@ -1,4 +1,3 @@
-import datetime
 import re
 from lib.model import *
 from lib.layers import ResNet, FPN, RPN, Classifier, Mask, proposal_layer, detection_layer, prepare_detection_target
@@ -197,7 +196,7 @@ class MaskRCNN(nn.Module):
 
             return [detections, mrcnn_mask]
 
-        elif mode == 'training':
+        elif mode == 'train':
 
             target_class_ids_out, mrcnn_class_logits_out = [], []
             target_deltas_out, mrcnn_bbox_out = [], []
@@ -207,10 +206,10 @@ class MaskRCNN(nn.Module):
             cnt = 0  # relative index
             for i in range(start_sample_ind, start_sample_ind+sample_per_gpu):
                 # slice the input
-                gt_class_ids = input[2][i].squeeze()
-                gt_boxes = input[3][i].squeeze()
+                gt_class_ids = input[1][i].squeeze()
+                gt_boxes = input[2][i].squeeze()
                 gt_boxes = gt_boxes / scale
-                gt_masks = input[4][i].squeeze()
+                gt_masks = input[3][i].squeeze()
 
                 # Generate detection targets
                 # Subsamples proposals and generates target outputs for training
@@ -268,7 +267,7 @@ class MaskRCNN(nn.Module):
 
         if NO_ROI or args[0].size(0) < self.config.TRAIN_ROIS_PER_IMAGE:
 
-            num_rois = self.config.TRAIN_ROIS_PER_IMAGE
+            num_rois = self.config.TRAIN_ROIS_PER_IMAGE   # max_rois_per_image
             mask_sz = self.config.MASK_SHAPE[0]
             num_cls = self.config.NUM_CLASSES
             target_class_ids = Variable(torch.IntTensor(num_rois).zero_().cuda())

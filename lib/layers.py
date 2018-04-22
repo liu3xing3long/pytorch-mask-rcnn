@@ -9,24 +9,6 @@ from lib.nms.nms_wrapper import nms
 import torch.nn.functional as F
 
 
-############################################################
-#  FPN Graph
-############################################################
-# not used
-# class TopDownLayer(nn.Module):
-#
-#     def __init__(self, in_channels, out_channels):
-#         super(TopDownLayer, self).__init__()
-#         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1)
-#         self.padding2 = SamePad2d(kernel_size=3, stride=1)
-#         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1)
-#
-#     def forward(self, x, y):
-#         y = F.upsample(y, scale_factor=2)
-#         x = self.conv1(x)
-#         return self.conv2(self.padding2(x+y))
-
-
 class SamePad2d(nn.Module):
     """
         Mimic tensorflow's 'SAME' padding.
@@ -56,6 +38,22 @@ class SamePad2d(nn.Module):
         return self.__class__.__name__
 
 
+############################################################
+#  FPN Graph
+############################################################
+# not used
+# class TopDownLayer(nn.Module):
+#
+#     def __init__(self, in_channels, out_channels):
+#         super(TopDownLayer, self).__init__()
+#         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1)
+#         self.padding2 = SamePad2d(kernel_size=3, stride=1)
+#         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1)
+#
+#     def forward(self, x, y):
+#         y = F.upsample(y, scale_factor=2)
+#         x = self.conv1(x)
+#         return self.conv2(self.padding2(x+y))
 class FPN(nn.Module):
     def __init__(self, C1, C2, C3, C4, C5, out_channels):
         super(FPN, self).__init__()
@@ -211,6 +209,61 @@ class ResNet(nn.Module):
 
 
 ############################################################
+#  Region Proposal Network
+############################################################
+class RPN(nn.Module):
+    """Builds the model of Region Proposal Network.
+    anchors_per_location: number of anchors per pixel in the feature map
+    anchor_stride: Controls the density of anchors. Typically 1 (anchors for
+                   every pixel in the feature map), or 2 (every other pixel).
+    Returns:
+        rpn_logits: [batch, H, W, 2] Anchor classifier logits (before softmax)
+        rpn_probs: [batch, W, W, 2] Anchor classifier probabilities.
+        rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))] Deltas to be
+                  applied to anchors.
+    """
+
+    def __init__(self, anchors_per_location, anchor_stride, depth):
+        super(RPN, self).__init__()
+        self.anchors_per_location = anchors_per_location
+        self.anchor_stride = anchor_stride
+        self.depth = depth
+
+        self.padding = SamePad2d(kernel_size=3, stride=self.anchor_stride)
+        self.conv_shared = nn.Conv2d(self.depth, 512, kernel_size=3, stride=self.anchor_stride)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv_class = nn.Conv2d(512, 2 * anchors_per_location, kernel_size=1, stride=1)
+        self.softmax = nn.Softmax(dim=2)
+        self.conv_bbox = nn.Conv2d(512, 4 * anchors_per_location, kernel_size=1, stride=1)
+
+    def forward(self, x):
+        # Shared convolutional base of the RPN
+        x = self.relu(self.conv_shared(self.padding(x)))
+
+        # Anchor Score. [batch, anchors per location * 2, height, width].
+        rpn_class_logits = self.conv_class(x)
+
+        # Reshape to [batch, 2, anchors]
+        rpn_class_logits = rpn_class_logits.permute(0, 2, 3, 1)
+        rpn_class_logits = rpn_class_logits.contiguous()
+        rpn_class_logits = rpn_class_logits.view(x.size()[0], -1, 2)
+
+        # Softmax on last dimension of BG/FG.
+        rpn_probs = self.softmax(rpn_class_logits)
+
+        # Bounding box refinement. [batch, H, W, anchors per location, depth]
+        # where depth is [x, y, log(w), log(h)]
+        rpn_bbox = self.conv_bbox(x)
+
+        # Reshape to [batch, 4, anchors]
+        rpn_bbox = rpn_bbox.permute(0, 2, 3, 1)
+        rpn_bbox = rpn_bbox.contiguous()
+        rpn_bbox = rpn_bbox.view(x.size()[0], -1, 4)
+
+        return [rpn_class_logits, rpn_probs, rpn_bbox]
+
+
+############################################################
 #  Feature Pyramid Network Heads
 ############################################################
 class Classifier(nn.Module):
@@ -293,9 +346,6 @@ class Mask(nn.Module):
         return x
 
 
-############################################################
-#  Proposal Layer
-############################################################
 def apply_box_deltas(boxes, deltas):
     """Applies the given deltas to the given boxes.
     Args:
@@ -350,6 +400,9 @@ def clip_boxes(boxes, window):
     return boxes_out
 
 
+############################################################
+#  Proposal Layer
+############################################################
 def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
     """Receives anchor scores and selects a subset to pass as proposals
     to the second stage. Filtering is done based on anchor scores and
@@ -423,61 +476,6 @@ def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
     normalized_boxes = boxes_keep / norm
 
     return normalized_boxes
-
-
-############################################################
-#  Region Proposal Network
-############################################################
-class RPN(nn.Module):
-    """Builds the model of Region Proposal Network.
-    anchors_per_location: number of anchors per pixel in the feature map
-    anchor_stride: Controls the density of anchors. Typically 1 (anchors for
-                   every pixel in the feature map), or 2 (every other pixel).
-    Returns:
-        rpn_logits: [batch, H, W, 2] Anchor classifier logits (before softmax)
-        rpn_probs: [batch, W, W, 2] Anchor classifier probabilities.
-        rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))] Deltas to be
-                  applied to anchors.
-    """
-
-    def __init__(self, anchors_per_location, anchor_stride, depth):
-        super(RPN, self).__init__()
-        self.anchors_per_location = anchors_per_location
-        self.anchor_stride = anchor_stride
-        self.depth = depth
-
-        self.padding = SamePad2d(kernel_size=3, stride=self.anchor_stride)
-        self.conv_shared = nn.Conv2d(self.depth, 512, kernel_size=3, stride=self.anchor_stride)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv_class = nn.Conv2d(512, 2 * anchors_per_location, kernel_size=1, stride=1)
-        self.softmax = nn.Softmax(dim=2)
-        self.conv_bbox = nn.Conv2d(512, 4 * anchors_per_location, kernel_size=1, stride=1)
-
-    def forward(self, x):
-        # Shared convolutional base of the RPN
-        x = self.relu(self.conv_shared(self.padding(x)))
-
-        # Anchor Score. [batch, anchors per location * 2, height, width].
-        rpn_class_logits = self.conv_class(x)
-
-        # Reshape to [batch, 2, anchors]
-        rpn_class_logits = rpn_class_logits.permute(0,2,3,1)
-        rpn_class_logits = rpn_class_logits.contiguous()
-        rpn_class_logits = rpn_class_logits.view(x.size()[0], -1, 2)
-
-        # Softmax on last dimension of BG/FG.
-        rpn_probs = self.softmax(rpn_class_logits)
-
-        # Bounding box refinement. [batch, H, W, anchors per location, depth]
-        # where depth is [x, y, log(w), log(h)]
-        rpn_bbox = self.conv_bbox(x)
-
-        # Reshape to [batch, 4, anchors]
-        rpn_bbox = rpn_bbox.permute(0, 2, 3, 1)
-        rpn_bbox = rpn_bbox.contiguous()
-        rpn_bbox = rpn_bbox.view(x.size()[0], -1, 4)
-
-        return [rpn_class_logits, rpn_probs, rpn_bbox]
 
 
 ############################################################
@@ -617,31 +615,25 @@ def bbox_overlaps(boxes1, boxes2):
 
 
 def prepare_detection_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
-    """Subsamples proposals and generates target box refinement, class_ids and masks.
+    """Sub-samples proposals and generates target box refinement, class_ids and masks.
 
     Args:
         proposals:          [batch, N, (y1, x1, y2, x2)] in normalized coordinates.
-                            Might be zero padded if there are not enough proposals.
+                                        Might be zero padded if there are not enough proposals.
         gt_class_ids:       [batch, MAX_GT_INSTANCES] Integer class IDs.
         gt_boxes:           [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized coordinates.
         gt_masks:           [batch, height, width, MAX_GT_INSTANCES] of boolean type
-        config:
+        config:             configuration
 
     Returns:
         Target ROIs and corresponding class IDs, bounding box shifts, and masks.
         rois:               [batch, TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized coordinates
         target_class_ids:   [batch, TRAIN_ROIS_PER_IMAGE]. Integer class IDs.
         target_deltas:      [batch, TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (dy, dx, log(dh), log(dw), class_id)]
-                            Class-specific bbox refinements.
+                                        Class-specific bbox refinements.
         target_mask:        [batch, TRAIN_ROIS_PER_IMAGE, height, width)
-                            Masks cropped to bbox boundaries and resized to neural network output size.
+                                        Masks cropped to bbox boundaries and resized to neural network output size.
     """
-
-    # Currently only supports batchsize 1
-    proposals = proposals.squeeze(0)
-    gt_class_ids = gt_class_ids.squeeze(0)
-    gt_boxes = gt_boxes.squeeze(0)
-    gt_masks = gt_masks.squeeze(0)
 
     # Handle COCO crowds
     # A crowd box in COCO is a bounding box around several instances. Exclude
@@ -673,7 +665,7 @@ def prepare_detection_target(proposals, gt_class_ids, gt_boxes, gt_masks, config
     except:
         a = 1
 
-    # Determine postive and negative ROIs
+    # Determine positive and negative ROIs
     roi_iou_max = torch.max(overlaps, dim=1)[0]
 
     # 1. Positive ROIs are those with >= 0.5 IoU with a GT box
@@ -681,10 +673,10 @@ def prepare_detection_target(proposals, gt_class_ids, gt_boxes, gt_masks, config
 
     # Subsample ROIs. Aim for 33% positive ROIs
     if torch.nonzero(positive_roi_bool).size():
+
         positive_indices = torch.nonzero(positive_roi_bool)[:, 0]
 
-        positive_count = int(config.TRAIN_ROIS_PER_IMAGE *
-                             config.ROI_POSITIVE_RATIO)
+        positive_count = int(config.TRAIN_ROIS_PER_IMAGE*config.ROI_POSITIVE_RATIO)
         rand_idx = torch.randperm(positive_indices.size()[0])
         rand_idx = rand_idx[:positive_count]
         if config.GPU_COUNT:
@@ -1034,7 +1026,7 @@ def compute_mrcnn_bbox_loss(target_bbox, target_class_ids, pred_bbox):
         # # Gather the deltas (predicted and true) that contribute to loss
         # target_bbox = target_bbox[indices[:, 0].data, :]
         # pred_bbox = pred_bbox[indices[:, 0].data, indices[:, 1].data, :]
-
+        # TODO: optimize here
         # in my ugly manner
         ugly_ind = torch.nonzero(target_class_ids > 0).long()
         target_bbox_sort = Variable(torch.zeros(ugly_ind.size(0), 4).cuda(), requires_grad=False)

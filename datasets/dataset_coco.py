@@ -452,6 +452,7 @@ class DatasetPack(torch.utils.data.Dataset):
             gt_class_ids = gt_class_ids[ids]
             gt_boxes = gt_boxes[ids]
             gt_masks = gt_masks[:, :, ids]
+        # TODO: pad with zeros
 
         # Add to batch
         rpn_match = rpn_match[:, np.newaxis]
