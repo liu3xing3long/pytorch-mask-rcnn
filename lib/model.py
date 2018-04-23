@@ -83,7 +83,7 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
                                model.config.STEPS_PER_EPOCH, stage_name, epoch_str)
         else:
             loss = train_epoch_new(input_model, train_generator, optimizer,
-                                   stage_name=stage_name, epoch_str=epoch_str, config=model.config)
+                                   stage_name=stage_name, epoch_str=epoch_str)
         # Validation
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
@@ -92,7 +92,7 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
         # model.val_loss_history.append(val_loss)
         visualize.plot_loss(model.loss_history, model.val_loss_history,
                             save=True, log_dir=model.log_dir)
-        # Save model
+        # TODO: save model
         model_file = model.checkpoint_path.format(epoch)
         print_log('saving model: {:s}\n'.format(model_file), model.config.LOG_FILE)
         torch.save(model.state_dict(), model_file)
@@ -111,7 +111,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         model = input_model
 
     loss_sum = 0
-    config = args['config']
+    config = model.config
     data_iterator = iter(data_loader)
     iter_per_epoch = math.ceil(len(data_loader)/config.BATCH_SIZE)
 
@@ -120,28 +120,28 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         inputs = next(data_iterator)
 
         images = Variable(inputs[0].cuda())
-        # image_metas = inputs[1].numpy()
-        image_metas = Variable(inputs[1].cuda())
-        rpn_match = Variable(inputs[2].cuda())
-        rpn_bbox = Variable(inputs[3].cuda())
-        curr_bs = images.size(0)
-        for i in range(curr_bs):
-            inputs[4][i] = Variable(inputs[4][i].expand(config.GPU_COUNT, inputs[4][i].size(0)).cuda())
-            inputs[5][i] = Variable(inputs[5][i].expand(config.GPU_COUNT,
-                                                        inputs[5][i].size(0), inputs[5][i].size(1)).cuda())
-            inputs[6][i] = Variable(inputs[6][i].expand(config.GPU_COUNT,
-                                                        inputs[6][i].size(0),
-                                                        inputs[6][i].size(1), inputs[6][i].size(2)).cuda())
-        gt_class_ids = inputs[4]
-        gt_boxes = inputs[5]
-        gt_masks = inputs[6]
+        target_rpn_match = Variable(inputs[2].cuda())
+        target_rpn_bbox = Variable(inputs[3].cuda())
+        gt_class_ids = Variable(inputs[4].cuda())
+        gt_boxes = Variable(inputs[5].cuda())
+        gt_masks = Variable(inputs[6].cuda())
+
+        # # multi-gpu trick
+        # curr_bs = images.size(0)
+        # for i in range(curr_bs):
+        #     inputs[4][i] = Variable(inputs[4][i].expand(config.GPU_COUNT, inputs[4][i].size(0)).cuda())
+        #     inputs[5][i] = Variable(inputs[5][i].expand(config.GPU_COUNT,
+        #                                                 inputs[5][i].size(0), inputs[5][i].size(1)).cuda())
+        #     inputs[6][i] = Variable(inputs[6][i].expand(config.GPU_COUNT,
+        #                                                 inputs[6][i].size(0),
+        #                                                 inputs[6][i].size(1), inputs[6][i].size(2)).cuda())
 
         # Run object detection
         outputs = \
-            input_model([images, image_metas, gt_class_ids, gt_boxes, gt_masks], mode='training')
+            input_model([images, gt_class_ids, gt_boxes, gt_masks], mode=model.config.PHASE)
 
         # Compute losses
-        loss, detailed_losses = compute_losses(rpn_match, rpn_bbox, outputs)
+        loss, detailed_losses = compute_losses(target_rpn_match, target_rpn_bbox, outputs)
 
         optimizer.zero_grad()
         loss.backward()
@@ -290,14 +290,14 @@ def select_weights(config, network, model_dir):
     return config
 
 
-def compute_losses(rpn_match, target_bbox, inputs):
+def compute_losses(target_rpn_match, target_rpn_bbox, inputs):
 
     rpn_class_logits, rpn_pred_bbox, target_class_ids, \
-        mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask, valid_rois_list = \
+        mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask, _ = \
         inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], inputs[7], inputs[8]
 
-    rpn_class_loss = compute_rpn_class_loss(rpn_match, rpn_class_logits)
-    rpn_bbox_loss = compute_rpn_bbox_loss(target_bbox, rpn_match, rpn_pred_bbox)
+    rpn_class_loss = compute_rpn_class_loss(target_rpn_match, rpn_class_logits)
+    rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, rpn_pred_bbox)
     mrcnn_class_loss = compute_mrcnn_class_loss(target_class_ids, mrcnn_class_logits)
     mrcnn_bbox_loss = compute_mrcnn_bbox_loss(target_deltas, target_class_ids, mrcnn_bbox)
     mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
@@ -425,12 +425,8 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
         # Mold inputs to format expected by the neural network
         molded_images, image_metas, windows, images = _mold_inputs(model, curr_image_ids, dataset)
 
-        # Convert images to torch tensor
-        molded_images = torch.from_numpy(molded_images.transpose(0, 3, 1, 2)).float()
-        molded_images = Variable(molded_images.cuda(), volatile=True)
-
         # Run object detection
-        detections, mrcnn_mask = input_model([molded_images, image_metas], mode='inference')
+        detections, mrcnn_mask = input_model([molded_images, image_metas], mode=model.config.PHASE)
 
         # Convert to numpy
         detections = detections.data.cpu().numpy()
@@ -521,6 +517,11 @@ def _mold_inputs(model, image_ids, dataset):
     molded_images = np.stack(molded_images)
     image_metas = np.stack(image_metas)
     windows = np.stack(windows)
+
+    # Convert images to torch tensor
+    molded_images = torch.from_numpy(molded_images.transpose(0, 3, 1, 2)).float()
+    molded_images = Variable(molded_images.cuda(), volatile=True)
+
     return molded_images, image_metas, windows, images
 
 

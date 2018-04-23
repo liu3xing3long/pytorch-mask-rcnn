@@ -520,6 +520,36 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
 
 
 ############################################################
+#  Pytorch Utility Functions
+############################################################
+def unique1d(variable):
+    variable = variable.squeeze()
+    assert variable.dim() == 1
+    if variable.size(0) == 1:
+        return variable
+    variable = variable.sort()[0]
+    unique_bool = variable[1:] != variable[:-1]
+    first_element = Variable(torch.ByteTensor([True]), requires_grad=False)
+    if variable.is_cuda:
+        first_element = first_element.cuda()
+    unique_bool = torch.cat((first_element, unique_bool), dim=0)
+    return variable[unique_bool]
+
+
+def intersect1d(variable1, variable2):
+    aux = torch.cat((variable1, variable2), dim=0)
+    aux = aux.squeeze().sort()[0]
+    return aux[:-1][(aux[1:] == aux[:-1])]
+
+
+def log2(x):
+    """Implementation of Log2. Pytorch doesn't have a native implementation."""
+    ln2 = Variable(torch.log(torch.FloatTensor([2.0])), requires_grad=False)
+    if x.is_cuda:
+        ln2 = ln2.cuda()
+    return torch.log(x) / ln2
+
+############################################################
 #  Logging Utility Functions
 ############################################################
 # def log(text, array=None):
@@ -575,35 +605,6 @@ def print_log(msg, file=None, init=False):
             log_file.write('%s\n' % msg)
 
 
-############################################################
-#  Pytorch Utility Functions
-############################################################
-def unique1d(variable):
-    variable = variable.squeeze()
-    assert variable.dim() == 1
-    if variable.size(0) == 1:
-        return variable
-    variable = variable.sort()[0]
-    unique_bool = variable[1:] != variable[:-1]
-    first_element = Variable(torch.ByteTensor([True]), requires_grad=False)
-    if variable.is_cuda:
-        first_element = first_element.cuda()
-    unique_bool = torch.cat((first_element, unique_bool), dim=0)
-    return variable[unique_bool]
-
-
-def intersect1d(variable1, variable2):
-    aux = torch.cat((variable1, variable2), dim=0)
-    aux = aux.squeeze().sort()[0]
-    return aux[:-1][(aux[1:] == aux[:-1])]
-
-
-def log2(x):
-    """Implementation of Log2. Pytorch doesn't have a native implementation."""
-    ln2 = Variable(torch.log(torch.FloatTensor([2.0])), requires_grad=False)
-    if x.is_cuda:
-        ln2 = ln2.cuda()
-    return torch.log(x) / ln2
 
 
 
