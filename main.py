@@ -16,15 +16,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train Mask R-CNN on MS COCO.')
     parser.add_argument('--phase',
                         required=False,
-                        # default='train',
-                        default='inference',
+                        default='train',
+                        # default='inference',
                         help='train or inference')
     parser.add_argument('--config_name',
                         required=False,
                         default='all_new')
                         # default='hyli_default_old')
     parser.add_argument('--debug',
-                        default=1, type=int)
+                        default=1, type=int)  # no bool type here please
     parser.add_argument('--device_id',
                         default='0,1', type=str)
     parser.add_argument('--dataset_path',
@@ -71,6 +71,7 @@ if __name__ == '__main__':
 
     # Train or inference
     if args.phase == 'train':
+        # TODO: training workflow in accordance with Detectron
         # TODO (low): to consider inference during training
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1

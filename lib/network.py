@@ -1,6 +1,6 @@
 import re
 from lib.model import *
-from lib.layers import ResNet, FPN, RPN, Classifier, Mask, proposal_layer, detection_layer, prepare_detection_target
+from lib.layers import *
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -102,8 +102,13 @@ class MaskRCNN(nn.Module):
             if os.path.exists(filepath):
                 # TODO: find start_iter within epoch
                 self.load_state_dict(torch.load(filepath))
-                # self.start_epoch
-                # self.start_iter
+                try:
+                    self.start_epoch
+                    self.start_iter
+                except:
+                    self.start_epoch, self.start_iter = 0, 0
+
+                self.epoch = self.start_epoch
             else:
                 raise Exception("Weight file not found ...")
 
@@ -120,10 +125,11 @@ class MaskRCNN(nn.Module):
     def forward(self, input, mode):
         """forward function of the Mask-RCNN network"""
         curr_gpu_id = torch.cuda.current_device()
-        sample_per_gpu = int(self.config.BATCH_SIZE / self.config.GPU_COUNT)
+        molded_images = input[0]
+        # sample_per_gpu = int(self.config.BATCH_SIZE / self.config.GPU_COUNT)
+        sample_per_gpu = molded_images.size(0)  # aka, batch size
         # if self.config.DEBUG:
         #     print('forward on gpu {:d} now...'.format(curr_gpu_id))
-
         if mode == 'inference':
             self.eval()
         elif mode == 'training':
@@ -135,16 +141,16 @@ class MaskRCNN(nn.Module):
                     m.eval()
             self.apply(set_bn_eval)
 
-        molded_images = input[0]
         # Feature extraction
         [p2_out, p3_out, p4_out, p5_out, p6_out] = self.fpn(molded_images)
 
         # Note that P6 is used in RPN, but not in the classifier heads.
-        rpn_feature_maps = [p2_out, p3_out, p4_out, p5_out, p6_out]
+        _rpn_feature_maps = [p2_out, p3_out, p4_out, p5_out, p6_out]
+        _mrcnn_feature_maps = [p2_out, p3_out, p4_out, p5_out]
 
         # Loop through pyramid layers
         layer_outputs = []  # list of lists
-        for p in rpn_feature_maps:
+        for p in _rpn_feature_maps:
             layer_outputs.append(self.rpn(p))
 
         # Concatenate layer outputs
@@ -156,40 +162,35 @@ class MaskRCNN(nn.Module):
         rpn_class_logits, _rpn_class_score, rpn_pred_bbox = outputs
 
         # Generate proposals
-        # Proposals are [batch, N, (y1, x1, y2, x2)] in normalized coordinates
-        # and zero padded.
+        # Proposals are [batch, N, (y1, x1, y2, x2)] in normalized coordinates and zero padded.
         proposal_count = self.config.POST_NMS_ROIS_TRAINING if mode == "training" \
             else self.config.POST_NMS_ROIS_INFERENCE
-        _rpn_rois = proposal_layer([_rpn_class_score, rpn_pred_bbox],
-                                   proposal_count=proposal_count,
-                                   nms_threshold=self.config.RPN_NMS_THRESHOLD,
-                                   anchors=self.anchors,
-                                   config=self.config)
-        _mrcnn_feature_maps = [p2_out, p3_out, p4_out, p5_out]
-
+        _proposals = proposal_layer([_rpn_class_score, rpn_pred_bbox],
+                                    proposal_count=proposal_count,
+                                    nms_threshold=self.config.RPN_NMS_THRESHOLD,
+                                    anchors=self.anchors,
+                                    config=self.config)
         # Normalize coordinates
         h, w = self.config.IMAGE_SHAPE[:2]
-        scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False)
-        if self.config.GPU_COUNT:
-            scale = scale.cuda()
-
-        start_sample_ind = curr_gpu_id*sample_per_gpu
-        end_sample_ind = start_sample_ind+sample_per_gpu
+        scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False).cuda()
 
         if mode == 'inference':
             # Network Heads
             # Proposal classifier and BBox regressor heads
-            _, mrcnn_class, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _rpn_rois)
+            _, mrcnn_class, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _proposals)
 
             # Detections
+            start_sample_ind = curr_gpu_id*sample_per_gpu
+            end_sample_ind = start_sample_ind+sample_per_gpu
             image_metas = input[1][start_sample_ind:end_sample_ind]  # (3, 89), ndarray
             # output is [batch, num_detections (say 100), (y1, x1, y2, x2, class_id, score)] in image coordinates
-            detections = detection_layer(_rpn_rois, mrcnn_class, mrcnn_bbox, image_metas, self.config)
+            detections = detection_layer(_proposals, mrcnn_class, mrcnn_bbox, image_metas, self.config)
 
             # Convert boxes to normalized coordinates
             normalize_boxes = detections[:, :, :4] / scale
             # Create masks for detections
             mrcnn_mask = self.mask(_mrcnn_feature_maps, normalize_boxes)
+
             # shape: batch, num_detections, 81, 28, 28
             mrcnn_mask = mrcnn_mask.view(sample_per_gpu, -1,
                                          mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
@@ -198,98 +199,54 @@ class MaskRCNN(nn.Module):
 
         elif mode == 'train':
 
-            target_class_ids_out, mrcnn_class_logits_out = [], []
-            target_deltas_out, mrcnn_bbox_out = [], []
-            target_mask_out, mrcnn_mask_out = [], []
-            valid_rois_list = Variable(torch.zeros(sample_per_gpu).cuda(), requires_grad=False)
+            gt_class_ids, gt_boxes, gt_masks = input[1], input[2], input[3]
+            gt_boxes = gt_boxes / scale
 
-            cnt = 0  # relative index
-            for i in range(start_sample_ind, start_sample_ind+sample_per_gpu):
-                # slice the input
-                gt_class_ids = input[1][i].squeeze()
-                gt_boxes = input[2][i].squeeze()
-                gt_boxes = gt_boxes / scale
-                gt_masks = input[3][i].squeeze()
+            _rois, target_class_ids, target_deltas, target_mask, volatiles = \
+                prepare_det_target(_proposals, gt_class_ids, gt_boxes, gt_masks, self.config)
 
-                # Generate detection targets
-                # Subsamples proposals and generates target outputs for training
-                # Note that proposal class IDs, gt_boxes, and gt_masks are zero
-                # padded. Equally, returned rois and targets are zero padded.
-                _rois, target_class_ids, target_deltas, target_mask = \
-                    prepare_detection_target(_rpn_rois[cnt, :, :], gt_class_ids, gt_boxes, gt_masks, self.config)
+            if torch.sum(_rois).data[0] != 0:
+                # Proposal classifier and BBox regressor heads
+                mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _rois)
+                # Create masks for detections
+                mrcnn_mask = self.mask(_mrcnn_feature_maps, _rois)
 
-                if not _rois.size():
-                    # no ROIs are found
-                    mrcnn_class_logits = 'damn, no RoI found'
-                    mrcnn_bbox = 'damn, no RoI found'
-                    mrcnn_mask = 'damn, no RoI found'
-                else:
-                    # Network Heads
-                    # Proposal classifier and BBox regressor heads
-                    _mrcnn_feature_maps = [p2_out[cnt], p3_out[cnt], p4_out[cnt], p5_out[cnt]]
-                    mrcnn_class_logits, _, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _rois)
-                    # Create masks for detections
-                    mrcnn_mask = self.mask(_mrcnn_feature_maps, _rois)
-
-                valid_rois_list[cnt], (
-                    target_class_ids, mrcnn_class_logits,
-                    target_deltas, mrcnn_bbox,
-                    target_mask, mrcnn_mask) = self._adjust_out_rois(
-                                                        target_class_ids, mrcnn_class_logits,
-                                                        target_deltas, mrcnn_bbox,
-                                                        target_mask, mrcnn_mask)
-
-                target_class_ids_out.append(target_class_ids)
-                mrcnn_class_logits_out.append(mrcnn_class_logits)
-                target_deltas_out.append(target_deltas)
-                mrcnn_bbox_out.append(mrcnn_bbox)
-                target_mask_out.append(target_mask)
-                mrcnn_mask_out.append(mrcnn_mask)
-
-                cnt += 1
+                mrcnn_class_logits = mrcnn_cls_logits.view(sample_per_gpu, -1, mrcnn_cls_logits.size(1))
+                mrcnn_bbox = mrcnn_bbox.view(sample_per_gpu, -1, mrcnn_bbox.size(1), mrcnn_bbox.size(2))
+                mrcnn_mask = mrcnn_mask.view(sample_per_gpu, -1,
+                                             mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
+            else:
+                [mrcnn_class_logits, mrcnn_bbox, mrcnn_mask] = volatiles
 
             output = [rpn_class_logits, rpn_pred_bbox,
-                      torch.stack(target_class_ids_out), torch.stack(mrcnn_class_logits_out),
-                      torch.stack(target_deltas_out), torch.stack(mrcnn_bbox_out),
-                      torch.stack(target_mask_out), torch.stack(mrcnn_mask_out),
-                      valid_rois_list]
+                      target_class_ids, mrcnn_class_logits,
+                      target_deltas, mrcnn_bbox,
+                      target_mask, mrcnn_mask]
             # if self.config.DEBUG:
             #     for ind, out in enumerate(output):
             #         print('output {:d}, on gpu {:d}'.format(ind, out.get_device()))
             #     print('curr forward done!')
             return output
 
-    def _adjust_out_rois(self, *args):
+    def adjust_input_gt(self, *args):
+        gt_cls_ids = args[0]
+        gt_boxes = args[1]
+        gt_masks = args[2]
+        gt_num = [x.shape[0] for x in gt_cls_ids]
+        max_gt_num = max(gt_num)
+        bs = len(gt_cls_ids)
+        mask_shape = gt_masks[0].shape[1]
 
-        NO_ROI = False
-        if not args[0].size():
-            NO_ROI = True
+        GT_CLS_IDS = torch.zeros(bs, max_gt_num)
+        GT_BOXES = torch.zeros(bs, max_gt_num, 4)
+        GT_MASKS = torch.zeros(bs, max_gt_num, mask_shape, mask_shape)
+        for i in range(bs):
+            GT_CLS_IDS[i, :gt_num[i]] = torch.from_numpy(gt_cls_ids[i])
+            GT_BOXES[i, :gt_num[i], :] = torch.from_numpy(gt_boxes[i]).float()
+            GT_MASKS[i, :gt_num[i], :, :] = torch.from_numpy(gt_masks[i]).float()
 
-        if NO_ROI or args[0].size(0) < self.config.TRAIN_ROIS_PER_IMAGE:
+        GT_CLS_IDS = Variable(GT_CLS_IDS.cuda(), requires_grad=False)
+        GT_BOXES = Variable(GT_BOXES.cuda(), requires_grad=False)
+        GT_MASKS = Variable(GT_MASKS.cuda(), requires_grad=False)
 
-            num_rois = self.config.TRAIN_ROIS_PER_IMAGE   # max_rois_per_image
-            mask_sz = self.config.MASK_SHAPE[0]
-            num_cls = self.config.NUM_CLASSES
-            target_class_ids = Variable(torch.IntTensor(num_rois).zero_().cuda())
-            mrcnn_class_logits = Variable(torch.zeros(num_rois, num_cls).cuda())
-            target_deltas = Variable(torch.zeros(num_rois, 4).cuda())
-            mrcnn_bbox = Variable(torch.zeros(num_rois, num_cls, 4).cuda())
-            target_mask = Variable(torch.zeros(num_rois, mask_sz, mask_sz).cuda())
-            mrcnn_mask = Variable(torch.zeros(num_rois, num_cls, mask_sz, mask_sz).cuda())
-
-            if not NO_ROI:
-                target_class_ids[:args[0].size(0)] = args[0]
-                mrcnn_class_logits[:args[0].size(0)] = args[1]
-                target_deltas[:args[0].size(0)] = args[2]
-                mrcnn_bbox[:args[0].size(0)] = args[3]
-                target_mask[:args[0].size(0)] = args[4]
-                mrcnn_mask[:args[0].size(0)] = args[5]
-                actual_num_rois = args[0].size(0)
-            else:
-                actual_num_rois = 0
-
-            return actual_num_rois, (target_class_ids, mrcnn_class_logits,
-                                     target_deltas, mrcnn_bbox, target_mask, mrcnn_mask)
-
-        elif args[0].size(0) == self.config.TRAIN_ROIS_PER_IMAGE:
-            return self.config.TRAIN_ROIS_PER_IMAGE, args
+        return GT_CLS_IDS, GT_BOXES, GT_MASKS, gt_num

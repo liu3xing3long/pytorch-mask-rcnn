@@ -5,6 +5,7 @@ import torch
 import scipy.misc
 import scipy.ndimage
 from torch.autograd import Variable
+# import cv2
 
 
 ############################################################
@@ -216,11 +217,8 @@ def load_image_gt(dataset, config, image_id, augment=False, use_mini_mask=False)
     image = dataset.load_image(image_id)
     mask, class_ids = dataset.load_mask(image_id)
     shape = image.shape
-    image, window, scale, padding = resize_image(
-        image,
-        min_dim=config.IMAGE_MIN_DIM,
-        max_dim=config.IMAGE_MAX_DIM,
-        padding=config.IMAGE_PADDING)
+    image, window, scale, padding = resize_image(image, min_dim=config.IMAGE_MIN_DIM,
+                                                 max_dim=config.IMAGE_MAX_DIM, padding=config.IMAGE_PADDING)
     mask = resize_mask(mask, scale, padding)
 
     # Random horizontal flips.

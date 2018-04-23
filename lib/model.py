@@ -27,7 +27,7 @@ LAYER_REGEX = {
 def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_call, layers):
     """
     Args:
-        input_model:
+        input_model:        nn.DataParallel
         train_generator:
         val_generator:
         lr:
@@ -52,6 +52,14 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
     else:
         # single-gpu
         model = input_model
+
+    num_train_im = train_generator.dataset.dataset.num_images
+    assert (num_train_im % model.config.BATCH_SIZE) % \
+           model.config.GPU_COUNT == 0, 'last mini-batch in an epoch is not divisible by gpu number.\n' \
+                                        'total train im: {:d}, batch size: {:d}, gpu num {:d}\n' \
+                                        'last mini-batch size: {:d}\n'.format(
+        num_train_im, model.config.BATCH_SIZE, model.config.GPU_COUNT, (num_train_im % model.config.BATCH_SIZE)
+    )
 
     if model.epoch > total_ep_curr_call:
         print_log('skip {:s} stage ...'.format(stage_name), model.config.LOG_FILE)
@@ -122,10 +130,12 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         images = Variable(inputs[0].cuda())
         target_rpn_match = Variable(inputs[2].cuda())
         target_rpn_bbox = Variable(inputs[3].cuda())
-        gt_class_ids = Variable(inputs[4].cuda())
-        gt_boxes = Variable(inputs[5].cuda())
-        gt_masks = Variable(inputs[6].cuda())
+        gt_class_ids, gt_boxes, gt_masks, _ = \
+            model.adjust_input_gt(inputs[4], inputs[5], inputs[6])
 
+        # gt_class_ids = Variable(inputs[4].cuda())
+        # gt_boxes = Variable(inputs[5].cuda())
+        # gt_masks = Variable(inputs[6].cuda())
         # # multi-gpu trick
         # curr_bs = images.size(0)
         # for i in range(curr_bs):
@@ -277,8 +287,8 @@ def select_weights(config, network, model_dir):
     network.load_weights(model_path)
     # add new info to config
     config.START_MODEL_FILE = model_path
-    # config.START_EPOCH = network.start_epoch
-    # config.START_ITER = network.start_iter
+    config.START_EPOCH = network.start_epoch
+    config.START_ITER = network.start_iter
     if config.PHASE == 'train':
         config.LOG_FILE = os.path.join(
             network.log_dir, 'log_start_ep_{:d}_iter_{:d}.txt'.format(network.start_epoch, network.start_iter))
@@ -293,8 +303,8 @@ def select_weights(config, network, model_dir):
 def compute_losses(target_rpn_match, target_rpn_bbox, inputs):
 
     rpn_class_logits, rpn_pred_bbox, target_class_ids, \
-        mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask, _ = \
-        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], inputs[7], inputs[8]
+        mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
+        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], inputs[7]
 
     rpn_class_loss = compute_rpn_class_loss(target_rpn_match, rpn_class_logits)
     rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, rpn_pred_bbox)
@@ -373,16 +383,13 @@ def compute_losses(target_rpn_match, target_rpn_bbox, inputs):
 #     return loss_sum
 
 
-############################################################
-#  COCO Evaluation
-############################################################
 def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     """
         Test the trained model
         Args:
-            input_model:
+            input_model:    nn.DataParallel
             valset:         validation dataset
-            coco_api:
+            coco_api:       api
             limit:          the number of images to use for evaluation
             image_ids:      a certain image
     """
@@ -403,7 +410,8 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
 
     num_test_im = len(image_ids)
     print("Running COCO evaluation on {} images.".format(num_test_im))
-
+    assert (num_test_im % model.config.BATCH_SIZE) % model.config.GPU_COUNT == 0, 'last mini-batch in an epoch' \
+                                                                                  'is not divisible by gpu number.'
     # Get corresponding COCO image IDs.
     coco_image_ids = [dataset.image_info[ind]["id"] for ind in image_ids]
 
@@ -416,12 +424,12 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
 
     # for i, image_id in enumerate(image_ids):
     for iter_ind in range(total_iter):
-        # Load image
+
         curr_image_ids = image_ids[iter_ind*model.config.BATCH_SIZE :
                             min(iter_ind*model.config.BATCH_SIZE + model.config.BATCH_SIZE, num_test_im)]
+        # if iter_ind > 820:  # for debug
         # Run detection
         t_pred_start = time.time()
-
         # Mold inputs to format expected by the neural network
         molded_images, image_metas, windows, images = _mold_inputs(model, curr_image_ids, dataset)
 
@@ -451,19 +459,17 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
                     "segmentation": maskUtils.encode(np.asfortranarray(final_masks[:, :, det_id]))
                 }
                 results.append(curr_result)
-
         t_prediction += (time.time() - t_pred_start)
-        cnt += len(curr_image_ids)
 
+        cnt += len(curr_image_ids)
         if iter_ind % (model.config.SHOW_INTERVAL*10) == 0 or cnt == len(image_ids):
             print_log('[{:s}][{:s}] evaluation progress \t{:4d} images /{:4d} total ...'.
                       format(model.config.NAME, model_file_name, cnt, len(image_ids)), model.config.LOG_FILE)
 
-    print("Prediction time: {}. Average {}/image".format(
-        t_prediction, t_prediction / len(image_ids)))
+    print("Prediction time: {:.4f}. Average {:.4f} sec/image".format(t_prediction, t_prediction / len(image_ids)))
 
     # Evaluate
-    print('begin to evaluate ...')
+    print('\nBegin to evaluate ...')
     # Load results. This modifies results with additional attributes.
     coco_results = coco_api.loadRes(results)
     eval_type = "bbox"
@@ -472,7 +478,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     cocoEval.evaluate()
     cocoEval.accumulate()
     cocoEval.summarize()
-    print("Total time: ", time.time() - t_start)
+    print('Total time: {:.4f}'.format(time.time() - t_start))
     print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
               format(model.config.NAME, model.config.START_MODEL_FILE, cocoEval.stats[0]),
               model.config.LOG_FILE)

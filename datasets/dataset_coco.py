@@ -452,7 +452,6 @@ class DatasetPack(torch.utils.data.Dataset):
             gt_class_ids = gt_class_ids[ids]
             gt_boxes = gt_boxes[ids]
             gt_masks = gt_masks[:, :, ids]
-        # TODO: pad with zeros
 
         # Add to batch
         rpn_match = rpn_match[:, np.newaxis]
@@ -461,13 +460,14 @@ class DatasetPack(torch.utils.data.Dataset):
         # Convert to Tensors
         images = torch.from_numpy(images.transpose(2, 0, 1)).float()
         image_metas = torch.from_numpy(image_metas)
-        rpn_match = torch.from_numpy(rpn_match)
-        rpn_bbox = torch.from_numpy(rpn_bbox).float()
-        gt_class_ids = torch.from_numpy(gt_class_ids)
-        gt_boxes = torch.from_numpy(gt_boxes).float()
-        gt_masks = torch.from_numpy(gt_masks.astype(int).transpose(2, 0, 1)).float()
+        target_rpn_match = torch.from_numpy(rpn_match)
+        target_rpn_bbox = torch.from_numpy(rpn_bbox).float()
+        gt_masks = gt_masks.astype(int).transpose(2, 0, 1)
+        # gt_class_ids = torch.from_numpy(gt_class_ids)
+        # gt_boxes = torch.from_numpy(gt_boxes).float()
+        # gt_masks = torch.from_numpy(gt_masks.astype(int).transpose(2, 0, 1)).float()
 
-        return images, image_metas, rpn_match, rpn_bbox, gt_class_ids, gt_boxes, gt_masks
+        return images, image_metas, target_rpn_match, target_rpn_bbox, gt_class_ids, gt_boxes, gt_masks
 
     def __len__(self):
         return self.image_ids.shape[0]

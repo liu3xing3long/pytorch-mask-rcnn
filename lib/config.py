@@ -218,9 +218,9 @@ class CocoConfig(Config):
             self.MODEL_FILE_CHOICE = 'coco_pretrain'
             self.IMAGE_MIN_DIM = 256
             self.IMAGE_MAX_DIM = 320
-            self.USE_MINI_MASK = False
+            # self.USE_MINI_MASK = False
             # self.MINI_MASK_SHAPE = (28, 28)
-            self.DETECTION_NMS_THRESHOLD = 0.3
+            # self.DETECTION_NMS_THRESHOLD = 0.3
 
         elif self.NAME == 'all_new_2':
             self.BATCH_SIZE = 8
