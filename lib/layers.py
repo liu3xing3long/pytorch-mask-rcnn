@@ -631,7 +631,7 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
     # gt_class_ids: size N
 
     if torch.nonzero(gt_class_ids < 0).size():
-        a = 1
+
         _ind_crowd = torch.nonzero(gt_class_ids < 0).squeeze()
         _ind_non_crowd = torch.nonzero(gt_class_ids > 0).squeeze()
         crowd_boxes = gt_boxes[_ind_crowd, :]
@@ -652,7 +652,8 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
     try:
         overlaps = bbox_overlaps(proposals, gt_boxes)   # TODO: gt_boxes might be empty
     except:
-        a = 1
+        print('proposals size: ', proposals.size())
+        print('gt_boxes size: ', gt_boxes.size())
 
     # Determine positive and negative ROIs
     # shape [bs, N], means the maximum overlap for each RoI (N) with GTs
@@ -790,6 +791,12 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
             zeros = zeros.cuda()
         MASKS = zeros
 
+    # updated: pad ROIS
+    if ROIS.size(0) < config.TRAIN_ROIS_PER_IMAGE:
+        more_zero_num = config.TRAIN_ROIS_PER_IMAGE - ROIS.size(0)
+        zeros = Variable(torch.zeros(more_zero_num, 4).cuda())  # should require gradient
+        ROIS = torch.cat((ROIS, zeros), dim=0)
+
     return ROIS, ROI_GT_CLASS_IDS, DELTAS, MASKS
 
 
@@ -797,23 +804,26 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     """Sub-samples proposals and generates target box refinement, class_ids and masks.
         Note that proposal class IDs, gt_boxes, and gt_masks are zero padded.
         Equally, returned rois and targets are zero padded.
+
     Args:
         proposals:          [batch, N, (y1, x1, y2, x2)] in normalized coordinates.
-                                        Might be zero padded if there are not enough proposals.
-        gt_class_ids:       [batch, MAX_GT_INSTANCES] Integer class IDs.
-        gt_boxes:           [batch, MAX_GT_INSTANCES, (y1, x1, y2, x2)] in normalized coordinates.
-        gt_masks:           [batch, MAX_GT_INSTANCES, height, width] of boolean type
+                                Might be zero padded if there are not enough proposals.
+        gt_class_ids:       [batch, MAX_GT_NUM] Integer class IDs.
+        gt_boxes:           [batch, MAX_GT_NUM, (y1, x1, y2, x2)] in normalized coordinates.
+        gt_masks:           [batch, MAX_GT_NUM, height, width] of boolean type
         config:             configuration
+
     Notes:
-        MAX_GT_INSTANCES is not that in config; it's the max_gt_num within this batch
+        MAX_GT_NUM <= config.MAX_GT_INSTANCES: it's the max_gt_num within this batch
+
     Returns:
-        Target ROIs and corresponding class IDs, bounding box shifts, and masks.
         rois:               [batch, TRAIN_ROIS_PER_IMAGE, (y1, x1, y2, x2)] in normalized coordinates
         target_class_ids:   [batch, TRAIN_ROIS_PER_IMAGE]. Integer class IDs.
         target_deltas:      [batch, TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (dy, dx, log(dh), log(dw), class_id)]
-                                        Class-specific bbox refinements.
+                                Class-specific bbox refinements.
         target_mask:        [batch, TRAIN_ROIS_PER_IMAGE, height, width)
-                                        Masks cropped to bbox boundaries and resized to neural network output size.
+                                Masks cropped to bbox boundaries and resized to neural network output size.
+        volatiles:          prepare empty output if rois_out is all zeros.
     """
     bs = proposals.size(0)
     # set up new variables
@@ -821,7 +831,8 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     mask_sz = config.MASK_SHAPE[0]
     num_cls = config.NUM_CLASSES
 
-    rois_out = Variable(torch.zeros(bs, num_rois, 4).cuda())
+    # rois_out = Variable(torch.zeros(bs, num_rois, 4).cuda())  # needs gradient
+    rois_out = []
     target_class_ids = Variable(torch.IntTensor(bs, num_rois).zero_().cuda(), requires_grad=False)
     target_deltas = Variable(torch.zeros(bs, num_rois, 4).cuda(), requires_grad=False)
     target_mask = Variable(torch.zeros(bs, num_rois, mask_sz, mask_sz).cuda(), requires_grad=False)
@@ -832,7 +843,7 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     volatiles = [mrcnn_class_logits, mrcnn_bbox, mrcnn_mask]
 
     for i in range(bs):
-
+        # per sample
         rois, roi_gt_class_ids, deltas, masks = \
             generate_roi(config, proposals[i], gt_class_ids[i], gt_boxes[i], gt_masks[i])
         if rois is not None:
@@ -841,8 +852,9 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
             target_class_ids[i, :curr_rois_num] = roi_gt_class_ids
             target_deltas[i, :curr_rois_num] = deltas
             target_mask[i, :curr_rois_num] = masks
+            rois_out.append(rois)
 
-    return rois_out, target_class_ids, target_deltas, target_mask, volatiles
+    return torch.stack(rois_out), target_class_ids, target_deltas, target_mask, volatiles
 
 
 ############################################################
@@ -1028,7 +1040,7 @@ def compute_rpn_bbox_loss(target_bbox, rpn_match, rpn_bbox):
     rpn_bbox = rpn_bbox[indices.data[:, 0], indices.data[:, 1]]
 
     # Trim target bounding box deltas to the same length as rpn_bbox.
-    # TODO (high, important): ORIGINAL CODE BUGGY HERE
+    # TODO (high, important): LOSS, ORIGINAL CODE BUGGY HERE
     # target_bbox = target_bbox[0, :rpn_bbox.size()[0], :]
     bs = target_bbox.size(0)
     target_bbox_sort = Variable(torch.zeros(rpn_bbox.size()).cuda(), requires_grad=False)
@@ -1080,7 +1092,7 @@ def compute_mrcnn_bbox_loss(target_bbox, target_class_ids, pred_bbox):
         # # Gather the deltas (predicted and true) that contribute to loss
         # target_bbox = target_bbox[indices[:, 0].data, :]
         # pred_bbox = pred_bbox[indices[:, 0].data, indices[:, 1].data, :]
-        # TODO: optimize here
+        # TODO: optimize here, loss
         # in my ugly manner
         ugly_ind = torch.nonzero(target_class_ids > 0).long()
         target_bbox_sort = Variable(torch.zeros(ugly_ind.size(0), 4).cuda(), requires_grad=False)

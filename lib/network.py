@@ -127,12 +127,15 @@ class MaskRCNN(nn.Module):
         curr_gpu_id = torch.cuda.current_device()
         molded_images = input[0]
         # sample_per_gpu = int(self.config.BATCH_SIZE / self.config.GPU_COUNT)
-        sample_per_gpu = molded_images.size(0)  # aka, batch size
+        sample_per_gpu = molded_images.size(0)  # aka, actual batch size
         # if self.config.DEBUG:
         #     print('forward on gpu {:d} now...'.format(curr_gpu_id))
+
         if mode == 'inference':
+            proposal_count = self.config.POST_NMS_ROIS_INFERENCE
             self.eval()
-        elif mode == 'training':
+        elif mode == 'train':
+            proposal_count = self.config.POST_NMS_ROIS_TRAINING
             self.train()
             # Set batchnorm always in eval mode during training
             def set_bn_eval(m):
@@ -163,8 +166,6 @@ class MaskRCNN(nn.Module):
 
         # Generate proposals
         # Proposals are [batch, N, (y1, x1, y2, x2)] in normalized coordinates and zero padded.
-        proposal_count = self.config.POST_NMS_ROIS_TRAINING if mode == "training" \
-            else self.config.POST_NMS_ROIS_INFERENCE
         _proposals = proposal_layer([_rpn_class_score, rpn_pred_bbox],
                                     proposal_count=proposal_count,
                                     nms_threshold=self.config.RPN_NMS_THRESHOLD,
@@ -202,33 +203,35 @@ class MaskRCNN(nn.Module):
             gt_class_ids, gt_boxes, gt_masks = input[1], input[2], input[3]
             gt_boxes = gt_boxes / scale
 
+            # _rois: N, TRAIN_ROIS_PER_IMAGE, 4; zero padded
             _rois, target_class_ids, target_deltas, target_mask, volatiles = \
                 prepare_det_target(_proposals, gt_class_ids, gt_boxes, gt_masks, self.config)
 
             if torch.sum(_rois).data[0] != 0:
-                # Proposal classifier and BBox regressor heads
+                # classifier
                 mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _rois)
-                # Create masks for detections
+                # mask
                 mrcnn_mask = self.mask(_mrcnn_feature_maps, _rois)
-
+                # reshape output
                 mrcnn_class_logits = mrcnn_cls_logits.view(sample_per_gpu, -1, mrcnn_cls_logits.size(1))
                 mrcnn_bbox = mrcnn_bbox.view(sample_per_gpu, -1, mrcnn_bbox.size(1), mrcnn_bbox.size(2))
                 mrcnn_mask = mrcnn_mask.view(sample_per_gpu, -1,
                                              mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
             else:
+                # if ALL samples within the batch has empty "_rois", skip the heads and output zero predictions.
+                # this is really rare case. otherwise, pass the heads even some samples don't have _rois.
                 [mrcnn_class_logits, mrcnn_bbox, mrcnn_mask] = volatiles
 
-            output = [rpn_class_logits, rpn_pred_bbox,
-                      target_class_ids, mrcnn_class_logits,
-                      target_deltas, mrcnn_bbox,
-                      target_mask, mrcnn_mask]
             # if self.config.DEBUG:
             #     for ind, out in enumerate(output):
             #         print('output {:d}, on gpu {:d}'.format(ind, out.get_device()))
             #     print('curr forward done!')
-            return output
+
+            return [rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits,
+                    target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
 
     def adjust_input_gt(self, *args):
+        """zero-padding different number of GTs for each image within the batch"""
         gt_cls_ids = args[0]
         gt_boxes = args[1]
         gt_masks = args[2]

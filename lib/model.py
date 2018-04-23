@@ -106,7 +106,7 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
         torch.save(model.state_dict(), model_file)
 
     # update the epoch info
-    # TODO: check here
+    # TODO: check here, model.epoch
     model.epoch = total_ep_curr_call
 
 
@@ -130,25 +130,13 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         images = Variable(inputs[0].cuda())
         target_rpn_match = Variable(inputs[2].cuda())
         target_rpn_bbox = Variable(inputs[3].cuda())
-        gt_class_ids, gt_boxes, gt_masks, _ = \
-            model.adjust_input_gt(inputs[4], inputs[5], inputs[6])
-
-        # gt_class_ids = Variable(inputs[4].cuda())
-        # gt_boxes = Variable(inputs[5].cuda())
-        # gt_masks = Variable(inputs[6].cuda())
-        # # multi-gpu trick
-        # curr_bs = images.size(0)
-        # for i in range(curr_bs):
-        #     inputs[4][i] = Variable(inputs[4][i].expand(config.GPU_COUNT, inputs[4][i].size(0)).cuda())
-        #     inputs[5][i] = Variable(inputs[5][i].expand(config.GPU_COUNT,
-        #                                                 inputs[5][i].size(0), inputs[5][i].size(1)).cuda())
-        #     inputs[6][i] = Variable(inputs[6][i].expand(config.GPU_COUNT,
-        #                                                 inputs[6][i].size(0),
-        #                                                 inputs[6][i].size(1), inputs[6][i].size(2)).cuda())
+        # pad with zeros
+        gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[4], inputs[5], inputs[6])
 
         # Run object detection
-        outputs = \
-            input_model([images, gt_class_ids, gt_boxes, gt_masks], mode=model.config.PHASE)
+        # [rpn_class_logits, rpn_pred_bbox,
+        # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
+        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks], mode=model.config.PHASE)
 
         # Compute losses
         loss, detailed_losses = compute_losses(target_rpn_match, target_rpn_bbox, outputs)
@@ -173,6 +161,123 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         loss_sum += loss.data.cpu()[0]/iter_per_epoch
 
     return loss_sum
+
+
+def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
+    """
+        Test the trained model
+        Args:
+            input_model:    nn.DataParallel
+            valset:         validation dataset
+            coco_api:       api
+            limit:          the number of images to use for evaluation
+            image_ids:      a certain image
+    """
+    if isinstance(input_model, nn.DataParallel):
+        model = input_model.module
+    else:
+        # single-gpu
+        model = input_model
+
+    model_file_name = os.path.basename(model.config.START_MODEL_FILE)
+    dataset = valset.dataset
+
+    # Pick COCO images from the dataset
+    image_ids = image_ids or dataset.image_ids
+    # Limit to a subset
+    if limit > 0:
+        image_ids = image_ids[:limit]
+
+    num_test_im = len(image_ids)
+    print("Running COCO evaluation on {} images.".format(num_test_im))
+    assert (num_test_im % model.config.BATCH_SIZE) % model.config.GPU_COUNT == 0, 'last mini-batch in an epoch' \
+                                                                                  'is not divisible by gpu number.'
+    # Get corresponding COCO image IDs.
+    coco_image_ids = [dataset.image_info[ind]["id"] for ind in image_ids]
+
+    t_prediction = 0
+    t_start = time.time()
+
+    results = []
+    total_iter = math.ceil(num_test_im / model.config.BATCH_SIZE)
+    cnt = 0
+
+    # for i, image_id in enumerate(image_ids):
+    for iter_ind in range(total_iter):
+
+        curr_image_ids = image_ids[iter_ind*model.config.BATCH_SIZE :
+                            min(iter_ind*model.config.BATCH_SIZE + model.config.BATCH_SIZE, num_test_im)]
+        # if iter_ind > 820:  # for debug
+        # Run detection
+        t_pred_start = time.time()
+        # Mold inputs to format expected by the neural network
+        molded_images, image_metas, windows, images = _mold_inputs(model, curr_image_ids, dataset)
+
+        # Run object detection
+        detections, mrcnn_mask = input_model([molded_images, image_metas], mode=model.config.PHASE)
+
+        # Convert to numpy
+        detections = detections.data.cpu().numpy()
+        mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
+
+        # Process detections
+        results = []
+        for i, image in enumerate(images):
+            final_rois, final_class_ids, final_scores, final_masks = _unmold_detections(
+                detections[i], mrcnn_mask[i], image.shape, windows[i])
+
+            if final_rois is None:
+                continue
+            for det_id in range(final_rois.shape[0]):
+
+                bbox = np.around(final_rois[det_id], 1)
+                curr_result = {
+                    "image_id":     coco_image_ids[i],
+                    "category_id":  dataset.get_source_class_id(final_class_ids[det_id], "coco"),
+                    "bbox":         [bbox[1], bbox[0], bbox[3] - bbox[1], bbox[2] - bbox[0]],
+                    "score":        final_scores[det_id],
+                    "segmentation": maskUtils.encode(np.asfortranarray(final_masks[:, :, det_id]))
+                }
+                results.append(curr_result)
+        t_prediction += (time.time() - t_pred_start)
+
+        cnt += len(curr_image_ids)
+        if iter_ind % (model.config.SHOW_INTERVAL*10) == 0 or cnt == len(image_ids):
+            print_log('[{:s}][{:s}] evaluation progress \t{:4d} images /{:4d} total ...'.
+                      format(model.config.NAME, model_file_name, cnt, len(image_ids)), model.config.LOG_FILE)
+
+    print("Prediction time: {:.4f}. Average {:.4f} sec/image".format(t_prediction, t_prediction / len(image_ids)))
+
+    # Evaluate
+    print('\nBegin to evaluate ...')
+    # Load results. This modifies results with additional attributes.
+    coco_results = coco_api.loadRes(results)
+    eval_type = "bbox"
+    cocoEval = COCOeval(coco_api, coco_results, eval_type)
+    cocoEval.params.imgIds = coco_image_ids
+    cocoEval.evaluate()
+    cocoEval.accumulate()
+    cocoEval.summarize()
+    print('Total time: {:.4f}'.format(time.time() - t_start))
+    print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
+              format(model.config.NAME, model.config.START_MODEL_FILE, cocoEval.stats[0]),
+              model.config.LOG_FILE)
+
+
+def compute_losses(target_rpn_match, target_rpn_bbox, inputs):
+
+    rpn_class_logits, rpn_pred_bbox, target_class_ids, \
+        mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
+        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], inputs[7]
+
+    rpn_class_loss = compute_rpn_class_loss(target_rpn_match, rpn_class_logits)
+    rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, rpn_pred_bbox)
+    mrcnn_class_loss = compute_mrcnn_class_loss(target_class_ids, mrcnn_class_logits)
+    mrcnn_bbox_loss = compute_mrcnn_bbox_loss(target_deltas, target_class_ids, mrcnn_bbox)
+    mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
+
+    outputs = [rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss]
+    return sum(outputs), outputs
 
 
 def train_epoch(model, datagenerator, optimizer, steps, stage_name, epoch_str):
@@ -300,21 +405,6 @@ def select_weights(config, network, model_dir):
     return config
 
 
-def compute_losses(target_rpn_match, target_rpn_bbox, inputs):
-
-    rpn_class_logits, rpn_pred_bbox, target_class_ids, \
-        mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
-        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], inputs[7]
-
-    rpn_class_loss = compute_rpn_class_loss(target_rpn_match, rpn_class_logits)
-    rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, rpn_pred_bbox)
-    mrcnn_class_loss = compute_mrcnn_class_loss(target_class_ids, mrcnn_class_logits)
-    mrcnn_bbox_loss = compute_mrcnn_bbox_loss(target_deltas, target_class_ids, mrcnn_bbox)
-    mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
-
-    outputs = [rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss]
-    return sum(outputs), outputs
-
 # TODO(low: valid epoch during training)
 # def valid_epoch(model, datagenerator, steps):
 #
@@ -383,107 +473,6 @@ def compute_losses(target_rpn_match, target_rpn_bbox, inputs):
 #     return loss_sum
 
 
-def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
-    """
-        Test the trained model
-        Args:
-            input_model:    nn.DataParallel
-            valset:         validation dataset
-            coco_api:       api
-            limit:          the number of images to use for evaluation
-            image_ids:      a certain image
-    """
-    if isinstance(input_model, nn.DataParallel):
-        model = input_model.module
-    else:
-        # single-gpu
-        model = input_model
-
-    model_file_name = os.path.basename(model.config.START_MODEL_FILE)
-    dataset = valset.dataset
-
-    # Pick COCO images from the dataset
-    image_ids = image_ids or dataset.image_ids
-    # Limit to a subset
-    if limit > 0:
-        image_ids = image_ids[:limit]
-
-    num_test_im = len(image_ids)
-    print("Running COCO evaluation on {} images.".format(num_test_im))
-    assert (num_test_im % model.config.BATCH_SIZE) % model.config.GPU_COUNT == 0, 'last mini-batch in an epoch' \
-                                                                                  'is not divisible by gpu number.'
-    # Get corresponding COCO image IDs.
-    coco_image_ids = [dataset.image_info[ind]["id"] for ind in image_ids]
-
-    t_prediction = 0
-    t_start = time.time()
-
-    results = []
-    total_iter = math.ceil(num_test_im / model.config.BATCH_SIZE)
-    cnt = 0
-
-    # for i, image_id in enumerate(image_ids):
-    for iter_ind in range(total_iter):
-
-        curr_image_ids = image_ids[iter_ind*model.config.BATCH_SIZE :
-                            min(iter_ind*model.config.BATCH_SIZE + model.config.BATCH_SIZE, num_test_im)]
-        # if iter_ind > 820:  # for debug
-        # Run detection
-        t_pred_start = time.time()
-        # Mold inputs to format expected by the neural network
-        molded_images, image_metas, windows, images = _mold_inputs(model, curr_image_ids, dataset)
-
-        # Run object detection
-        detections, mrcnn_mask = input_model([molded_images, image_metas], mode=model.config.PHASE)
-
-        # Convert to numpy
-        detections = detections.data.cpu().numpy()
-        mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
-
-        # Process detections
-        results = []
-        for i, image in enumerate(images):
-            final_rois, final_class_ids, final_scores, final_masks = _unmold_detections(
-                detections[i], mrcnn_mask[i], image.shape, windows[i])
-
-            if final_rois is None:
-                continue
-            for det_id in range(final_rois.shape[0]):
-
-                bbox = np.around(final_rois[det_id], 1)
-                curr_result = {
-                    "image_id":     coco_image_ids[i],
-                    "category_id":  dataset.get_source_class_id(final_class_ids[det_id], "coco"),
-                    "bbox":         [bbox[1], bbox[0], bbox[3] - bbox[1], bbox[2] - bbox[0]],
-                    "score":        final_scores[det_id],
-                    "segmentation": maskUtils.encode(np.asfortranarray(final_masks[:, :, det_id]))
-                }
-                results.append(curr_result)
-        t_prediction += (time.time() - t_pred_start)
-
-        cnt += len(curr_image_ids)
-        if iter_ind % (model.config.SHOW_INTERVAL*10) == 0 or cnt == len(image_ids):
-            print_log('[{:s}][{:s}] evaluation progress \t{:4d} images /{:4d} total ...'.
-                      format(model.config.NAME, model_file_name, cnt, len(image_ids)), model.config.LOG_FILE)
-
-    print("Prediction time: {:.4f}. Average {:.4f} sec/image".format(t_prediction, t_prediction / len(image_ids)))
-
-    # Evaluate
-    print('\nBegin to evaluate ...')
-    # Load results. This modifies results with additional attributes.
-    coco_results = coco_api.loadRes(results)
-    eval_type = "bbox"
-    cocoEval = COCOeval(coco_api, coco_results, eval_type)
-    cocoEval.params.imgIds = coco_image_ids
-    cocoEval.evaluate()
-    cocoEval.accumulate()
-    cocoEval.summarize()
-    print('Total time: {:.4f}'.format(time.time() - t_start))
-    print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
-              format(model.config.NAME, model.config.START_MODEL_FILE, cocoEval.stats[0]),
-              model.config.LOG_FILE)
-
-
 def _mold_inputs(model, image_ids, dataset):
     """
         FOR EVALUATION ONLY.
@@ -548,7 +537,7 @@ def _unmold_detections(detections, mrcnn_mask, image_shape, window):
             scores:         [N] Float probability scores of the class_id
             masks:          [height, width, num_instances] Instance masks
     """
-    # TODO: consider the batch size dim
+    # TODO: (low) consider the batch size dim
     # How many detections do we have?
     # Detections array is padded with zeros. Find the first class_id == 0.
     zero_ix = np.where(detections[:, 4] == 0)[0]
