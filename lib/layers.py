@@ -528,7 +528,10 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
         if not ix.any():
             continue
         index = torch.nonzero(ix)    # ix: bs, 1000; index: say, 2670 x 2
-        level_boxes = boxes[index[:, 0].data, index[:, 1].data, :]    # from boxes: [bs, 1000, 4] -> [index[0], 4]
+        try:
+            level_boxes = boxes[index[:, 0].data, index[:, 1].data, :]    # from boxes: [bs, 1000, 4] -> [index[0], 4]
+        except:
+            a = 1
 
         # Keep track of which box is mapped to which level
         box_to_level.append(index.data)
