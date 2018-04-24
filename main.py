@@ -16,14 +16,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train Mask R-CNN on MS COCO.')
     parser.add_argument('--phase',
                         required=False,
-                        default='evaluate',
-                        help='train or evaluate')
+                        default='train',
+                        # default='inference',
+                        help='train or inference')
     parser.add_argument('--config_name',
                         required=False,
-                        default='all_new')
+                        default='all_new_2')
                         # default='hyli_default_old')
     parser.add_argument('--debug',
-                        default=1, type=int)
+                        default=0, type=int)  # no bool type here please
     parser.add_argument('--device_id',
                         default='0,1', type=str)
     parser.add_argument('--dataset_path',
@@ -48,23 +49,16 @@ if __name__ == '__main__':
     print('\nSTART::: phase is [{:s}]'.format(args.phase))
 
     # Configuration
-    config = []
-    if args.phase == "train":
-        config = CocoConfig(config_name=args.config_name, args=args)
-    elif args.phase == 'evaluate':
-        class InferenceConfig(CocoConfig):
-            # Set batch size to 1 since we'll be running inference on
-            # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
-            GPU_COUNT = 1
-            IMAGES_PER_GPU = 1
-            DETECTION_MIN_CONFIDENCE = 0
-        config = InferenceConfig(config_name=args.config_name, args=args)
+    config = CocoConfig(config_name=args.config_name, args=args)
 
     # Create model
     print('building network ...')
     model = network.MaskRCNN(config, model_dir=args.results)
+
     # Select weights file to load
-    config = select_weights(args, config, model)
+    config = select_weights(config, model, args.results)
+
+    # show the final configuration
     config.display(config.LOG_FILE)
     model.config = config
 
@@ -72,10 +66,12 @@ if __name__ == '__main__':
     if config.GPU_COUNT > 1:
         model = torch.nn.DataParallel(model).cuda()
 
+    # Get data
     train_data, val_data, val_api = get_data(config, args)
 
-    # Train or evaluate
+    # Train or inference
     if args.phase == 'train':
+        # TODO: training workflow in accordance with Detectron
         # TODO (low): to consider inference during training
         # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
@@ -95,7 +91,7 @@ if __name__ == '__main__':
         train_model(model, train_data, val_data,
                     lr=config.LEARNING_RATE / 10, total_ep_curr_call=160, layers='all')
 
-    elif args.phase == 'evaluate':
+    elif args.phase == 'inference':
 
         test_model(model, val_data, val_api)
     else:

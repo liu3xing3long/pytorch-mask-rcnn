@@ -5,6 +5,7 @@ import torch
 import scipy.misc
 import scipy.ndimage
 from torch.autograd import Variable
+# import cv2
 
 
 ############################################################
@@ -145,7 +146,7 @@ def minimize_mask(bbox, mask, mini_shape):
         m = mask[:, :, i]
         y1, x1, y2, x2 = bbox[i][:4]
         m = m[y1:y2, x1:x2]
-        # todo: this is a potential bug
+        # TODO: minimize_mask, this is a potential bug if image is too small
         if m.size == 0:
             raise Exception("Invalid bounding box with area of zero")
         m = scipy.misc.imresize(m.astype(float), mini_shape, interp='bilinear')
@@ -216,11 +217,8 @@ def load_image_gt(dataset, config, image_id, augment=False, use_mini_mask=False)
     image = dataset.load_image(image_id)
     mask, class_ids = dataset.load_mask(image_id)
     shape = image.shape
-    image, window, scale, padding = resize_image(
-        image,
-        min_dim=config.IMAGE_MIN_DIM,
-        max_dim=config.IMAGE_MAX_DIM,
-        padding=config.IMAGE_PADDING)
+    image, window, scale, padding = resize_image(image, min_dim=config.IMAGE_MIN_DIM,
+                                                 max_dim=config.IMAGE_MAX_DIM, padding=config.IMAGE_PADDING)
     mask = resize_mask(mask, scale, padding)
 
     # Random horizontal flips.
@@ -520,40 +518,70 @@ def generate_pyramid_anchors(scales, ratios, feature_shapes, feature_strides,
 
 
 ############################################################
+#  Pytorch Utility Functions
+############################################################
+def unique1d(variable):
+    variable = variable.squeeze()
+    assert variable.dim() == 1
+    if variable.size(0) == 1:
+        return variable
+    variable = variable.sort()[0]
+    unique_bool = variable[1:] != variable[:-1]
+    first_element = Variable(torch.ByteTensor([True]), requires_grad=False)
+    if variable.is_cuda:
+        first_element = first_element.cuda()
+    unique_bool = torch.cat((first_element, unique_bool), dim=0)
+    return variable[unique_bool]
+
+
+def intersect1d(variable1, variable2):
+    aux = torch.cat((variable1, variable2), dim=0)
+    aux = aux.squeeze().sort()[0]
+    return aux[:-1][(aux[1:] == aux[:-1])]
+
+
+def log2(x):
+    """Implementation of Log2. Pytorch doesn't have a native implementation."""
+    ln2 = Variable(torch.log(torch.FloatTensor([2.0])), requires_grad=False)
+    if x.is_cuda:
+        ln2 = ln2.cuda()
+    return torch.log(x) / ln2
+
+############################################################
 #  Logging Utility Functions
 ############################################################
-def log(text, array=None):
-    """Prints a text message. And, optionally, if a Numpy array is provided it
-    prints it's shape, min, and max values.
-    """
-    if array is not None:
-        text = text.ljust(25)
-        text += ("shape: {:20}  min: {:10.5f}  max: {:10.5f}".format(
-            str(array.shape),
-            array.min() if array.size else "",
-            array.max() if array.size else ""))
-    print(text)
-
-
-def printProgressBar(iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█'):
-    """
-    Call in a loop to create terminal progress bar
-    @params:
-        iteration   - Required  : current iteration (Int)
-        total       - Required  : total iterations (Int)
-        prefix      - Optional  : prefix string (Str)
-        suffix      - Optional  : suffix string (Str)
-        decimals    - Optional  : positive number of decimals in percent complete (Int)
-        length      - Optional  : character length of bar (Int)
-        fill        - Optional  : bar fill character (Str)
-    """
-    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-    filledLength = int(length * iteration // total)
-    bar = fill * filledLength + '-' * (length - filledLength)
-    print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\n')
-    # Print New Line on Complete
-    if iteration == total:
-        print()
+# def log(text, array=None):
+#     """Prints a text message. And, optionally, if a Numpy array is provided it
+#     prints it's shape, min, and max values.
+#     """
+#     if array is not None:
+#         text = text.ljust(25)
+#         text += ("shape: {:20}  min: {:10.5f}  max: {:10.5f}".format(
+#             str(array.shape),
+#             array.min() if array.size else "",
+#             array.max() if array.size else ""))
+#     print(text)
+#
+#
+# def printProgressBar(iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█'):
+#     """
+#     Call in a loop to create terminal progress bar
+#     @params:
+#         iteration   - Required  : current iteration (Int)
+#         total       - Required  : total iterations (Int)
+#         prefix      - Optional  : prefix string (Str)
+#         suffix      - Optional  : suffix string (Str)
+#         decimals    - Optional  : positive number of decimals in percent complete (Int)
+#         length      - Optional  : character length of bar (Int)
+#         fill        - Optional  : bar fill character (Str)
+#     """
+#     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+#     filledLength = int(length * iteration // total)
+#     bar = fill * filledLength + '-' * (length - filledLength)
+#     print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\n')
+#     # Print New Line on Complete
+#     if iteration == total:
+#         print()
 
 
 def remove(file_name):
@@ -575,33 +603,6 @@ def print_log(msg, file=None, init=False):
             log_file.write('%s\n' % msg)
 
 
-############################################################
-#  Pytorch Utility Functions
-############################################################
-def unique1d(tensor):
-    if tensor.size()[0] == 0 or tensor.size()[0] == 1:
-        return tensor
-    tensor = tensor.sort()[0]
-    unique_bool = tensor[1:] != tensor [:-1]
-    first_element = Variable(torch.ByteTensor([True]), requires_grad=False)
-    if tensor.is_cuda:
-        first_element = first_element.cuda()
-    unique_bool = torch.cat((first_element, unique_bool),dim=0)
-    return tensor[unique_bool.data]
-
-
-def intersect1d(tensor1, tensor2):
-    aux = torch.cat((tensor1, tensor2), dim=0)
-    aux = aux.sort()[0]
-    return aux[:-1][(aux[1:] == aux[:-1]).data]
-
-
-def log2(x):
-    """Implementatin of Log2. Pytorch doesn't have a native implemenation."""
-    ln2 = Variable(torch.log(torch.FloatTensor([2.0])), requires_grad=False)
-    if x.is_cuda:
-        ln2 = ln2.cuda()
-    return torch.log(x) / ln2
 
 
 

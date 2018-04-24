@@ -460,13 +460,14 @@ class DatasetPack(torch.utils.data.Dataset):
         # Convert to Tensors
         images = torch.from_numpy(images.transpose(2, 0, 1)).float()
         image_metas = torch.from_numpy(image_metas)
-        rpn_match = torch.from_numpy(rpn_match)
-        rpn_bbox = torch.from_numpy(rpn_bbox).float()
-        gt_class_ids = torch.from_numpy(gt_class_ids)
-        gt_boxes = torch.from_numpy(gt_boxes).float()
-        gt_masks = torch.from_numpy(gt_masks.astype(int).transpose(2, 0, 1)).float()
+        target_rpn_match = torch.from_numpy(rpn_match)
+        target_rpn_bbox = torch.from_numpy(rpn_bbox).float()
+        gt_masks = gt_masks.astype(int).transpose(2, 0, 1)
+        # gt_class_ids = torch.from_numpy(gt_class_ids)
+        # gt_boxes = torch.from_numpy(gt_boxes).float()
+        # gt_masks = torch.from_numpy(gt_masks.astype(int).transpose(2, 0, 1)).float()
 
-        return images, image_metas, rpn_match, rpn_bbox, gt_class_ids, gt_boxes, gt_masks
+        return images, image_metas, target_rpn_match, target_rpn_bbox, gt_class_ids, gt_boxes, gt_masks
 
     def __len__(self):
         return self.image_ids.shape[0]
@@ -520,15 +521,12 @@ def get_data(config, args):
 
     if config.old_scheme:
         # old stuff
-        val_generator = torch.utils.data.DataLoader(val_set, batch_size=1, shuffle=True, num_workers=4)
         train_generator = None if args.phase == 'inference' else \
             torch.utils.data.DataLoader(train_set, batch_size=1, shuffle=True, num_workers=4)
     else:
-        val_generator = torch.utils.data.DataLoader(val_set, batch_size=config.BATCH_SIZE,
-                                                    shuffle=True, num_workers=4, collate_fn=detection_collate)
         train_generator = None if args.phase == 'inference' else \
             torch.utils.data.DataLoader(train_set, batch_size=config.BATCH_SIZE,
-                                        shuffle=True, num_workers=4, collate_fn=detection_collate)
+                                        shuffle=True, num_workers=8, collate_fn=detection_collate)
 
-    return train_generator, val_generator, val_coco_api
+    return train_generator, val_set, val_coco_api
 

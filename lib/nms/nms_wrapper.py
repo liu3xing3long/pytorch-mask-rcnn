@@ -8,13 +8,17 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from lib.nms.pth_nms import pth_nms
-import torch
 import numpy as np
 
 
 def nms(dets, thresh):
-    """Dispatch to either CPU or GPU NMS implementations.Accept dets as tensor
-       dets: [bs, N, 4]
+    """Dispatch to either CPU or GPU NMS implementations.
+    Accept dets as Tensor, not Variable; used in both inference and 'proposal_layer'
+    Args:
+        dets:       [bs, N, 4]
+        thresh:     nms threshold
+    Returns:
+        keep_out:   ndarray (bs, min_keep_num)
     """
     bs = dets.size(0)
     keep = []
