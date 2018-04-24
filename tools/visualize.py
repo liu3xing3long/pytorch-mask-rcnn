@@ -7,20 +7,22 @@ Licensed under the MIT License (see LICENSE for details)
 Written by Waleed Abdulla
 """
 
+import colorsys
+import itertools
 import os
 import random
-import itertools
-import colorsys
+
+import matplotlib.pyplot as plt
 import numpy as np
 from skimage.measure import find_contours
-import matplotlib.pyplot as plt
+
 if "DISPLAY" not in os.environ:
     plt.switch_backend('agg')
 import matplotlib.patches as patches
 import matplotlib.lines as lines
 from matplotlib.patches import Polygon
 
-import utils
+from tools import utils
 
 
 ############################################################

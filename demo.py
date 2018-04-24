@@ -1,38 +1,30 @@
+import os
+import random
+
+import matplotlib.pyplot as plt
+import skimage.io
 import torch
 
-import os
-import sys
-import random
-import math
-import numpy as np
-import skimage.io
-import matplotlib
-import matplotlib.pyplot as plt
-
-import coco
-import utils
-import model as modellib
-import visualize
-
-
-
+import main
+from lib import model as modellib
+from tools import visualize
 
 # Root directory of the project
 ROOT_DIR = os.getcwd()
 
-# Directory to save logs and trained model
-MODEL_DIR = os.path.join(ROOT_DIR, "logs")
+# Directory to save results and trained model
+MODEL_DIR = os.path.join(ROOT_DIR, "results")
 
 # Path to trained weights file
 # Download this file and place in the root of your
 # project (See README file for details)
-COCO_MODEL_PATH = os.path.join(ROOT_DIR, 'data', 'mask_rcnn_coco.pth')
+COCO_MODEL_PATH = os.path.join(ROOT_DIR, 'datasets', 'mask_rcnn_coco.pth')
 
 # Directory of images to run detection on
 IMAGE_DIR = os.path.join(ROOT_DIR, "images")
 
 
-class InferenceConfig(coco.CocoConfig):
+class InferenceConfig(main.CocoConfig):
     # Set batch size to 1 since we'll be running inference on
     # one image at a time. Batch size = GPU_COUNT * IMAGES_PER_GPU
     # GPU_COUNT = 0 for CPU
