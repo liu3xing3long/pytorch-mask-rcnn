@@ -141,7 +141,7 @@ class Config(object):
 
     SHOW_INTERVAL = 200
     SAVE_TIME_WITHIN_EPOCH = 10
-    USE_VISDOM = True
+    USE_VISDOM = False
 
     def _set_value(self):
         """Set values of computed attributes."""

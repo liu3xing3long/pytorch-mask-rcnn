@@ -79,8 +79,10 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
         {'params': trainables_only_bn}
     ], lr=lr, momentum=model.config.LEARNING_MOMENTUM)
 
-    # original data generator here. [MOVED to main.py]
-    print_log('\nStart training at epoch {:d}. LR={:.4f}'.format(model.epoch+1, lr), model.config.LOG_FILE)
+    print_log('\n[Current stage: {:s}] start training at epoch {:d}, iter {:d}. \n'
+              'Total epoch this stage: {:d}, LR={:.4f}'.format(
+                stage_name, model.epoch+1, model.iter+1, total_ep_curr_call, lr),
+                model.config.LOG_FILE)
 
     for epoch in range(model.epoch+1, total_ep_curr_call+1):
 
@@ -92,7 +94,8 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
                                model.config.STEPS_PER_EPOCH, stage_name, epoch_str)
         else:
             loss = train_epoch_new(input_model, train_generator, optimizer,
-                                   stage_name=stage_name, epoch_str=epoch_str, epoch=epoch)
+                                   stage_name=stage_name, epoch_str=epoch_str,
+                                   epoch=epoch, start_iter=model.iter+1)
         # Validation
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
@@ -103,9 +106,9 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
         model_file = model.checkpoint_path.format(epoch)
         print_log('saving model: {:s}\n'.format(model_file), model.config.LOG_FILE)
         torch.save({'state_dict': model.state_dict()}, model_file)
+        model.iter = 0
 
     # update the epoch info
-    # TODO: check here, model.epoch
     model.epoch = total_ep_curr_call
 
 
@@ -123,7 +126,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     iter_per_epoch = math.ceil(len(data_loader)/config.BATCH_SIZE)
     save_iter_base = math.floor(iter_per_epoch / config.SAVE_TIME_WITHIN_EPOCH)
 
-    for iter_ind in range(iter_per_epoch):
+    for iter_ind in range(args['start_iter'], iter_per_epoch+1):
 
         inputs = next(data_iterator)
 
@@ -147,7 +150,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         optimizer.step()
 
         # Progress
-        if iter_ind % model.config.SHOW_INTERVAL == 0:
+        if iter_ind % model.config.SHOW_INTERVAL == 0 or iter_ind == args['start_iter']:
             print_log('[{:s}][stage {:s}]{:s}\t{}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
                       '- mrcnn_cls: {:.5f} - mrcnn_bbox: {:.5f} - mrcnn_mask_loss: {:.5f}'.
                       format(model.config.NAME, args['stage_name'], args['epoch_str'], iter_ind+1, iter_per_epoch,

@@ -110,12 +110,14 @@ class MaskRCNN(nn.Module):
                     try:
                         self.start_epoch = checkpoints['epoch']
                         self.start_iter = checkpoints['iter']
-                    except:
+                    except KeyError:
                         print_log('[TRAIN] the loaded model does not have start epoch and iter;\n'
                                   'if that is pretrain model, it is ok; if resuming, check your model\n'
                                   'start epoch and iter set to zeros')
                         self.start_epoch, self.start_iter = 0, 0
+
                     self.epoch = self.start_epoch
+                    self.iter = self.start_iter
             else:
                 raise Exception("Weight file not found ...")
 
@@ -227,7 +229,11 @@ class MaskRCNN(nn.Module):
             else:
                 # if **ALL** samples within the batch has empty "_rois", skip the heads and output zero predictions.
                 # this is really rare case. otherwise, pass the heads even some samples don't have _rois.
-                mrcnn_class_logits, mrcnn_bbox, mrcnn_mask = None, None, None
+                num_rois, mask_sz, num_cls = self.config.TRAIN_ROIS_PER_IMAGE, \
+                                             self.config.MASK_SHAPE[0], self.config.NUM_CLASSES
+                mrcnn_class_logits = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls).cuda())
+                mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
+                mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
             # if self.config.DEBUG:
             #     for ind, out in enumerate(output):
