@@ -209,6 +209,7 @@ class CocoConfig(Config):
                         self.NAME == 'hyli_default_old':
             self.IMAGES_PER_GPU = 16
             # self.GPU_COUNT = 1
+            self.BATCH_SIZE = 8  # updated
 
         elif self.NAME == 'all_new':
             self.BATCH_SIZE = 6

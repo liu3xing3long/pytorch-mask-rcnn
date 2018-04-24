@@ -124,9 +124,7 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
         print_log('saving model: {:s}\n'.format(model_file), model.config.LOG_FILE)
         torch.save({'state_dict': model.state_dict()}, model_file)
         model.iter = 0
-
-    # update the epoch info
-    model.epoch = total_ep_curr_call
+        model.epoch = epoch
 
 
 def train_epoch_new(input_model, data_loader, optimizer, **args):
@@ -270,13 +268,13 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
                 results.append(curr_result)
 
             # visualize result if necessary
-            if model.config.DEBUG:
-                plt.close()
-                visualize.display_instances(image, final_rois, final_masks, final_class_ids,
-                                            CLASS_NAMES, final_scores)
-                im_file = os.path.join(model.config.SAVE_IMAGE_DIR,
-                                       'coco_im_id_{:d}.png'.format(curr_coco_id))
-                plt.savefig(im_file)
+            # if model.config.DEBUG:
+            #     plt.close()
+            #     visualize.display_instances(image, final_rois, final_masks, final_class_ids,
+            #                                 CLASS_NAMES, final_scores)
+            #     im_file = os.path.join(model.config.SAVE_IMAGE_DIR,
+            #                            'coco_im_id_{:d}.png'.format(curr_coco_id))
+            #     plt.savefig(im_file)
 
         t_prediction += (time.time() - t_pred_start)
         cnt += len(curr_image_ids)
