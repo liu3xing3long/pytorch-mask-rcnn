@@ -526,7 +526,8 @@ def get_data(config, args):
     else:
         train_generator = None if args.phase == 'inference' else \
             torch.utils.data.DataLoader(train_set, batch_size=config.BATCH_SIZE,
-                                        shuffle=True, num_workers=8, collate_fn=detection_collate)
+                                        shuffle=True, num_workers=16,
+                                        collate_fn=detection_collate, drop_last=True)
 
     return train_generator, val_set, val_coco_api
 
