@@ -1,14 +1,8 @@
-"""
-Mask R-CNN
-Base Configurations class.
-
-Copyright (c) 2017 Matterport, Inc.
-Licensed under the MIT License (see LICENSE for details)
-Written by Waleed Abdulla
-"""
 import math
 import numpy as np
 import os
+import datetime
+from tools.utils import print_log
 
 
 # Base Configuration Class
@@ -19,15 +13,12 @@ class Config(object):
     sub-class that inherits from this one and override properties
     that need to be changed.
     """
-    # Name the configurations. For example, 'COCO', 'Experiment 3', ...etc.
-    # Useful if your code needs to do things differently depending on which
-    # experiment is running.
-    NAME = None  # Override in sub-classes
 
-    # Path to pretrained imagenet model
+    # Path to pretrained imagenet model # TODO: loading is buggy
     PRETRAIN_IMAGENET_MODEL_PATH = os.path.join(os.getcwd(), 'datasets/pretrain_model', "resnet50_imagenet.pth")
     # Path to pretrained weights file
     PRETRAIN_COCO_MODEL_PATH = os.path.join(os.getcwd(), 'datasets/pretrain_model', 'mask_rcnn_coco.pth')
+    MODEL_FILE_CHOICE = 'last'  # or file (xxx.pth)
 
     # NUMBER OF GPUs to use. For CPU use 0
     GPU_COUNT = 1
@@ -47,10 +38,11 @@ class Config(object):
     # a lot of time on validation stats.
     STEPS_PER_EPOCH = 1000
 
+    # TODO: deprecated already
     # Number of validation steps to run at the end of every training epoch.
     # A bigger number improves accuracy of validation stats, but slows
     # down the training.
-    VALIDATION_STEPS = 50
+    # VALIDATION_STEPS = 50
 
     # The strides of each layer of the FPN Pyramid. These values
     # are based on a Resnet101 backbone.
@@ -82,12 +74,12 @@ class Config(object):
     POST_NMS_ROIS_TRAINING = 2000
     POST_NMS_ROIS_INFERENCE = 1000
 
-    # If enabled, resizes instance masks to a smaller size to reduce
+    # If enabled, resize instance masks to a smaller size to reduce
     # memory load. Recommended when using high-resolution images.
     USE_MINI_MASK = True
     MINI_MASK_SHAPE = (56, 56)  # (height, width) of the mini-mask
 
-    # Input image resing
+    # Input image resize
     # Images are resized such that the smallest side is >= IMAGE_MIN_DIM and
     # the longest side is <= IMAGE_MAX_DIM. In case both conditions can't
     # be satisfied together the IMAGE_MAX_DIM is enforced.
@@ -137,7 +129,6 @@ class Config(object):
     # implementation.
     LEARNING_RATE = 0.001
     LEARNING_MOMENTUM = 0.9
-
     # Weight decay regularization
     WEIGHT_DECAY = 0.0001
 
@@ -149,18 +140,25 @@ class Config(object):
     USE_RPN_ROIS = True
 
     SHOW_INTERVAL = 200
+    SAVE_TIME_WITHIN_EPOCH = 10
     USE_VISDOM = True
 
     def _set_value(self):
         """Set values of computed attributes."""
         # Effective batch size
-        if self.GPU_COUNT > 0:
-            self.BATCH_SIZE = self.IMAGES_PER_GPU * self.GPU_COUNT
+        if hasattr(self, 'BATCH_SIZE'):
+            print('use the new BATCH_SIZE scheme!')
+            self.old_scheme = False
         else:
-            self.BATCH_SIZE = self.IMAGES_PER_GPU
-
-        # Adjust step size based on batch size
-        self.STEPS_PER_EPOCH *= self.BATCH_SIZE
+            print('use the old BATCH_SIZE scheme!')
+            # TODO: will be deprecated forever
+            if self.GPU_COUNT > 0:
+                self.BATCH_SIZE = self.IMAGES_PER_GPU * self.GPU_COUNT
+            else:
+                self.BATCH_SIZE = self.IMAGES_PER_GPU
+            # Adjust step size based on batch size
+            self.STEPS_PER_EPOCH *= self.BATCH_SIZE
+            self.old_scheme = True
 
         # Input image size
         self.IMAGE_SHAPE = np.array(
@@ -172,13 +170,18 @@ class Config(object):
               int(math.ceil(self.IMAGE_SHAPE[1] / stride))]
              for stride in self.BACKBONE_STRIDES])
 
-    def display(self):
+        if self.DEBUG:
+            self.SHOW_INTERVAL = 1
+
+    def display(self, log_file):
         """Display Configuration values."""
-        print("\nConfigurations:")
+        now = datetime.datetime.now()
+        print_log('start timestamp: {:%Y%m%dT%H%M}'.format(now), file=log_file, init=True)
+        print_log("\nConfigurations:", file=log_file)
         for a in dir(self):
             if not a.startswith("__") and not callable(getattr(self, a)):
-                print("{:30} {}".format(a, getattr(self, a)))
-        print("\n")
+                print_log("{:30} {}".format(a, getattr(self, a)), log_file)
+        print_log("\n", log_file)
 
 
 class CocoConfig(Config):
@@ -193,19 +196,33 @@ class CocoConfig(Config):
     def __init__(self, config_name, args):
         super(CocoConfig, self).__init__()
 
-        self.DEVICE_ID = [int(x) for x in args[0].split(',')]
+        self.PHASE = args.phase
+        self.DEBUG = args.debug
+        self.DEVICE_ID = [int(x) for x in args.device_id.split(',')]
         self.GPU_COUNT = len(self.DEVICE_ID)
-
         self.NAME = config_name
+
+        if self.PHASE == 'inference':
+            self.DETECTION_MIN_CONFIDENCE = 0
+
         if self.NAME == 'hyli_default' or self.NAME == 'hyli_default_old':
             self.IMAGES_PER_GPU = 16
             # self.GPU_COUNT = 1
 
         elif self.NAME == 'all_new':
-            self.IMAGES_PER_GPU = 16
+            self.BATCH_SIZE = 6
+            self.MODEL_FILE_CHOICE = 'coco_pretrain'
+            self.IMAGE_MIN_DIM = 256
+            self.IMAGE_MAX_DIM = 320
+            # self.USE_MINI_MASK = False
+            # self.MINI_MASK_SHAPE = (28, 28)
+            # self.DETECTION_NMS_THRESHOLD = 0.3
 
+        elif self.NAME == 'all_new_2':
+            self.BATCH_SIZE = 8
+            self.MODEL_FILE_CHOICE = 'coco_pretrain'
         else:
-            # print('unknown config name!!!')
-            raise NameError('unknown config name!!!')
+            print('WARNING: unknown config name!!! use default setting.')
+            # raise NameError('unknown config name!!!')
 
         self._set_value()

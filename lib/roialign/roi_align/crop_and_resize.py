@@ -1,12 +1,17 @@
-import math
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.autograd import Function
-
 from ._ext import crop_and_resize as _backend
 
 
+# From Mask R-CNN paper: "We sample four regular locations, so
+# that we can evaluate either max or average pooling. In fact,
+# interpolating only a single value at each bin center (without
+# pooling) is nearly as effective."
+#
+# Here we use the simplified approach of a single value per bin,
+# which is how it's done in tf.crop_and_resize()
+# Result: [batch * num_boxes, pool_height, pool_width, channels]
 class CropAndResizeFunction(Function):
 
     def __init__(self, crop_height, crop_width, extrapolation_value=0):
@@ -50,18 +55,18 @@ class CropAndResizeFunction(Function):
         return grad_image, None, None
 
 
-class CropAndResize(nn.Module):
-    """
-    Crop and resize ported from tensorflow
-    See more details on https://www.tensorflow.org/api_docs/python/tf/image/crop_and_resize
-    """
-
-    def __init__(self, crop_height, crop_width, extrapolation_value=0):
-        super(CropAndResize, self).__init__()
-
-        self.crop_height = crop_height
-        self.crop_width = crop_width
-        self.extrapolation_value = extrapolation_value
-
-    def forward(self, image, boxes, box_ind):
-        return CropAndResizeFunction(self.crop_height, self.crop_width, self.extrapolation_value)(image, boxes, box_ind)
+# class CropAndResize(nn.Module):
+#     """
+#     Crop and resize ported from tensorflow
+#     See more details on https://www.tensorflow.org/api_docs/python/tf/image/crop_and_resize
+#     """
+#
+#     def __init__(self, crop_height, crop_width, extrapolation_value=0):
+#         super(CropAndResize, self).__init__()
+#
+#         self.crop_height = crop_height
+#         self.crop_width = crop_width
+#         self.extrapolation_value = extrapolation_value
+#
+#     def forward(self, image, boxes, box_ind):
+#         return CropAndResizeFunction(self.crop_height, self.crop_width, self.extrapolation_value)(image, boxes, box_ind)
