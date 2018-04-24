@@ -84,7 +84,6 @@ class MaskRCNN(nn.Module):
                 m.bias.data.zero_()
 
     def _set_log_dir(self):
-
         # Setup directory
         # e.g., results/hyli_default/train(or inference)/
         self.log_dir = os.path.join(self.model_dir, self.config.NAME.lower(), self.config.PHASE)

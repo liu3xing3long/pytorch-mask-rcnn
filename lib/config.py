@@ -205,7 +205,8 @@ class CocoConfig(Config):
         if self.PHASE == 'inference':
             self.DETECTION_MIN_CONFIDENCE = 0
 
-        if self.NAME == 'hyli_default' or self.NAME == 'hyli_default_old':
+        if self.NAME == 'hyli_default' or \
+                        self.NAME == 'hyli_default_old':
             self.IMAGES_PER_GPU = 16
             # self.GPU_COUNT = 1
 
