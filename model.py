@@ -382,6 +382,7 @@ def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
     # Non-max suppression
     keep = nms(torch.cat((boxes, scores.unsqueeze(1)), 1).data, nms_threshold)
     keep = keep[:proposal_count]
+    import pdb; pdb.set_trace()
     boxes = boxes[keep, :]
 
     # Normalize dimensions to range of 0 to 1.
@@ -1418,6 +1419,7 @@ class MaskRCNN(nn.Module):
         self.val_loss_history = []
 
     def build(self, config):
+        import pdb; pdb.set_trace()
         """Build Mask R-CNN architecture.
         """
 
@@ -1446,6 +1448,7 @@ class MaskRCNN(nn.Module):
                                                                                 config.BACKBONE_STRIDES,
                                                                                 config.RPN_ANCHOR_STRIDE)).float(), requires_grad=False)
         if self.config.GPU_COUNT:
+            import pdb; pdb.set_trace()
             self.anchors = self.anchors.cuda()
 
         # RPN

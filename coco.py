@@ -1,3 +1,5 @@
+import pdb
+pdb.set_trace()
 """
 Mask R-CNN
 Configurations and data loading code for MS COCO.
@@ -453,6 +455,7 @@ if __name__ == '__main__':
     config.display()
 
     # Create model
+    pdb.set_trace()
     if args.phase == "train":
         model = modellib.MaskRCNN(config=config, model_dir=args.logs)
     else:
@@ -461,7 +464,8 @@ if __name__ == '__main__':
         if config.GPU_COUNT == 1:
             model = model.cuda()
         else:
-            model = torch.nn.DataParallel(model).cuda()
+            model = model.cuda()
+            #model = torch.nn.DataParallel(model).cuda()
 
     # Select weights file to load
     if args.model:
