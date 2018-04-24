@@ -21,10 +21,10 @@ if __name__ == '__main__':
                         help='train or inference')
     parser.add_argument('--config_name',
                         required=False,
-                        default='all_new')
+                        default='all_new_2')
                         # default='hyli_default_old')
     parser.add_argument('--debug',
-                        default=1, type=int)  # no bool type here please
+                        default=0, type=int)  # no bool type here please
     parser.add_argument('--device_id',
                         default='0,1', type=str)
     parser.add_argument('--dataset_path',

@@ -4,6 +4,14 @@ from torch.autograd import Function
 from ._ext import crop_and_resize as _backend
 
 
+# From Mask R-CNN paper: "We sample four regular locations, so
+# that we can evaluate either max or average pooling. In fact,
+# interpolating only a single value at each bin center (without
+# pooling) is nearly as effective."
+#
+# Here we use the simplified approach of a single value per bin,
+# which is how it's done in tf.crop_and_resize()
+# Result: [batch * num_boxes, pool_height, pool_width, channels]
 class CropAndResizeFunction(Function):
 
     def __init__(self, crop_height, crop_width, extrapolation_value=0):

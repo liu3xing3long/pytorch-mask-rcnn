@@ -93,22 +93,29 @@ class MaskRCNN(nn.Module):
             os.makedirs(self.log_dir)
 
         # Path to save after each epoch; used for training
-        self.checkpoint_path = os.path.join(self.log_dir, "mask_rcnn_*epoch*.pth")
-        self.checkpoint_path = self.checkpoint_path.replace("*epoch*", "{:04d}")
+        self.checkpoint_path = os.path.join(self.log_dir, 'mask_rcnn_*epoch*.pth')
+        self.checkpoint_path = self.checkpoint_path.replace('*epoch*', '{:04d}')
 
     def load_weights(self, filepath):
         """called in model.py"""
         if filepath is not None:
             if os.path.exists(filepath):
-                # TODO: find start_iter within epoch
-                self.load_state_dict(torch.load(filepath))
+                checkpoints = torch.load(filepath)
                 try:
-                    self.start_epoch
-                    self.start_iter
-                except:
-                    self.start_epoch, self.start_iter = 0, 0
+                    self.load_state_dict(checkpoints['state_dict'])
+                except KeyError:
+                    self.load_state_dict(checkpoints)
 
-                self.epoch = self.start_epoch
+                if self.config.PHASE == 'train':
+                    try:
+                        self.start_epoch = checkpoints['epoch']
+                        self.start_iter = checkpoints['iter']
+                    except:
+                        print_log('[TRAIN] the loaded model does not have start epoch and iter;\n'
+                                  'if that is pretrain model, it is ok; if resuming, check your model\n'
+                                  'start epoch and iter set to zeros')
+                        self.start_epoch, self.start_iter = 0, 0
+                    self.epoch = self.start_epoch
             else:
                 raise Exception("Weight file not found ...")
 
@@ -204,8 +211,8 @@ class MaskRCNN(nn.Module):
             gt_boxes = gt_boxes / scale
 
             # _rois: N, TRAIN_ROIS_PER_IMAGE, 4; zero padded
-            _rois, target_class_ids, target_deltas, target_mask, volatiles = \
-                prepare_det_target(_proposals, gt_class_ids, gt_boxes, gt_masks, self.config)
+            _rois, target_class_ids, target_deltas, target_mask = \
+                prepare_det_target(_proposals.detach(), gt_class_ids, gt_boxes, gt_masks, self.config)
 
             if torch.sum(_rois).data[0] != 0:
                 # classifier
@@ -218,9 +225,9 @@ class MaskRCNN(nn.Module):
                 mrcnn_mask = mrcnn_mask.view(sample_per_gpu, -1,
                                              mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
             else:
-                # if ALL samples within the batch has empty "_rois", skip the heads and output zero predictions.
+                # if **ALL** samples within the batch has empty "_rois", skip the heads and output zero predictions.
                 # this is really rare case. otherwise, pass the heads even some samples don't have _rois.
-                [mrcnn_class_logits, mrcnn_bbox, mrcnn_mask] = volatiles
+                mrcnn_class_logits, mrcnn_bbox, mrcnn_mask = None, None, None
 
             # if self.config.DEBUG:
             #     for ind, out in enumerate(output):

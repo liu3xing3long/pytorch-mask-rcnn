@@ -13,12 +13,8 @@ class Config(object):
     sub-class that inherits from this one and override properties
     that need to be changed.
     """
-    # Name the configurations. For example, 'COCO', 'Experiment 3', ...etc.
-    # Useful if your code needs to do things differently depending on which
-    # experiment is running.
-    NAME = None  # Override in sub-classes
 
-    # Path to pretrained imagenet model
+    # Path to pretrained imagenet model # TODO: loading is buggy
     PRETRAIN_IMAGENET_MODEL_PATH = os.path.join(os.getcwd(), 'datasets/pretrain_model', "resnet50_imagenet.pth")
     # Path to pretrained weights file
     PRETRAIN_COCO_MODEL_PATH = os.path.join(os.getcwd(), 'datasets/pretrain_model', 'mask_rcnn_coco.pth')
@@ -46,7 +42,7 @@ class Config(object):
     # Number of validation steps to run at the end of every training epoch.
     # A bigger number improves accuracy of validation stats, but slows
     # down the training.
-    VALIDATION_STEPS = 50
+    # VALIDATION_STEPS = 50
 
     # The strides of each layer of the FPN Pyramid. These values
     # are based on a Resnet101 backbone.
@@ -78,12 +74,12 @@ class Config(object):
     POST_NMS_ROIS_TRAINING = 2000
     POST_NMS_ROIS_INFERENCE = 1000
 
-    # If enabled, resizes instance masks to a smaller size to reduce
+    # If enabled, resize instance masks to a smaller size to reduce
     # memory load. Recommended when using high-resolution images.
     USE_MINI_MASK = True
     MINI_MASK_SHAPE = (56, 56)  # (height, width) of the mini-mask
 
-    # Input image resing
+    # Input image resize
     # Images are resized such that the smallest side is >= IMAGE_MIN_DIM and
     # the longest side is <= IMAGE_MAX_DIM. In case both conditions can't
     # be satisfied together the IMAGE_MAX_DIM is enforced.
@@ -133,7 +129,6 @@ class Config(object):
     # implementation.
     LEARNING_RATE = 0.001
     LEARNING_MOMENTUM = 0.9
-
     # Weight decay regularization
     WEIGHT_DECAY = 0.0001
 
@@ -145,6 +140,7 @@ class Config(object):
     USE_RPN_ROIS = True
 
     SHOW_INTERVAL = 200
+    SAVE_TIME_WITHIN_EPOCH = 10
     USE_VISDOM = True
 
     def _set_value(self):

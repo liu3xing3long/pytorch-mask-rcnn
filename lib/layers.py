@@ -496,8 +496,8 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
         The width and height are those specific in the pool_shape in the layer constructor.
     """
 
-    # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coords
-    boxes = inputs[0]
+    # Crop boxes [batch, num_boxes, (y1, x1, y2, x2)] in normalized coordinates
+    boxes = inputs[0]   # aka ROIs
 
     # Feature Maps. List of feature maps from different level of the
     # feature pyramid. Each is [batch, height, width, channels]
@@ -533,23 +533,11 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
         box_to_level.append(index.data)
 
         # Stop gradient propagation to ROI proposals
-        level_boxes = level_boxes.detach()
+        # level_boxes = level_boxes.detach()
+        level_boxes = level_boxes  # TODO: delete detach()
 
         # Crop and Resize
-        # From Mask R-CNN paper: "We sample four regular locations, so
-        # that we can evaluate either max or average pooling. In fact,
-        # interpolating only a single value at each bin center (without
-        # pooling) is nearly as effective."
-        #
-        # Here we use the simplified approach of a single value per bin,
-        # which is how it's done in tf.crop_and_resize()
-        # Result: [batch * num_boxes, pool_height, pool_width, channels]
-
-        # ind = Variable(torch.zeros(level_boxes.size(0)), requires_grad=False).int()
-        # if level_boxes.is_cuda:
-        #     ind = ind.cuda()
         box_ind = index[:, 0].int()
-
         curr_feature_maps = feature_maps[i]
         pooled_features = CropAndResizeFunction(pool_size, pool_size, 0)(curr_feature_maps, level_boxes, box_ind)
         pooled.append(pooled_features)
@@ -679,7 +667,6 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
         pos_ind = pos_ind[rand_idx]
         pos_cnt = pos_ind.size(0)
 
-        # TODO: pos_ind requries_grad=True
         POS_ROIS = proposals[pos_ind.data, :]
 
         # ROI_GT_CLASS_IDS
@@ -791,11 +778,11 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
             zeros = zeros.cuda()
         MASKS = zeros
 
-    # updated: pad ROIS
-    if ROIS.size(0) < config.TRAIN_ROIS_PER_IMAGE:
-        more_zero_num = config.TRAIN_ROIS_PER_IMAGE - ROIS.size(0)
-        zeros = Variable(torch.zeros(more_zero_num, 4).cuda())  # should require gradient
-        ROIS = torch.cat((ROIS, zeros), dim=0)
+    # # updated: pad ROIS
+    # if ROIS.size(0) < config.TRAIN_ROIS_PER_IMAGE:
+    #     more_zero_num = config.TRAIN_ROIS_PER_IMAGE - ROIS.size(0)
+    #     zeros = Variable(torch.zeros(more_zero_num, 4).cuda())  # should require gradient
+    #     ROIS = torch.cat((ROIS, zeros), dim=0)
 
     return ROIS, ROI_GT_CLASS_IDS, DELTAS, MASKS
 
@@ -831,16 +818,16 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     mask_sz = config.MASK_SHAPE[0]
     num_cls = config.NUM_CLASSES
 
-    # rois_out = Variable(torch.zeros(bs, num_rois, 4).cuda())  # needs gradient
-    rois_out = []
+    rois_out = Variable(torch.zeros(bs, num_rois, 4).cuda())
+    # rois_out = []
     target_class_ids = Variable(torch.IntTensor(bs, num_rois).zero_().cuda(), requires_grad=False)
     target_deltas = Variable(torch.zeros(bs, num_rois, 4).cuda(), requires_grad=False)
     target_mask = Variable(torch.zeros(bs, num_rois, mask_sz, mask_sz).cuda(), requires_grad=False)
 
-    mrcnn_class_logits = Variable(torch.zeros(bs, num_rois, num_cls).cuda())
-    mrcnn_bbox = Variable(torch.zeros(bs, num_rois, num_cls, 4).cuda())
-    mrcnn_mask = Variable(torch.zeros(bs, num_rois, num_cls, mask_sz, mask_sz).cuda())
-    volatiles = [mrcnn_class_logits, mrcnn_bbox, mrcnn_mask]
+    # mrcnn_class_logits = Variable(torch.zeros(bs, num_rois, num_cls).cuda())
+    # mrcnn_bbox = Variable(torch.zeros(bs, num_rois, num_cls, 4).cuda())
+    # mrcnn_mask = Variable(torch.zeros(bs, num_rois, num_cls, mask_sz, mask_sz).cuda())
+    # volatiles = [mrcnn_class_logits, mrcnn_bbox, mrcnn_mask]
 
     for i in range(bs):
         # per sample
@@ -848,13 +835,15 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
             generate_roi(config, proposals[i], gt_class_ids[i], gt_boxes[i], gt_masks[i])
         if rois is not None:
             curr_rois_num = rois.size(0)
-            # rois_out[i, :curr_rois_num] = rois
+            # print('curr_rois_num: ', curr_rois_num)
+            # print('roi_gt_class_ids: ', roi_gt_class_ids.size())
+            rois_out[i, :curr_rois_num] = rois
+            # rois_out.append(rois)
             target_class_ids[i, :curr_rois_num] = roi_gt_class_ids
             target_deltas[i, :curr_rois_num] = deltas
             target_mask[i, :curr_rois_num] = masks
-            rois_out.append(rois)
 
-    return torch.stack(rois_out), target_class_ids, target_deltas, target_mask, volatiles
+    return rois_out, target_class_ids, target_deltas, target_mask
 
 
 ############################################################
@@ -996,16 +985,13 @@ def detection_layer(rois, probs, deltas, image_meta, config):
 ############################################################
 def compute_rpn_class_loss(rpn_match, rpn_class_logits):
     """RPN anchor classifier loss.
-    rpn_match: [batch, anchors, 1]. Anchor match type. 1=positive,-1=negative, 0=neutral anchor.
-    rpn_class_logits: [batch, anchors, 2]. RPN classifier logits for FG/BG.
+    rpn_match:          [batch, anchors, 1]. Anchor match type. 1=positive,-1=negative, 0=neutral anchor.
+    rpn_class_logits:   [batch, anchors, 2]. RPN classifier logits for FG/BG.
     """
-
     # Squeeze last dim to simplify
-    rpn_match = rpn_match.squeeze(2)
-
+    rpn_match = rpn_match.squeeze(-1)
     # Get anchor classes. Convert the -1/+1 match to 0/1 values.
     anchor_class = (rpn_match == 1).long()
-
     # Positive and Negative anchors contribute to the loss,
     # but neutral anchors (match value = 0) don't.
     indices = torch.nonzero(rpn_match != 0)
@@ -1014,7 +1000,7 @@ def compute_rpn_class_loss(rpn_match, rpn_class_logits):
     rpn_class_logits = rpn_class_logits[indices.data[:, 0], indices.data[:, 1], :]
     anchor_class = anchor_class[indices.data[:, 0], indices.data[:, 1]]
 
-    # Crossentropy loss
+    # Cross entropy loss
     loss = F.cross_entropy(rpn_class_logits, anchor_class)
 
     return loss
@@ -1023,25 +1009,21 @@ def compute_rpn_class_loss(rpn_match, rpn_class_logits):
 def compute_rpn_bbox_loss(target_bbox, rpn_match, rpn_bbox):
     """Return the RPN bounding box loss graph.
 
-    target_bbox: [batch, max positive anchors, (dy, dx, log(dh), log(dw))].
-                    Uses 0 padding to fill in unused bbox deltas.
-    rpn_match: [batch, anchors, 1]. Anchor match type. 1=positive,-1=negative, 0=neutral anchor.
-    rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
+    target_bbox:    [batch, max_positive_anchors (say 256), (dy, dx, log(dh), log(dw))].
+                        Uses 0 padding to fill in unused bbox deltas. shape, 6, 256, 4
+    rpn_match:      [batch, anchors, 1]. Anchor match type. 1=positive,-1=negative, 0=neutral anchor.
+    rpn_bbox:       [batch, anchors, (dy, dx, log(dh), log(dw))]. shape, 6, 25576, 4
     """
 
     # Squeeze last dim to simplify
     rpn_match = rpn_match.squeeze(2)
-
     # Positive anchors contribute to the loss, but negative and
     # neutral anchors (match value of 0 or -1) don't.
     indices = torch.nonzero(rpn_match == 1)
-
     # Pick bbox deltas that contribute to the loss
-    rpn_bbox = rpn_bbox[indices.data[:, 0], indices.data[:, 1]]
+    rpn_bbox = rpn_bbox[indices.data[:, 0], indices.data[:, 1]]  # shape: say 27, 4; lose the batch dim info
 
     # Trim target bounding box deltas to the same length as rpn_bbox.
-    # TODO (high, important): LOSS, ORIGINAL CODE BUGGY HERE
-    # target_bbox = target_bbox[0, :rpn_bbox.size()[0], :]
     bs = target_bbox.size(0)
     target_bbox_sort = Variable(torch.zeros(rpn_bbox.size()).cuda(), requires_grad=False)
     cnt = 0
@@ -1058,16 +1040,12 @@ def compute_rpn_bbox_loss(target_bbox, rpn_match, rpn_bbox):
 def compute_mrcnn_class_loss(target_class_ids, pred_class_logits):
     """Loss for the classifier head of Mask RCNN.
 
-    target_class_ids: [batch, num_rois]. Integer class IDs. Uses zero padding to fill in the array.
-    pred_class_logits: [batch, num_rois, num_classes]
+    target_class_ids:   [batch, num_rois]. Integer class IDs. Uses zero padding to fill in the array.
+    pred_class_logits:  [batch, num_rois, num_classes]
     """
-    # Loss
     if torch.sum(target_class_ids).data[0] != 0:
-        try:
-            loss = F.cross_entropy(pred_class_logits.view(-1, pred_class_logits.size(2)),
-                                   target_class_ids.long().view(-1))
-        except:
-            a = 1
+        loss = F.cross_entropy(pred_class_logits.view(-1, pred_class_logits.size(2)),
+                               target_class_ids.long().view(-1))
     else:
         loss = Variable(torch.FloatTensor([0]), requires_grad=False)
         if target_class_ids.is_cuda:
@@ -1078,20 +1056,14 @@ def compute_mrcnn_class_loss(target_class_ids, pred_class_logits):
 def compute_mrcnn_bbox_loss(target_bbox, target_class_ids, pred_bbox):
     """Loss for Mask R-CNN bounding box refinement.
 
-    target_bbox: [batch, num_rois, (dy, dx, log(dh), log(dw))]
-    target_class_ids: [batch, num_rois]. Integer class IDs.
-    pred_bbox: [batch, num_rois, num_classes, (dy, dx, log(dh), log(dw))]
+    target_bbox:        [batch, num_rois, (dy, dx, log(dh), log(dw))]
+    target_class_ids:   [batch, num_rois]. Integer class IDs.
+    pred_bbox:          [batch, num_rois, num_classes, (dy, dx, log(dh), log(dw))]
     """
 
     if torch.sum(target_class_ids).data[0] != 0:
         # # Only positive ROIs contribute to the loss. And only
-        # # the right class_id of each ROI. Get their indicies.
-        # positive_roi_ix = torch.nonzero(target_class_ids > 0)[:, 0]
-        # positive_roi_class_ids = target_class_ids[positive_roi_ix.data].long()
-        # indices = torch.stack((positive_roi_ix, positive_roi_class_ids), dim=1)
-        # # Gather the deltas (predicted and true) that contribute to loss
-        # target_bbox = target_bbox[indices[:, 0].data, :]
-        # pred_bbox = pred_bbox[indices[:, 0].data, indices[:, 1].data, :]
+        # # the right class_id of each ROI. Get their indices.
         # TODO: optimize here, loss
         # in my ugly manner
         ugly_ind = torch.nonzero(target_class_ids > 0).long()
@@ -1115,23 +1087,14 @@ def compute_mrcnn_bbox_loss(target_bbox, target_class_ids, pred_bbox):
 def compute_mrcnn_mask_loss(target_masks, target_class_ids, pred_masks):
     """Mask binary cross-entropy loss for the masks head.
 
-    target_masks: [batch, num_rois, height, width].
-        A float32 tensor of values 0 or 1. Uses zero padding to fill array.
-    target_class_ids: [batch, num_rois]. Integer class IDs. Zero padded.
-    pred_masks: [batch, proposals, height, width, num_classes] float32 tensor
-                with values from 0 to 1.
+    target_masks:       [batch, num_rois, height, width].
+                            A float32 tensor of values 0 or 1. Uses zero padding to fill array.
+    target_class_ids:   [batch, num_rois]. Integer class IDs. Zero padded.
+    pred_masks:         [batch, proposals, height, width, num_classes] float32 tensor with values from 0 to 1.
     """
     if torch.sum(target_class_ids).data[0] != 0:
         # # Only positive ROIs contribute to the loss. And only
         # # the class specific mask of each ROI.
-        # positive_ix = torch.nonzero(target_class_ids > 0)[:, 0]
-        # positive_class_ids = target_class_ids[positive_ix.data].long()
-        # indices = torch.stack((positive_ix, positive_class_ids), dim=1)
-        #
-        # # Gather the masks (predicted and true) that contribute to loss
-        # y_true = target_masks[indices[:, 0].data, :, :]
-        # y_pred = pred_masks[indices[:, 0].data, indices[:, 1].data, :, :]
-
         # in my ugly manner
         mask_sz = target_masks.size(2)
         ugly_ind = torch.nonzero(target_class_ids > 0).long()

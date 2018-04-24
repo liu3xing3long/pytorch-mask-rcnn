@@ -91,19 +91,17 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
                                model.config.STEPS_PER_EPOCH, stage_name, epoch_str)
         else:
             loss = train_epoch_new(input_model, train_generator, optimizer,
-                                   stage_name=stage_name, epoch_str=epoch_str)
+                                   stage_name=stage_name, epoch_str=epoch_str, epoch=epoch)
         # Validation
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
         # Statistics
         model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
-        visualize.plot_loss(model.loss_history, model.val_loss_history,
-                            save=True, log_dir=model.log_dir)
-        # TODO: save model
+        visualize.plot_loss(model.loss_history, model.val_loss_history, save=True, log_dir=model.log_dir)
         model_file = model.checkpoint_path.format(epoch)
         print_log('saving model: {:s}\n'.format(model_file), model.config.LOG_FILE)
-        torch.save(model.state_dict(), model_file)
+        torch.save({'state_dict': model.state_dict()}, model_file)
 
     # update the epoch info
     # TODO: check here, model.epoch
@@ -122,6 +120,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     config = model.config
     data_iterator = iter(data_loader)
     iter_per_epoch = math.ceil(len(data_loader)/config.BATCH_SIZE)
+    save_iter_base = math.floor(iter_per_epoch / config.SAVE_TIME_WITHIN_EPOCH)
 
     for iter_ind in range(iter_per_epoch):
 
@@ -139,7 +138,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks], mode=model.config.PHASE)
 
         # Compute losses
-        loss, detailed_losses = compute_losses(target_rpn_match, target_rpn_bbox, outputs)
+        loss, detailed_losses = compute_loss(target_rpn_match, target_rpn_bbox, outputs)
 
         optimizer.zero_grad()
         loss.backward()
@@ -156,9 +155,18 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                              detailed_losses[1].data.cpu()[0],
                              detailed_losses[2].data.cpu()[0],
                              detailed_losses[3].data.cpu()[0],
-                             detailed_losses[4].data.cpu()[0]), model.config.LOG_FILE)
+                             detailed_losses[4].data.cpu()[0]), config.LOG_FILE)
         # Statistics
         loss_sum += loss.data.cpu()[0]/iter_per_epoch
+        if iter_ind % save_iter_base == 0:
+            model_file = os.path.join(model.log_dir,
+                                      'mask_rcnn_{:04d}_iter_{:d}.pth'.format(args['epoch'], iter_ind))
+            print_log('saving model file to: {:s}'.format(model_file), config.LOG_FILE)
+            torch.save({
+                'state_dict':   model.state_dict(),
+                'epoch':        model.epoch,
+                'iter':         iter_ind,
+            }, model_file)
 
     return loss_sum
 
@@ -264,7 +272,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
               model.config.LOG_FILE)
 
 
-def compute_losses(target_rpn_match, target_rpn_bbox, inputs):
+def compute_loss(target_rpn_match, target_rpn_bbox, inputs):
 
     rpn_class_logits, rpn_pred_bbox, target_class_ids, \
         mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
@@ -300,7 +308,7 @@ def train_epoch(model, datagenerator, optimizer, steps, stage_name, epoch_str):
         # Compute losses
         rpn_match = Variable(inputs[2]).cuda()
         rpn_bbox = Variable(inputs[3]).cuda()
-        loss, detailed_losses = compute_losses(rpn_match, rpn_bbox, outputs)
+        loss, detailed_losses = compute_loss(rpn_match, rpn_bbox, outputs)
 
         # backprop
         if (batch_count % model.config.BATCH_SIZE) == 0:
