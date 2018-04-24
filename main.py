@@ -56,6 +56,7 @@ if __name__ == '__main__':
     model = network.MaskRCNN(config, model_dir=args.results)
 
     # Select weights file to load
+    # update start epoch and iter if resume
     config = select_weights(config, model, args.results)
 
     # show the final configuration

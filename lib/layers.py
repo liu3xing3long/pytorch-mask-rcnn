@@ -816,18 +816,12 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     # set up new variables
     num_rois = config.TRAIN_ROIS_PER_IMAGE   # max_rois_per_image
     mask_sz = config.MASK_SHAPE[0]
-    num_cls = config.NUM_CLASSES
 
     rois_out = Variable(torch.zeros(bs, num_rois, 4).cuda())
     # rois_out = []
     target_class_ids = Variable(torch.IntTensor(bs, num_rois).zero_().cuda(), requires_grad=False)
     target_deltas = Variable(torch.zeros(bs, num_rois, 4).cuda(), requires_grad=False)
     target_mask = Variable(torch.zeros(bs, num_rois, mask_sz, mask_sz).cuda(), requires_grad=False)
-
-    # mrcnn_class_logits = Variable(torch.zeros(bs, num_rois, num_cls).cuda())
-    # mrcnn_bbox = Variable(torch.zeros(bs, num_rois, num_cls, 4).cuda())
-    # mrcnn_mask = Variable(torch.zeros(bs, num_rois, num_cls, mask_sz, mask_sz).cuda())
-    # volatiles = [mrcnn_class_logits, mrcnn_bbox, mrcnn_mask]
 
     for i in range(bs):
         # per sample
