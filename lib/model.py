@@ -259,7 +259,6 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
             if final_rois is None:
                 continue
             for det_id in range(final_rois.shape[0]):
-
                 bbox = np.around(final_rois[det_id], 1)
                 curr_result = {
                     "image_id":     curr_coco_id,
@@ -285,7 +284,8 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
             print_log('[{:s}][{:s}] evaluation progress \t{:4d} images /{:4d} total ...'.
                       format(model.config.NAME, model_file_name, cnt, len(image_ids)), model.config.LOG_FILE)
 
-    print("Prediction time: {:.4f}. Average {:.4f} sec/image".format(t_prediction, t_prediction / len(image_ids)))
+    print_log("Prediction time: {:.4f}. Average {:.4f} sec/image".format(
+        t_prediction, t_prediction / len(image_ids)), model.config.LOG_FILE)
     print_log('Saving results to {:s}'.format(model.config.RESULT_FILE), model.config.LOG_FILE)
     torch.save({'det_result': results}, model.config.RESULT_FILE)
 
@@ -299,9 +299,9 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     cocoEval.evaluate()
     cocoEval.accumulate()
     cocoEval.summarize()
-    print('Total time: {:.4f}'.format(time.time() - t_start))
+    print_log('Total time: {:.4f}'.format(time.time() - t_start), model.config.LOG_FILE)
     print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
-              format(model.config.NAME, model.config.START_MODEL_FILE, cocoEval.stats[0]),
+              format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE, cocoEval.stats[0])),
               model.config.LOG_FILE)
 
 
