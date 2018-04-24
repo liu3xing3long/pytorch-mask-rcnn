@@ -8,6 +8,7 @@ from datasets.pycocotools.cocoeval import COCOeval
 import numpy as np
 from tools.utils import print_log
 import torch.nn as nn
+import matplotlib.pyplot as plt
 
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
@@ -22,6 +23,22 @@ LAYER_REGEX = {
     # All layers
     "all": ".*",
 }
+
+CLASS_NAMES = ['BG', 'person', 'bicycle', 'car', 'motorcycle', 'airplane',
+               'bus', 'train', 'truck', 'boat', 'traffic light',
+               'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird',
+               'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear',
+               'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie',
+               'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
+               'kite', 'baseball bat', 'baseball glove', 'skateboard',
+               'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup',
+               'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+               'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza',
+               'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed',
+               'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote',
+               'keyboard', 'cell phone', 'microwave', 'oven', 'toaster',
+               'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors',
+               'teddy bear', 'hair drier', 'toothbrush']
 
 
 def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_call, layers):
@@ -216,16 +233,15 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
 
     # for i, image_id in enumerate(image_ids):
     for iter_ind in range(total_iter):
-
         curr_image_ids = image_ids[iter_ind*model.config.BATCH_SIZE :
                             min(iter_ind*model.config.BATCH_SIZE + model.config.BATCH_SIZE, num_test_im)]
-        # if iter_ind > 820:  # for debug
+
         # Run detection
         t_pred_start = time.time()
         # Mold inputs to format expected by the neural network
         molded_images, image_metas, windows, images = _mold_inputs(model, curr_image_ids, dataset)
 
-        # Run object detection
+        # Run object detection; detections: 8,100,6; mrcnn_mask: 8,100,81,28,28
         detections, mrcnn_mask = input_model([molded_images, image_metas], mode=model.config.PHASE)
 
         # Convert to numpy
@@ -235,6 +251,8 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
         # Process detections
         results = []
         for i, image in enumerate(images):
+
+            curr_coco_id = coco_image_ids[curr_image_ids[i]]
             final_rois, final_class_ids, final_scores, final_masks = _unmold_detections(
                 detections[i], mrcnn_mask[i], image.shape, windows[i])
 
@@ -244,21 +262,32 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
 
                 bbox = np.around(final_rois[det_id], 1)
                 curr_result = {
-                    "image_id":     coco_image_ids[i],
+                    "image_id":     curr_coco_id,
                     "category_id":  dataset.get_source_class_id(final_class_ids[det_id], "coco"),
                     "bbox":         [bbox[1], bbox[0], bbox[3] - bbox[1], bbox[2] - bbox[0]],
                     "score":        final_scores[det_id],
                     "segmentation": maskUtils.encode(np.asfortranarray(final_masks[:, :, det_id]))
                 }
                 results.append(curr_result)
-        t_prediction += (time.time() - t_pred_start)
 
+            # visualize result if necessary
+            if model.config.DEBUG:
+                plt.close()
+                visualize.display_instances(image, final_rois, final_masks, final_class_ids,
+                                            CLASS_NAMES, final_scores)
+                im_file = os.path.join(model.config.SAVE_IMAGE_DIR,
+                                       'coco_im_id_{:d}.png'.format(curr_coco_id))
+                plt.savefig(im_file)
+
+        t_prediction += (time.time() - t_pred_start)
         cnt += len(curr_image_ids)
         if iter_ind % (model.config.SHOW_INTERVAL*10) == 0 or cnt == len(image_ids):
             print_log('[{:s}][{:s}] evaluation progress \t{:4d} images /{:4d} total ...'.
                       format(model.config.NAME, model_file_name, cnt, len(image_ids)), model.config.LOG_FILE)
 
     print("Prediction time: {:.4f}. Average {:.4f} sec/image".format(t_prediction, t_prediction / len(image_ids)))
+    print_log('Saving results to {:s}'.format(model.config.RESULT_FILE), model.config.LOG_FILE)
+    torch.save({'det_result': results}, model.config.RESULT_FILE)
 
     # Evaluate
     print('\nBegin to evaluate ...')
@@ -404,15 +433,22 @@ def select_weights(config, network, model_dir):
     network.load_weights(model_path)
     # add new info to config
     config.START_MODEL_FILE = model_path
-    config.START_EPOCH = network.start_epoch
-    config.START_ITER = network.start_iter
+
     if config.PHASE == 'train':
+        config.START_EPOCH = network.start_epoch
+        config.START_ITER = network.start_iter
         config.LOG_FILE = os.path.join(
             network.log_dir, 'log_start_ep_{:d}_iter_{:d}.txt'.format(network.start_epoch, network.start_iter))
     else:
         model_name = os.path.basename(model_path).replace('.pth', '')
         config.LOG_FILE = os.path.join(
             network.log_dir, 'inference_{:s}.txt'.format(model_name))
+        model_suffix = os.path.basename(config.START_MODEL_FILE).replace('mask_rcnn_', '')
+        config.RESULT_FILE = os.path.join(network.log_dir, 'detection_result_{:s}'.format(model_suffix))
+        config.SAVE_IMAGE_DIR = os.path.join(network.log_dir, model_suffix.replace('.pth', ''))
+        if not os.path.exists(config.SAVE_IMAGE_DIR):
+            os.makedirs(config.SAVE_IMAGE_DIR)
+
     config.CHECKPOINT_PATH = network.checkpoint_path
     return config
 

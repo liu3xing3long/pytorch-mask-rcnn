@@ -1,3 +1,4 @@
+results/*/inference/*/*
 *.swp
 *.txt*
 datasets/coco

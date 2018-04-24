@@ -11,20 +11,20 @@ DEFAULT_DATASET_YEAR = '2014'
 
 if __name__ == '__main__':
     # weird: if put ahead; import error occurs
-    from datasets.dataset_coco import CocoDataset, get_data
+    from datasets.dataset_coco import get_data
 
-    parser = argparse.ArgumentParser(description='Train Mask R-CNN on MS COCO.')
+    parser = argparse.ArgumentParser(description='Mask R-CNN')
     parser.add_argument('--phase',
                         required=False,
-                        default='train',
-                        # default='inference',
+                        # default='train',
+                        default='inference',
                         help='train or inference')
     parser.add_argument('--config_name',
                         required=False,
                         default='all_new_2')
                         # default='hyli_default_old')
     parser.add_argument('--debug',
-                        default=0, type=int)  # no bool type here please
+                        default=1, type=int)  # no bool type here please
     parser.add_argument('--device_id',
                         default='0,1', type=str)
     parser.add_argument('--dataset_path',
@@ -44,7 +44,6 @@ if __name__ == '__main__':
                         metavar="<True|False>",
                         help='Automatically download and unzip MS-COCO files',
                         type=bool)
-
     args = parser.parse_args()
     print('\nSTART::: phase is [{:s}]'.format(args.phase))
 
