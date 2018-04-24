@@ -54,12 +54,13 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
         model = input_model
 
     num_train_im = train_generator.dataset.dataset.num_images
-    assert (num_train_im % model.config.BATCH_SIZE) % \
-           model.config.GPU_COUNT == 0, 'last mini-batch in an epoch is not divisible by gpu number.\n' \
-                                        'total train im: {:d}, batch size: {:d}, gpu num {:d}\n' \
-                                        'last mini-batch size: {:d}\n'.format(
-        num_train_im, model.config.BATCH_SIZE, model.config.GPU_COUNT, (num_train_im % model.config.BATCH_SIZE)
-    )
+    if (num_train_im % model.config.BATCH_SIZE) % model.config.GPU_COUNT != 0:
+        print_log('WARNING: last mini-batch in an epoch is not divisible by gpu number.\n'
+                  'total train im: {:d}, batch size: {:d}, gpu num {:d}\n'
+                  'last mini-batch size: {:d}\n'.format(
+            num_train_im, model.config.BATCH_SIZE, model.config.GPU_COUNT,
+            (num_train_im % model.config.BATCH_SIZE)),
+            model.config.LOG_FILE)
 
     if model.epoch > total_ep_curr_call:
         print_log('skip {:s} stage ...'.format(stage_name), model.config.LOG_FILE)
