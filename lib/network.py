@@ -7,26 +7,25 @@ from torch.autograd import Variable
 
 
 class MaskRCNN(nn.Module):
-    def __init__(self, config, model_dir):
+    def __init__(self, config):
         """
             config: A Sub-class of the Config class
             model_dir: Directory to save training results and trained weights
         """
         super(MaskRCNN, self).__init__()
         self.config = config
-        self.model_dir = model_dir
         self.loss_history = []
         self.val_loss_history = []
 
         self._build(config=config)
         self._initialize_weights()
-        self._set_log_dir()
+        # self._set_log_dir()
 
     def _build(self, config):
         """Build Mask R-CNN architecture: fpn, rpn, classifier, mask"""
 
         # Image size must be dividable by 2 multiple times
-        h, w = config.IMAGE_SHAPE[:2]
+        h, w = config.DATA.IMAGE_SHAPE[:2]
         if h / 2**6 != int(h / 2**6) or w / 2**6 != int(w / 2**6):
             raise Exception("Image size must be dividable by 2 at least 6 times "
                             "to avoid fractions when downscaling and upscaling."
@@ -45,20 +44,19 @@ class MaskRCNN(nn.Module):
 
         # Generate Anchors
         self.anchors = torch.from_numpy(
-            utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,
-                                           config.RPN_ANCHOR_RATIOS,
-                                           config.BACKBONE_SHAPES,
-                                           config.BACKBONE_STRIDES,
-                                           config.RPN_ANCHOR_STRIDE)).float()
+            utils.generate_pyramid_anchors(config.RPN.ANCHOR_SCALES,
+                                           config.RPN.ANCHOR_RATIOS,
+                                           config.MODEL.BACKBONE_SHAPES,
+                                           config.MODEL.BACKBONE_STRIDES,
+                                           config.RPN.ANCHOR_STRIDE)).float()
 
         # RPN
-        self.rpn = RPN(len(config.RPN_ANCHOR_RATIOS), config.RPN_ANCHOR_STRIDE, 256)
-
+        self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, 256)
         # FPN Classifier
-        self.classifier = Classifier(256, config.POOL_SIZE, config.IMAGE_SHAPE, config.NUM_CLASSES)
-
+        self.classifier = Classifier(256, config.MRCNN.POOL_SIZE,
+                                     config.DATA.IMAGE_SHAPE, config.DATASET.NUM_CLASSES)
         # FPN Mask
-        self.mask = Mask(256, config.MASK_POOL_SIZE, config.IMAGE_SHAPE, config.NUM_CLASSES)
+        self.mask = Mask(256, config.MRCNN.MASK_POOL_SIZE, config.DATA.IMAGE_SHAPE, config.DATASET.NUM_CLASSES)
 
         # Fix batch norm layers
         def set_bn_fix(m):
@@ -83,17 +81,17 @@ class MaskRCNN(nn.Module):
                 m.weight.data.normal_(0, 0.01)
                 m.bias.data.zero_()
 
-    def _set_log_dir(self):
-        # Setup directory
-        # e.g., results/hyli_default/train(or inference)/
-        self.log_dir = os.path.join(self.model_dir, self.config.NAME.lower(), self.config.PHASE)
-
-        if not os.path.exists(self.log_dir):
-            os.makedirs(self.log_dir)
-
-        # Path to save after each epoch; used for training
-        self.checkpoint_path = os.path.join(self.log_dir, 'mask_rcnn_*epoch*.pth')
-        self.checkpoint_path = self.checkpoint_path.replace('*epoch*', '{:04d}')
+    # def _set_log_dir(self):
+    #     # Setup directory
+    #     # e.g., results/hyli_default/train(or inference)/
+    #     self.log_dir = os.path.join(self.model_dir, self.config.NAME.lower(), self.config.PHASE)
+    #
+    #     if not os.path.exists(self.log_dir):
+    #         os.makedirs(self.log_dir)
+    #
+    #     # Path to save after each epoch; used for training
+    #     self.checkpoint_path = os.path.join(self.log_dir, 'mask_rcnn_*epoch*.pth')
+    #     self.checkpoint_path = self.checkpoint_path.replace('*epoch*', '{:04d}')
 
     def load_weights(self, filepath):
         """called in model.py"""
