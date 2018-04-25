@@ -1,115 +1,224 @@
-import os
-import torch.optim as optim
-from tools import visualize
-import time
-from lib.layers import *
-from datasets.pycocotools import mask as maskUtils
-from datasets.pycocotools.cocoeval import COCOeval
-import numpy as np
-from tools.utils import print_log
+import math
+import torch
 import torch.nn as nn
-import matplotlib.pyplot as plt
-
-# Pre-defined layer regular expressions
-LAYER_REGEX = {
-    # all layers but the backbone
-    "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
-    # From a specific Resnet stage and up
-    "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
-    "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
-    "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
-    # All layers
-    "all": ".*",
-}
-
-CLASS_NAMES = ['BG', 'person', 'bicycle', 'car', 'motorcycle', 'airplane',
-               'bus', 'train', 'truck', 'boat', 'traffic light',
-               'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird',
-               'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear',
-               'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie',
-               'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
-               'kite', 'baseball bat', 'baseball glove', 'skateboard',
-               'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup',
-               'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
-               'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza',
-               'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed',
-               'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote',
-               'keyboard', 'cell phone', 'microwave', 'oven', 'toaster',
-               'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors',
-               'teddy bear', 'hair drier', 'toothbrush']
+import torch.nn.functional as F
+from lib.layers import pyramid_roi_align
 
 
-def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_call, layers):
+class SamePad2d(nn.Module):
     """
-    Args:
-        input_model:        nn.DataParallel
-        train_generator:
-        val_generator:
-        lr:
-            The learning rate to train with
-        total_ep_curr_call:
-            Number of training epochs. Note that previous training epochs
-            are considered to be done alreay, so this actually determines
-            the epochs to train in total rather than in this particaular call.
-        layers:
-            Allows selecting wich layers to train. It can be:
-                - A regular expression to match layer names to train
-                - One of these predefined values:
-                heads: The RPN, classifier and mask heads of the network
-                all: All the layers
-                3+: Train Resnet stage 3 and up
-                4+: Train Resnet stage 4 and up
-                5+: Train Resnet stage 5 and up
+        Mimic tensorflow's 'SAME' padding.
     """
-    stage_name = layers.upper()
-    if isinstance(input_model, nn.DataParallel):
-        model = input_model.module
-    else:
-        # single-gpu
-        model = input_model
 
-    num_train_im = train_generator.dataset.dataset.num_images
-    if (num_train_im % model.config.BATCH_SIZE) % model.config.GPU_COUNT != 0:
-        print_log('WARNING: last mini-batch in an epoch is not divisible by gpu number.\n'
-                  'total train im: {:d}, batch size: {:d}, gpu num {:d}\n'
-                  'last mini-batch size: {:d}\n'.format(
-            num_train_im, model.config.BATCH_SIZE, model.config.GPU_COUNT,
-            (num_train_im % model.config.BATCH_SIZE)),
-            model.config.LOG_FILE)
+    def __init__(self, kernel_size, stride):
+        super(SamePad2d, self).__init__()
+        self.kernel_size = torch.nn.modules.utils._pair(kernel_size)
+        self.stride = torch.nn.modules.utils._pair(stride)
 
-    if model.epoch > total_ep_curr_call:
-        print_log('skip {:s} stage ...'.format(stage_name), model.config.LOG_FILE)
-        return None
+    def forward(self, input):
+        in_width = input.size()[2]
+        in_height = input.size()[3]
+        out_width = math.ceil(float(in_width) / float(self.stride[0]))
+        out_height = math.ceil(float(in_height) / float(self.stride[1]))
+        pad_along_width = ((out_width - 1) * self.stride[0] +
+                           self.kernel_size[0] - in_width)
+        pad_along_height = ((out_height - 1) * self.stride[1] +
+                            self.kernel_size[1] - in_height)
+        pad_left = math.floor(pad_along_width / 2)
+        pad_top = math.floor(pad_along_height / 2)
+        pad_right = pad_along_width - pad_left
+        pad_bottom = pad_along_height - pad_top
+        return F.pad(input, (pad_left, pad_right, pad_top, pad_bottom), 'constant', 0)
 
-    if layers in LAYER_REGEX.keys():
-        layers = LAYER_REGEX[layers]
-    model.set_trainable(layers)
+    def __repr__(self):
+        return self.__class__.__name__
 
-    # Optimizer object, add L2 Regularization
-    # Skip gamma and beta weights of batch normalization layers.
-    trainables_wo_bn = [param for name, param in model.named_parameters() if param.requires_grad and 'bn' not in name]
-    trainables_only_bn = [param for name, param in model.named_parameters() if param.requires_grad and 'bn' in name]
-    optimizer = optim.SGD([
-        {'params': trainables_wo_bn, 'weight_decay': model.config.WEIGHT_DECAY},
-        {'params': trainables_only_bn}
-    ], lr=lr, momentum=model.config.LEARNING_MOMENTUM)
 
-    print_log('\n[Current stage: {:s}] start training at epoch {:d}, iter {:d}. \n'
-              'Total epoch this stage: {:d}, LR={:.4f}'.format(
-                stage_name, model.epoch+1, model.iter+1, total_ep_curr_call, lr),
-                model.config.LOG_FILE)
+############################################################
+#  FPN Graph
+############################################################
+# not used
+# class TopDownLayer(nn.Module):
+#
+#     def __init__(self, in_channels, out_channels):
+#         super(TopDownLayer, self).__init__()
+#         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1)
+#         self.padding2 = SamePad2d(kernel_size=3, stride=1)
+#         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1)
+#
+#     def forward(self, x, y):
+#         y = F.upsample(y, scale_factor=2)
+#         x = self.conv1(x)
+#         return self.conv2(self.padding2(x+y))
+class FPN(nn.Module):
+    def __init__(self, C1, C2, C3, C4, C5, out_channels):
+        super(FPN, self).__init__()
+        self.out_channels = out_channels
+        self.C1 = C1
+        self.C2 = C2
+        self.C3 = C3
+        self.C4 = C4
+        self.C5 = C5
+        self.P6 = nn.MaxPool2d(kernel_size=1, stride=2)
+        self.P5_conv1 = nn.Conv2d(2048, self.out_channels, kernel_size=1, stride=1)
+        self.P5_conv2 = nn.Sequential(
+            SamePad2d(kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+        )
+        self.P4_conv1 =  nn.Conv2d(1024, self.out_channels, kernel_size=1, stride=1)
+        self.P4_conv2 = nn.Sequential(
+            SamePad2d(kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+        )
+        self.P3_conv1 = nn.Conv2d(512, self.out_channels, kernel_size=1, stride=1)
+        self.P3_conv2 = nn.Sequential(
+            SamePad2d(kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+        )
+        self.P2_conv1 = nn.Conv2d(256, self.out_channels, kernel_size=1, stride=1)
+        self.P2_conv2 = nn.Sequential(
+            SamePad2d(kernel_size=3, stride=1),
+            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
+        )
 
-    for epoch in range(model.epoch+1, total_ep_curr_call+1):
+    def forward(self, x):
+        x = self.C1(x)
+        x = self.C2(x)
+        c2_out = x
+        x = self.C3(x)
+        c3_out = x
+        x = self.C4(x)
+        c4_out = x
+        x = self.C5(x)
+        p5_out = self.P5_conv1(x)
+        p4_out = self.P4_conv1(c4_out) + F.upsample(p5_out, scale_factor=2)
+        p3_out = self.P3_conv1(c3_out) + F.upsample(p4_out, scale_factor=2)
+        p2_out = self.P2_conv1(c2_out) + F.upsample(p3_out, scale_factor=2)
 
-        epoch_str = "[Epoch {}/{}]".format(epoch, total_ep_curr_call)
-        print_log(epoch_str, model.config.LOG_FILE)
-        # Training
-        if model.config.old_scheme:
-            loss = train_epoch(input_model, train_generator, optimizer,
-                               model.config.STEPS_PER_EPOCH, stage_name, epoch_str)
+        p5_out = self.P5_conv2(p5_out)
+        p4_out = self.P4_conv2(p4_out)
+        p3_out = self.P3_conv2(p3_out)
+        p2_out = self.P2_conv2(p2_out)
+
+        # P6 is used for the 5th anchor scale in RPN. Generated by
+        # subsampling from P5 with stride of 2.
+        p6_out = self.P6(p5_out)
+
+        return [p2_out, p3_out, p4_out, p5_out, p6_out]
+
+
+############################################################
+#  Resnet Graph
+############################################################
+class Bottleneck(nn.Module):
+    expansion = 4
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None):
+        super(Bottleneck, self).__init__()
+        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, stride=stride)
+        self.bn1 = nn.BatchNorm2d(planes, eps=0.001, momentum=0.01)
+        self.padding2 = SamePad2d(kernel_size=3, stride=1)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3)
+        self.bn2 = nn.BatchNorm2d(planes, eps=0.001, momentum=0.01)
+        self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1)
+        self.bn3 = nn.BatchNorm2d(planes * 4, eps=0.001, momentum=0.01)
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x):
+        residual = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.padding2(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            residual = self.downsample(x)
+
+        out += residual
+        out = self.relu(out)
+
+        return out
+
+
+class ResNet(nn.Module):
+
+    def __init__(self, architecture, stage5=False):
+        super(ResNet, self).__init__()
+        assert architecture in ["resnet50", "resnet101"]
+        self.inplanes = 64
+        self.layers = [3, 4, {"resnet50": 6, "resnet101": 23}[architecture], 3]
+        self.block = Bottleneck
+        self.stage5 = stage5
+
+        self.C1 = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3),
+            nn.BatchNorm2d(64, eps=0.001, momentum=0.01),
+            nn.ReLU(inplace=True),
+            SamePad2d(kernel_size=3, stride=2),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+        )
+        self.C2 = self.make_layer(self.block, 64, self.layers[0])
+        self.C3 = self.make_layer(self.block, 128, self.layers[1], stride=2)
+        self.C4 = self.make_layer(self.block, 256, self.layers[2], stride=2)
+        if self.stage5:
+            self.C5 = self.make_layer(self.block, 512, self.layers[3], stride=2)
         else:
+<<<<<<< HEAD
+            self.C5 = None
+
+    def forward(self, x):
+        x = self.C1(x)
+        x = self.C2(x)
+        x = self.C3(x)
+        x = self.C4(x)
+        x = self.C5(x)
+        return x
+
+    def stages(self):
+        return [self.C1, self.C2, self.C3, self.C4, self.C5]
+
+    def make_layer(self, block, planes, blocks, stride=1):
+        downsample = None
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes * block.expansion,
+                          kernel_size=1, stride=stride),
+                nn.BatchNorm2d(planes * block.expansion, eps=0.001, momentum=0.01),
+            )
+
+        layers = []
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes * block.expansion
+        for i in range(1, blocks):
+            layers.append(block(self.inplanes, planes))
+
+        return nn.Sequential(*layers)
+
+
+############################################################
+#  Region Proposal Network
+############################################################
+class RPN(nn.Module):
+    """Builds the model of Region Proposal Network.
+    anchors_per_location: number of anchors per pixel in the feature map
+    anchor_stride: Controls the density of anchors. Typically 1 (anchors for
+                   every pixel in the feature map), or 2 (every other pixel).
+    Returns:
+        rpn_logits: [batch, H, W, 2] Anchor classifier logits (before softmax)
+        rpn_probs: [batch, W, W, 2] Anchor classifier probabilities.
+        rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))] Deltas to be
+                  applied to anchors.
+=======
             loss = train_epoch_new(input_model, train_generator, optimizer,
                                    stage_name=stage_name, epoch_str=epoch_str,
                                    epoch=epoch, start_iter=model.iter+1)
@@ -124,9 +233,7 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
         print_log('saving model: {:s}\n'.format(model_file), model.config.LOG_FILE)
         torch.save({'state_dict': model.state_dict()}, model_file)
         model.iter = 0
-
-    # update the epoch info
-    model.epoch = total_ep_curr_call
+        model.epoch = epoch
 
 
 def train_epoch_new(input_model, data_loader, optimizer, **args):
@@ -270,12 +377,21 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
 
             # visualize result if necessary
             #if model.config.DEBUG:
+<<<<<<< HEAD
             #    plt.close()
             #    visualize.display_instances(image, final_rois, final_masks, final_class_ids,
             #                                CLASS_NAMES, final_scores)
             #    im_file = os.path.join(model.config.SAVE_IMAGE_DIR,
             #                           'coco_im_id_{:d}.png'.format(curr_coco_id))
             #    plt.savefig(im_file)
+=======
+            #     plt.close()
+            #     visualize.display_instances(image, final_rois, final_masks, final_class_ids,
+            #                                 CLASS_NAMES, final_scores)
+            #     im_file = os.path.join(model.config.SAVE_IMAGE_DIR,
+            #                            'coco_im_id_{:d}.png'.format(curr_coco_id))
+            #     plt.savefig(im_file)
+>>>>>>> 9b90a30ce80fefff1a893f0a99d6b341bca0d809
 
         t_prediction += (time.time() - t_pred_start)
         cnt += len(curr_image_ids)
@@ -299,9 +415,14 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     cocoEval.accumulate()
     cocoEval.summarize()
     print_log('Total time: {:.4f}'.format(time.time() - t_start), model.config.LOG_FILE)
+<<<<<<< HEAD
     print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
               format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE), cocoEval.stats[0]),
               model.config.LOG_FILE)
+=======
+    print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.format(
+              model.config.NAME, os.path.basename(model.config.START_MODEL_FILE), model.config.LOG_FILE)
+>>>>>>> 9b90a30ce80fefff1a893f0a99d6b341bca0d809
 
 
 def compute_loss(target_rpn_match, target_rpn_bbox, inputs):
@@ -374,152 +495,6 @@ def train_epoch(model, datagenerator, optimizer, steps, stage_name, epoch_str):
     return loss_sum
 
 
-def _find_last(config, model_dir):
-    # Get directory names. Each directory corresponds to a model
-    dir_names = next(os.walk(model_dir))[1]
-    key = config.NAME.lower()
-    dir_names = filter(lambda f: f.startswith(key), dir_names)
-    dir_names = sorted(dir_names)
-    if not dir_names:
-        return None, None
-    # Pick last directory
-    dir_name = os.path.join(model_dir, dir_names[-1], 'train')
-    # Find the last checkpoint
-    checkpoints = next(os.walk(dir_name))[2]
-    checkpoints = filter(lambda f: f.startswith("mask_rcnn"), checkpoints)
-    checkpoints = sorted(checkpoints)
-    if not checkpoints:
-        return dir_name, None
-    checkpoint = os.path.join(dir_name, checkpoints[-1])
-    return dir_name, checkpoint
-
-
-def select_weights(config, network, model_dir):
-
-    choice = config.MODEL_FILE_CHOICE
-    phase = config.PHASE
-
-    if phase == 'train':
-
-        if os.path.exists(choice):
-            print('[{:s}]loading designated weights\t{:s}\n'.format(phase.upper(), choice))
-            model_path = choice
-        else:
-            model_path = _find_last(config, model_dir)[1]
-            if model_path is not None:
-                if choice.lower() in ['coco_pretrain', 'imagenet_pretrain']:
-                    print('WARNING: find existing model... ignore pretrain model')
-            else:
-                if choice.lower() == "imagenet_pretrain":
-                    model_path = config.PRETRAIN_IMAGENET_MODEL_PATH
-                    suffix = 'imagenet'
-                elif choice.lower() == "coco_pretrain":
-                    model_path = config.PRETRAIN_COCO_MODEL_PATH
-                    suffix = 'coco'
-                print('use {:s} pretrain model...'.format(suffix))
-
-        print('loading weights \t{:s}\n'.format(model_path))
-
-    elif phase == 'inference':
-        if choice.lower() in ['coco_pretrain', 'imagenet_pretrain', 'last']:
-            model_path = _find_last(config, model_dir)[1]
-            print('use last trained model for inference')
-        elif os.path.exists(choice):
-            model_path = choice
-            print('use designated model for inference')
-        print('[{:s}] loading model weights\t{:s} for inference\n'.format(phase.upper(), model_path))
-
-    network.load_weights(model_path)
-    # add new info to config
-    config.START_MODEL_FILE = model_path
-
-    if config.PHASE == 'train':
-        config.START_EPOCH = network.start_epoch
-        config.START_ITER = network.start_iter
-        config.LOG_FILE = os.path.join(
-            network.log_dir, 'log_start_ep_{:d}_iter_{:d}.txt'.format(network.start_epoch, network.start_iter))
-    else:
-        model_name = os.path.basename(model_path).replace('.pth', '')
-        config.LOG_FILE = os.path.join(
-            network.log_dir, 'inference_{:s}.txt'.format(model_name))
-        model_suffix = os.path.basename(config.START_MODEL_FILE).replace('mask_rcnn_', '')
-        config.RESULT_FILE = os.path.join(network.log_dir, 'detection_result_{:s}'.format(model_suffix))
-        config.SAVE_IMAGE_DIR = os.path.join(network.log_dir, model_suffix.replace('.pth', ''))
-        if not os.path.exists(config.SAVE_IMAGE_DIR):
-            os.makedirs(config.SAVE_IMAGE_DIR)
-
-    config.CHECKPOINT_PATH = network.checkpoint_path
-    return config
-
-
-# TODO(low: valid epoch during training)
-# def valid_epoch(model, datagenerator, steps):
-#
-#     step, loss_sum = 0, 0
-#
-#     for inputs in datagenerator:
-#         images = inputs[0]
-#         image_metas = inputs[1]
-#         rpn_match = inputs[2]
-#         rpn_bbox = inputs[3]
-#         gt_class_ids = inputs[4]
-#         gt_boxes = inputs[5]
-#         gt_masks = inputs[6]
-#
-#         # image_metas as numpy array
-#         image_metas = image_metas.numpy()
-#
-#         # Wrap in variables
-#         images = Variable(images, volatile=True)
-#         rpn_match = Variable(rpn_match, volatile=True)
-#         rpn_bbox = Variable(rpn_bbox, volatile=True)
-#         gt_class_ids = Variable(gt_class_ids, volatile=True)
-#         gt_boxes = Variable(gt_boxes, volatile=True)
-#         gt_masks = Variable(gt_masks, volatile=True)
-#
-#         # To GPU
-#         if self.config.GPU_COUNT:
-#             images = images.cuda()
-#             rpn_match = rpn_match.cuda()
-#             rpn_bbox = rpn_bbox.cuda()
-#             gt_class_ids = gt_class_ids.cuda()
-#             gt_boxes = gt_boxes.cuda()
-#             gt_masks = gt_masks.cuda()
-#
-#         # Run object detection
-#         rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, \
-#             target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
-#             self.predict([images, image_metas, gt_class_ids, gt_boxes, gt_masks], mode='training')
-#
-#         if not target_class_ids.size():
-#             continue
-#
-#         # Compute losses
-#         rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss = \
-#             compute_losses(rpn_match, rpn_bbox, rpn_class_logits, rpn_pred_bbox, target_class_ids,
-#                            mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask)
-#         loss = rpn_class_loss + rpn_bbox_loss + mrcnn_class_loss + mrcnn_bbox_loss + mrcnn_mask_loss
-#
-#         # Progress
-#         utils.printProgressBar(step + 1, steps, prefix="\t{}/{}".format(step + 1, steps),
-#                                suffix="Complete - loss: {:.5f} - rpn_class_loss: {:.5f} - rpn_bbox_loss: {:.5f} - "
-#                                       "mrcnn_class_loss: {:.5f} - mrcnn_bbox_loss: {:.5f} - "
-#                                       "mrcnn_mask_loss: {:.5f}".format(
-#                                    loss.data.cpu()[0],
-#                                    rpn_class_loss.data.cpu()[0], rpn_bbox_loss.data.cpu()[0],
-#                                    mrcnn_class_loss.data.cpu()[0], mrcnn_bbox_loss.data.cpu()[0],
-#                                    mrcnn_mask_loss.data.cpu()[0]), length=10)
-#         # Statistics
-#         loss_sum += loss.data.cpu()[0]/steps
-#
-#         # Break after 'steps' steps
-#         if step == steps-1:
-#             break
-#         step += 1
-#
-#     return loss_sum
-
-
 def _mold_inputs(model, image_ids, dataset):
     """
         FOR EVALUATION ONLY.
@@ -583,49 +558,127 @@ def _unmold_detections(detections, mrcnn_mask, image_shape, window):
             class_ids:      [N] Integer class IDs for each bounding box
             scores:         [N] Float probability scores of the class_id
             masks:          [height, width, num_instances] Instance masks
+>>>>>>> e24c86c5aa72b69cf0f4172a80bef9fabf4e3051
     """
-    # TODO: (low) consider the batch size dim
-    # How many detections do we have?
-    # Detections array is padded with zeros. Find the first class_id == 0.
-    zero_ix = np.where(detections[:, 4] == 0)[0]
-    N = zero_ix[0] if zero_ix.shape[0] > 0 else detections.shape[0]
 
-    # Extract boxes, class_ids, scores, and class-specific masks
-    boxes = detections[:N, :4]
-    class_ids = detections[:N, 4].astype(np.int32)
-    scores = detections[:N, 5]
-    masks = mrcnn_mask[np.arange(N), :, :, class_ids]
+    def __init__(self, anchors_per_location, anchor_stride, depth):
+        super(RPN, self).__init__()
+        self.anchors_per_location = anchors_per_location
+        self.anchor_stride = anchor_stride
+        self.depth = depth
 
-    # Compute scale and shift to translate coordinates to image domain.
-    h_scale = image_shape[0] / (window[2] - window[0])
-    w_scale = image_shape[1] / (window[3] - window[1])
-    scale = min(h_scale, w_scale)
-    shift = window[:2]  # y, x
-    scales = np.array([scale, scale, scale, scale])
-    shifts = np.array([shift[0], shift[1], shift[0], shift[1]])
+        self.padding = SamePad2d(kernel_size=3, stride=self.anchor_stride)
+        self.conv_shared = nn.Conv2d(self.depth, 512, kernel_size=3, stride=self.anchor_stride)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv_class = nn.Conv2d(512, 2 * anchors_per_location, kernel_size=1, stride=1)
+        self.softmax = nn.Softmax(dim=2)
+        self.conv_bbox = nn.Conv2d(512, 4 * anchors_per_location, kernel_size=1, stride=1)
 
-    # Translate bounding boxes to image domain
-    boxes = np.multiply(boxes - shifts, scales).astype(np.int32)
+    def forward(self, x):
+        # Shared convolutional base of the RPN
+        x = self.relu(self.conv_shared(self.padding(x)))
 
-    # Filter out detections with zero area. Often only happens in early
-    # stages of training when the network weights are still a bit random.
-    exclude_ix = np.where(
-        (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1]) <= 0)[0]
-    if exclude_ix.shape[0] > 0:
-        boxes = np.delete(boxes, exclude_ix, axis=0)
-        class_ids = np.delete(class_ids, exclude_ix, axis=0)
-        scores = np.delete(scores, exclude_ix, axis=0)
-        masks = np.delete(masks, exclude_ix, axis=0)
-        N = class_ids.shape[0]
+        # Anchor Score. [batch, anchors per location * 2, height, width].
+        rpn_class_logits = self.conv_class(x)
 
-    # Resize masks to original image size and set boundary threshold.
-    full_masks = []
-    for i in range(N):
-        # Convert neural network mask to full size mask
-        full_mask = utils.unmold_mask(masks[i], boxes[i], image_shape)
-        full_masks.append(full_mask)
-    full_masks = np.stack(full_masks, axis=-1)\
-        if full_masks else np.empty((0,) + masks.shape[1:3])
+        # Reshape to [batch, 2, anchors]
+        rpn_class_logits = rpn_class_logits.permute(0, 2, 3, 1)
+        rpn_class_logits = rpn_class_logits.contiguous()
+        rpn_class_logits = rpn_class_logits.view(x.size()[0], -1, 2)
 
-    return boxes, class_ids, scores, full_masks
+        # Softmax on last dimension of BG/FG.
+        rpn_probs = self.softmax(rpn_class_logits)
 
+        # Bounding box refinement. [batch, H, W, anchors per location, depth]
+        # where depth is [x, y, log(w), log(h)]
+        rpn_bbox = self.conv_bbox(x)
+
+        # Reshape to [batch, 4, anchors]
+        rpn_bbox = rpn_bbox.permute(0, 2, 3, 1)
+        rpn_bbox = rpn_bbox.contiguous()
+        rpn_bbox = rpn_bbox.view(x.size()[0], -1, 4)
+
+        return [rpn_class_logits, rpn_probs, rpn_bbox]
+
+
+############################################################
+#  Feature Pyramid Network Heads
+############################################################
+class Classifier(nn.Module):
+    def __init__(self, depth, pool_size, image_shape, num_classes):
+        super(Classifier, self).__init__()
+        self.depth = depth
+        self.pool_size = pool_size
+        self.image_shape = image_shape
+        self.num_classes = num_classes
+        self.conv1 = nn.Conv2d(self.depth, 1024, kernel_size=self.pool_size, stride=1)
+        self.bn1 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
+        self.conv2 = nn.Conv2d(1024, 1024, kernel_size=1, stride=1)
+        self.bn2 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
+        self.relu = nn.ReLU(inplace=True)
+
+        self.linear_class = nn.Linear(1024, num_classes)
+        self.softmax = nn.Softmax(dim=1)
+
+        self.linear_bbox = nn.Linear(1024, num_classes * 4)
+
+    def forward(self, x, rois):
+        x = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
+
+        x = x.view(-1, 1024)
+        mrcnn_class_logits = self.linear_class(x)
+        mrcnn_probs = self.softmax(mrcnn_class_logits)
+
+        mrcnn_bbox = self.linear_bbox(x)
+        mrcnn_bbox = mrcnn_bbox.view(mrcnn_bbox.size()[0], -1, 4)
+
+        return [mrcnn_class_logits, mrcnn_probs, mrcnn_bbox]
+
+
+class Mask(nn.Module):
+    def __init__(self, depth, pool_size, image_shape, num_classes):
+        super(Mask, self).__init__()
+        self.depth = depth
+        self.pool_size = pool_size
+        self.image_shape = image_shape
+        self.num_classes = num_classes
+        self.padding = SamePad2d(kernel_size=3, stride=1)
+        self.conv1 = nn.Conv2d(self.depth, 256, kernel_size=3, stride=1)
+        self.bn1 = nn.BatchNorm2d(256, eps=0.001)
+        self.conv2 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
+        self.bn2 = nn.BatchNorm2d(256, eps=0.001)
+        self.conv3 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
+        self.bn3 = nn.BatchNorm2d(256, eps=0.001)
+        self.conv4 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
+        self.bn4 = nn.BatchNorm2d(256, eps=0.001)
+        self.deconv = nn.ConvTranspose2d(256, 256, kernel_size=2, stride=2)
+        self.conv5 = nn.Conv2d(256, num_classes, kernel_size=1, stride=1)
+        self.sigmoid = nn.Sigmoid()
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x, rois):
+        x = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)   # 3000 (3x1000), 256, 7, 7
+        x = self.conv1(self.padding(x))
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.conv2(self.padding(x))
+        x = self.bn2(x)
+        x = self.relu(x)
+        x = self.conv3(self.padding(x))
+        x = self.bn3(x)
+        x = self.relu(x)
+        x = self.conv4(self.padding(x))
+        x = self.bn4(x)
+        x = self.relu(x)
+        x = self.deconv(x)
+        x = self.relu(x)
+        x = self.conv5(x)
+        x = self.sigmoid(x)
+
+        return x

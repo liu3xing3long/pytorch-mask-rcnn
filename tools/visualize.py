@@ -26,8 +26,7 @@ if "DISPLAY" not in os.environ:
 ############################################################
 #  Visualization
 ############################################################
-def display_images(images, titles=None, cols=4, cmap=None, norm=None,
-                   interpolation=None):
+def display_images(images, titles=None, cols=4, cmap=None, norm=None, interpolation=None):
     """Display the given set of images, optionally with titles.
     images: list or array of image tensors in HWC format.
     titles: optional. A list of titles to display with each image.
@@ -74,9 +73,7 @@ def apply_mask(image, mask, color, alpha=0.5):
     return image
 
 
-def display_instances(image, boxes, masks, class_ids, class_names,
-                      scores=None, title="",
-                      figsize=(16, 16), ax=None):
+def display_instances(image, boxes, masks, class_ids, class_names, scores=None, title="", figsize=(16, 16), ax=None):
     """
     boxes: [num_instance, (y1, x1, y2, x2, class_id)] in image coordinates.
     masks: [height, width, num_instances]
@@ -260,8 +257,7 @@ def plot_precision_recall(AP, precisions, recalls):
     _ = ax.plot(recalls, precisions)
 
 
-def plot_overlaps(gt_class_ids, pred_class_ids, pred_scores,
-                  overlaps, class_names, threshold=0.5):
+def plot_overlaps(gt_class_ids, pred_class_ids, pred_scores, overlaps, class_names, threshold=0.5):
     """Draw a grid showing how ground truth objects are classified.
     gt_class_ids: [N] int. Ground truth class IDs
     pred_class_id: [N] int. Predicted class IDs
