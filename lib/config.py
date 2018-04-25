@@ -209,6 +209,7 @@ class CocoConfig(Config):
                         self.NAME == 'hyli_default_old':
             self.IMAGES_PER_GPU = 16
             # self.GPU_COUNT = 1
+            self.MODEL_FILE_CHOICE='/DATA/hyli/project/pytorch-mask-rcnn/results/hyli_default_old_20180327T0234/train/mask_rcnn_hyli_default_0030.pth'
 
         elif self.NAME == 'all_new':
             self.BATCH_SIZE = 6
