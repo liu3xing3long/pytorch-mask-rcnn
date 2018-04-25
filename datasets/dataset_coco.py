@@ -3,7 +3,6 @@ import shutil
 import urllib.request
 import zipfile
 import numpy as np
-from main import DEFAULT_DATASET_YEAR
 from datasets.pycocotools.coco import COCO
 from datasets.pycocotools import mask as maskUtils
 import skimage.color
@@ -171,7 +170,7 @@ class Dataset(object):
 
 
 class CocoDataset(Dataset):
-    def load_coco(self, dataset_dir, subset, year=DEFAULT_DATASET_YEAR, class_ids=None,
+    def load_coco(self, dataset_dir, subset, year='2014', class_ids=None,
                   class_map=None, return_coco_api=False, auto_download=False):
         """Load a subset of the COCO dataset.
         dataset_dir: The root directory of the COCO dataset.

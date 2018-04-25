@@ -298,7 +298,11 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     cocoEval.summarize()
     print_log('Total time: {:.4f}'.format(time.time() - t_start), model.config.LOG_FILE)
     print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
+<<<<<<< HEAD
               format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE),
+=======
+              format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE)),
+>>>>>>> 30c42196d82c773619fe6952d451750aa932a010
               model.config.LOG_FILE)
 
 
@@ -370,152 +374,6 @@ def train_epoch(model, datagenerator, optimizer, steps, stage_name, epoch_str):
             break
         step += 1
     return loss_sum
-
-
-def _find_last(config, model_dir):
-    # Get directory names. Each directory corresponds to a model
-    dir_names = next(os.walk(model_dir))[1]
-    key = config.NAME.lower()
-    dir_names = filter(lambda f: f.startswith(key), dir_names)
-    dir_names = sorted(dir_names)
-    if not dir_names:
-        return None, None
-    # Pick last directory
-    dir_name = os.path.join(model_dir, dir_names[-1], 'train')
-    # Find the last checkpoint
-    checkpoints = next(os.walk(dir_name))[2]
-    checkpoints = filter(lambda f: f.startswith("mask_rcnn"), checkpoints)
-    checkpoints = sorted(checkpoints)
-    if not checkpoints:
-        return dir_name, None
-    checkpoint = os.path.join(dir_name, checkpoints[-1])
-    return dir_name, checkpoint
-
-
-def select_weights(config, network, model_dir):
-
-    choice = config.MODEL_FILE_CHOICE
-    phase = config.PHASE
-
-    if phase == 'train':
-
-        if os.path.exists(choice):
-            print('[{:s}]loading designated weights\t{:s}\n'.format(phase.upper(), choice))
-            model_path = choice
-        else:
-            model_path = _find_last(config, model_dir)[1]
-            if model_path is not None:
-                if choice.lower() in ['coco_pretrain', 'imagenet_pretrain']:
-                    print('WARNING: find existing model... ignore pretrain model')
-            else:
-                if choice.lower() == "imagenet_pretrain":
-                    model_path = config.PRETRAIN_IMAGENET_MODEL_PATH
-                    suffix = 'imagenet'
-                elif choice.lower() == "coco_pretrain":
-                    model_path = config.PRETRAIN_COCO_MODEL_PATH
-                    suffix = 'coco'
-                print('use {:s} pretrain model...'.format(suffix))
-
-        print('loading weights \t{:s}\n'.format(model_path))
-
-    elif phase == 'inference':
-        if choice.lower() in ['coco_pretrain', 'imagenet_pretrain', 'last']:
-            model_path = _find_last(config, model_dir)[1]
-            print('use last trained model for inference')
-        elif os.path.exists(choice):
-            model_path = choice
-            print('use designated model for inference')
-        print('[{:s}] loading model weights\t{:s} for inference\n'.format(phase.upper(), model_path))
-
-    network.load_weights(model_path)
-    # add new info to config
-    config.START_MODEL_FILE = model_path
-
-    if config.PHASE == 'train':
-        config.START_EPOCH = network.start_epoch
-        config.START_ITER = network.start_iter
-        config.LOG_FILE = os.path.join(
-            network.log_dir, 'log_start_ep_{:d}_iter_{:d}.txt'.format(network.start_epoch, network.start_iter))
-    else:
-        model_name = os.path.basename(model_path).replace('.pth', '')
-        config.LOG_FILE = os.path.join(
-            network.log_dir, 'inference_{:s}.txt'.format(model_name))
-        model_suffix = os.path.basename(config.START_MODEL_FILE).replace('mask_rcnn_', '')
-        config.RESULT_FILE = os.path.join(network.log_dir, 'detection_result_{:s}'.format(model_suffix))
-        config.SAVE_IMAGE_DIR = os.path.join(network.log_dir, model_suffix.replace('.pth', ''))
-        if not os.path.exists(config.SAVE_IMAGE_DIR):
-            os.makedirs(config.SAVE_IMAGE_DIR)
-
-    config.CHECKPOINT_PATH = network.checkpoint_path
-    return config
-
-
-# TODO(low: valid epoch during training)
-# def valid_epoch(model, datagenerator, steps):
-#
-#     step, loss_sum = 0, 0
-#
-#     for inputs in datagenerator:
-#         images = inputs[0]
-#         image_metas = inputs[1]
-#         rpn_match = inputs[2]
-#         rpn_bbox = inputs[3]
-#         gt_class_ids = inputs[4]
-#         gt_boxes = inputs[5]
-#         gt_masks = inputs[6]
-#
-#         # image_metas as numpy array
-#         image_metas = image_metas.numpy()
-#
-#         # Wrap in variables
-#         images = Variable(images, volatile=True)
-#         rpn_match = Variable(rpn_match, volatile=True)
-#         rpn_bbox = Variable(rpn_bbox, volatile=True)
-#         gt_class_ids = Variable(gt_class_ids, volatile=True)
-#         gt_boxes = Variable(gt_boxes, volatile=True)
-#         gt_masks = Variable(gt_masks, volatile=True)
-#
-#         # To GPU
-#         if self.config.GPU_COUNT:
-#             images = images.cuda()
-#             rpn_match = rpn_match.cuda()
-#             rpn_bbox = rpn_bbox.cuda()
-#             gt_class_ids = gt_class_ids.cuda()
-#             gt_boxes = gt_boxes.cuda()
-#             gt_masks = gt_masks.cuda()
-#
-#         # Run object detection
-#         rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits, \
-#             target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
-#             self.predict([images, image_metas, gt_class_ids, gt_boxes, gt_masks], mode='training')
-#
-#         if not target_class_ids.size():
-#             continue
-#
-#         # Compute losses
-#         rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss = \
-#             compute_losses(rpn_match, rpn_bbox, rpn_class_logits, rpn_pred_bbox, target_class_ids,
-#                            mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask)
-#         loss = rpn_class_loss + rpn_bbox_loss + mrcnn_class_loss + mrcnn_bbox_loss + mrcnn_mask_loss
-#
-#         # Progress
-#         utils.printProgressBar(step + 1, steps, prefix="\t{}/{}".format(step + 1, steps),
-#                                suffix="Complete - loss: {:.5f} - rpn_class_loss: {:.5f} - rpn_bbox_loss: {:.5f} - "
-#                                       "mrcnn_class_loss: {:.5f} - mrcnn_bbox_loss: {:.5f} - "
-#                                       "mrcnn_mask_loss: {:.5f}".format(
-#                                    loss.data.cpu()[0],
-#                                    rpn_class_loss.data.cpu()[0], rpn_bbox_loss.data.cpu()[0],
-#                                    mrcnn_class_loss.data.cpu()[0], mrcnn_bbox_loss.data.cpu()[0],
-#                                    mrcnn_mask_loss.data.cpu()[0]), length=10)
-#         # Statistics
-#         loss_sum += loss.data.cpu()[0]/steps
-#
-#         # Break after 'steps' steps
-#         if step == steps-1:
-#             break
-#         step += 1
-#
-#     return loss_sum
 
 
 def _mold_inputs(model, image_ids, dataset):

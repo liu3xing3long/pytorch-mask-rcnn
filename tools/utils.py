@@ -603,6 +603,91 @@ def print_log(msg, file=None, init=False):
             log_file.write('%s\n' % msg)
 
 
+def _find_last(config):
+
+    dir_name = os.path.join('results', config.CTRL.CONFIG_NAME.lower(), 'train')
+    # Find the last checkpoint
+    checkpoints = next(os.walk(dir_name))[2]
+    checkpoints = filter(lambda f: f.startswith("mask_rcnn"), checkpoints)
+    checkpoints = sorted(checkpoints)
+    if not checkpoints:
+        return dir_name, None
+    checkpoint = os.path.join(dir_name, checkpoints[-1])
+    return dir_name, checkpoint
 
 
+def update_config_and_load_model(config, network):
+
+    choice = config.MODEL.INIT_FILE_CHOICE
+    phase = config.CTRL.PHASE
+
+    if phase == 'train':
+
+        if os.path.exists(choice):
+            print('[{:s}]loading designated weights\t{:s}\n'.format(phase.upper(), choice))
+            model_path = choice
+            del config.MODEL.PRETRAIN_COCO_MODEL_PATH
+            del config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
+        else:
+            model_path = _find_last(config)[1]
+            if model_path is not None:
+                if choice.lower() in ['coco_pretrain', 'imagenet_pretrain']:
+                    print('WARNING: find existing model... ignore pretrain model')
+                    del config.MODEL.PRETRAIN_COCO_MODEL_PATH
+                    del config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
+            else:
+                if choice.lower() == "imagenet_pretrain":
+                    model_path = config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
+                    suffix = 'imagenet'
+                    del config.MODEL.PRETRAIN_COCO_MODEL_PATH
+                elif choice.lower() == "coco_pretrain":
+                    model_path = config.MODEL.PRETRAIN_COCO_MODEL_PATH
+                    suffix = 'coco'
+                    del config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
+                print('use {:s} pretrain model...'.format(suffix))
+
+        print('loading weights \t{:s}\n'.format(model_path))
+
+    elif phase == 'inference':
+
+        del config.MODEL.PRETRAIN_COCO_MODEL_PATH
+        del config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
+
+        if choice.lower() in ['coco_pretrain', 'imagenet_pretrain', 'last']:
+            model_path = _find_last(config)[1]
+            print('use last trained model for inference')
+        elif os.path.exists(choice):
+            model_path = choice
+            print('use designated model for inference')
+        print('[{:s}] loading model weights\t{:s} for inference\n'.format(phase.upper(), model_path))
+
+    checkpoints = torch.load(model_path)
+    network.load_state_dict(checkpoints['state_dict'])
+
+    if phase == 'train':
+        network.start_epoch = checkpoints['epoch']
+        network.start_iter = checkpoints['iter']
+        # init counters
+        network.epoch = network.start_epoch
+        network.iter = network.start_iter
+
+    # add new info to config
+    config.MODEL.INIT_MODEL = model_path
+
+    if phase == 'train':
+        config.MISC.LOG_FILE = os.path.join(
+            config.MISC.RESULT_FOLDER,
+            'train_log_start_ep_{:04d}_iter_{:04d}.txt'.format(network.start_epoch, network.start_iter))
+    else:
+        model_name = os.path.basename(model_path).replace('.pth', '')
+        config.MISC.LOG_FILE = os.path.join(
+            config.MISC.RESULT_FOLDER, 'inference_from_{:s}.txt'.format(model_name))
+        model_suffix = os.path.basename(model_path).replace('mask_rcnn_', '')
+
+        config.MISC.DET_RESULT_FILE = os.path.join(config.MISC.RESULT_FOLDER, 'det_result_{:s}'.format(model_suffix))
+        config.MISC.SAVE_IMAGE_DIR = os.path.join(config.MISC.RESULT_FOLDER, model_suffix.replace('.pth', ''))
+        if not os.path.exists(config.MISC.SAVE_IMAGE_DIR):
+            os.makedirs(config.MISC.SAVE_IMAGE_DIR)
+
+    return config, network
 
