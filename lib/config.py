@@ -132,7 +132,7 @@ class Config(object):
     TEST.DET_MIN_CONFIDENCE = 0
     # Non-maximum suppression threshold for detection
     TEST.DET_NMS_THRESHOLD = 0.3
-    TEST.SAVE_IM = True
+    TEST.SAVE_IM = False
 
     # ==================================
     TRAIN = AttrDict()
@@ -140,13 +140,20 @@ class Config(object):
     # The Mask RCNN paper uses lr=0.02, but on TensorFlow it causes
     # weights to explode. Likely due to differences in optimzer
     # implementation.
-    TRAIN.LEARNING_RATE = 0.001
+    TRAIN.LEARNING_RATE = 0.01
     TRAIN.LEARNING_MOMENTUM = 0.9
     # Weight decay regularization
     TRAIN.WEIGHT_DECAY = 0.0001
+    TRAIN.GAMMA = 0.1
     TRAIN.LR_POLICY = 'steps_with_decay'
+    # in epoch
+    TRAIN.SCHEDULE = [10, 5, 5]
     TRAIN.LR_WARM_UP = True
 
+    TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
+
+    TRAIN.CLIP_GRAD = True
+    TRAIN.MAX_GRAD_NORM = 5.0
     # (deprecated)
     # Use RPN ROIs or externally generated ROIs for training
     # Keep this True for most situations. Set to False if you want to train
@@ -157,11 +164,10 @@ class Config(object):
     # ==============================
     CTRL = AttrDict()
     CTRL.SHOW_INTERVAL = 200
-    CTRL.SAVE_TIME_WITHIN_EPOCH = 10
     CTRL.USE_VISDOM = False
 
     # for train and inference
-    CTRL.BATCH_SIZE = 4
+    CTRL.BATCH_SIZE = 6
 
     # ==============================
     MISC = AttrDict()
@@ -181,6 +187,8 @@ class Config(object):
 
         if self.CTRL.DEBUG:
             self.CTRL.SHOW_INTERVAL = 1
+            # self.DATA.IMAGE_MIN_DIM = 320
+            # self.DATA.IMAGE_MAX_DIM = 512
 
         # set folder
         self.MISC.RESULT_FOLDER = os.path.join(
@@ -227,11 +235,7 @@ class CocoConfig(Config):
             self.DATA.IMAGE_MIN_DIM = 256
             self.DATA.IMAGE_MAX_DIM = 320
 
-        elif self.CTRL.CONFIG_NAME == 'all_new_2':
-            self.CTRL.BATCH_SIZE = 8
-            self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
         else:
             print('WARNING: unknown config name!!! use default setting.')
-            self.CTRL.CONFIG_NAME = self.CTRL.CONFIG_NAME
 
         self._set_value()

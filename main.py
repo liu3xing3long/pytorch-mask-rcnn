@@ -11,14 +11,15 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Mask R-CNN')
 
     parser.add_argument('--phase',
-                        # default='train',
-                        default='inference',
+                        default='train',
+                        # default='inference',
                         help='train or inference')
 
     parser.add_argument('--config_name',
                         required=False,
                         # default='all_new_2')
-                        default='hyli_default_old')
+                        # default='hyli_default_old')
+                        default='fuck')
 
     parser.add_argument('--debug',
                         default=1, type=int)  # no bool type here please
@@ -53,25 +54,27 @@ if __name__ == '__main__':
 
     # Train or inference
     if args.phase == 'train':
-        # TODO: training workflow in accordance with Detectron
+
         # TODO (low): to consider inference during training
-        # *** This training schedule is an example. Update to your needs ***
         # Training - Stage 1
         print("\nTraining network heads")
         train_model(model, train_data, val_data,
-                    lr=config.LEARNING_RATE, total_ep_curr_call=40, layers='heads')
+                    lr=config.TRAIN.LEARNING_RATE,
+                    total_ep_curr_call=config.TRAIN.SCHEDULE[0], layers='heads')
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
         print("\nFinetune Resnet stage 4 and up")
         train_model(model, train_data, val_data,
-                    lr=config.LEARNING_RATE, total_ep_curr_call=120, layers='4+')
+                    lr=config.TRAIN.LEARNING_RATE*config.TRAIN.GAMMA,
+                    total_ep_curr_call=config.TRAIN.SCHEDULE[1], layers='4+')
 
         # Training - Stage 3
         # Fine tune all layers
         print("\nFine tune all layers")
         train_model(model, train_data, val_data,
-                    lr=config.LEARNING_RATE / 10, total_ep_curr_call=160, layers='all')
+                    lr=config.LEARNING_RATE*config.TRAIN.GAMMA**2,
+                    total_ep_curr_call=config.TRAIN.SCHEDULE[2], layers='all')
 
     elif args.phase == 'inference':
 

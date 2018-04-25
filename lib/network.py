@@ -20,6 +20,24 @@ class MaskRCNN(nn.Module):
         self._build(config=config)
         self._initialize_weights()
         # self._set_log_dir()
+        # self._epoch = 0
+        # self._iter = 0
+
+    @property
+    def epoch(self):
+        return self._epoch
+
+    @epoch.setter
+    def epoch(self, value):
+        self._epoch = value
+
+    @property
+    def iter(self):
+        return self._iter
+
+    @iter.setter
+    def iter(self, value):
+        self._iter = value
 
     def _build(self, config):
         """Build Mask R-CNN architecture: fpn, rpn, classifier, mask"""
@@ -79,43 +97,6 @@ class MaskRCNN(nn.Module):
                 m.weight.data.normal_(0, 0.01)
                 m.bias.data.zero_()
 
-    # def _set_log_dir(self):
-    #     # Setup directory
-    #     # e.g., results/hyli_default/train(or inference)/
-    #     self.log_dir = os.path.join(self.model_dir, self.config.NAME.lower(), self.config.PHASE)
-    #
-    #     if not os.path.exists(self.log_dir):
-    #         os.makedirs(self.log_dir)
-    #
-    #     # Path to save after each epoch; used for training
-    #     self.checkpoint_path = os.path.join(self.log_dir, 'mask_rcnn_*epoch*.pth')
-    #     self.checkpoint_path = self.checkpoint_path.replace('*epoch*', '{:04d}')
-
-    # def load_weights(self, filepath):
-    #     """called in workflow.py"""
-    #     if filepath is not None:
-    #         if os.path.exists(filepath):
-    #             checkpoints = torch.load(filepath)
-    #             try:
-    #                 self.load_state_dict(checkpoints['state_dict'])
-    #             except KeyError:
-    #                 self.load_state_dict(checkpoints)
-    #
-    #             if self.config.PHASE == 'train':
-    #                 try:
-    #                     self.start_epoch = checkpoints['epoch']
-    #                     self.start_iter = checkpoints['iter']
-    #                 except KeyError:
-    #                     print_log('[TRAIN] the loaded model does not have start epoch and iter;\n'
-    #                               'if that is pretrain model, it is ok; if resuming, check your model\n'
-    #                               'start epoch and iter set to zeros')
-    #                     self.start_epoch, self.start_iter = 0, 0
-    #
-    #                 self.epoch = self.start_epoch
-    #                 self.iter = self.start_iter
-    #         else:
-    #             raise Exception("Weight file not found ...")
-
     def set_trainable(self, layer_regex):
         """called in 'workflow.py'
         Sets model layers as trainable if their names match the given regular expression.
@@ -153,18 +134,16 @@ class MaskRCNN(nn.Module):
 
     def forward(self, input, mode):
         """forward function of the Mask-RCNN network"""
-        curr_gpu_id = torch.cuda.current_device()
+        # curr_gpu_id = torch.cuda.current_device()
         molded_images = input[0]
-        # sample_per_gpu = int(self.config.BATCH_SIZE / self.config.GPU_COUNT)
         sample_per_gpu = molded_images.size(0)  # aka, actual batch size
-        # if self.config.DEBUG:
-        #     print('forward on gpu {:d} now...'.format(curr_gpu_id))
 
+        # set model state
         if mode == 'inference':
-            proposal_count = self.config.POST_NMS_ROIS_INFERENCE
+            proposal_count = self.config.RPN.POST_NMS_ROIS_INFERENCE
             self.eval()
         elif mode == 'train':
-            proposal_count = self.config.POST_NMS_ROIS_TRAINING
+            proposal_count = self.config.RPN.POST_NMS_ROIS_TRAINING
             self.train()
             # Set batchnorm always in eval mode during training
             def set_bn_eval(m):
@@ -172,6 +151,8 @@ class MaskRCNN(nn.Module):
                 if classname.find('BatchNorm') != -1:
                     m.eval()
             self.apply(set_bn_eval)
+        else:
+            raise Exception('unknown phase')
 
         # Feature extraction
         [p2_out, p3_out, p4_out, p5_out, p6_out] = self.fpn(molded_images)
@@ -191,15 +172,14 @@ class MaskRCNN(nn.Module):
         # e.g. [[a1, b1, c1], [a2, b2, c2]] => [[a1, a2], [b1, b2], [c1, c2]]
         outputs = list(zip(*layer_outputs))
         outputs = [torch.cat(list(o), dim=1) for o in outputs]
-        rpn_class_logits, _rpn_class_score, rpn_pred_bbox = outputs
+        RPN_PRED_CLS_LOGITS, _rpn_class_score, RPN_PRED_BBOX = outputs
 
         # Generate proposals
         # Proposals are [batch, N, (y1, x1, y2, x2)] in normalized coordinates and zero padded.
-        _proposals = proposal_layer([_rpn_class_score, rpn_pred_bbox],
+        _proposals = proposal_layer([_rpn_class_score, RPN_PRED_BBOX],
                                     proposal_count=proposal_count,
                                     nms_threshold=self.config.RPN.NMS_THRESHOLD,
-                                    anchors=self.anchors,
-                                    config=self.config)
+                                    anchors=self.anchors, config=self.config)
         # Normalize coordinates
         h, w = self.config.DATA.IMAGE_SHAPE[:2]
         scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False).cuda()
@@ -210,9 +190,7 @@ class MaskRCNN(nn.Module):
             _, mrcnn_class, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _proposals)
 
             # Detections
-            start_sample_ind = curr_gpu_id*sample_per_gpu
-            end_sample_ind = start_sample_ind+sample_per_gpu
-            image_metas = input[1][start_sample_ind:end_sample_ind]  # (3, 89), ndarray
+            image_metas = input[1]  # (3, 89), Variable
             # output is [batch, num_detections (say 100), (y1, x1, y2, x2, class_id, score)] in image coordinates
             detections = detection_layer(_proposals, mrcnn_class, mrcnn_bbox, image_metas, self.config)
 
@@ -255,11 +233,8 @@ class MaskRCNN(nn.Module):
                 mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
                 mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
-            # if self.config.DEBUG:
-            #     for ind, out in enumerate(output):
-            #         print('output {:d}, on gpu {:d}'.format(ind, out.get_device()))
-            #     print('curr forward done!')
-
-            return [rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits,
-                    target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
+            return [RPN_PRED_CLS_LOGITS, RPN_PRED_BBOX,
+                    target_class_ids, mrcnn_class_logits,
+                    target_deltas, mrcnn_bbox,
+                    target_mask, mrcnn_mask]
 

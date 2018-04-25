@@ -20,7 +20,7 @@ def compose_image_meta(image_id, image_shape, window, active_class_ids):
     meta = np.array(
         [image_id] +            # size=1
         list(image_shape) +     # size=3
-        list(window) +          # size=4 (y1, x1, y2, x2) in image cooredinates
+        list(window) +          # size=4 (y1, x1, y2, x2) in image coordinates
         list(active_class_ids)  # size=num_classes
     )
     return meta
@@ -38,17 +38,17 @@ def parse_image_meta(meta):
     return image_id, image_shape, window, active_class_ids
 
 
-def parse_image_meta_graph(meta):
-    """Parses a tensor that contains image attributes to its components.
-    See compose_image_meta() for more details.
-
-    meta: [batch, meta length] where meta length depends on NUM_CLASSES
-    """
-    image_id = meta[:, 0]
-    image_shape = meta[:, 1:4]
-    window = meta[:, 4:8]
-    active_class_ids = meta[:, 8:]
-    return [image_id, image_shape, window, active_class_ids]
+# def parse_image_meta_graph(meta):
+#     """Parses a tensor that contains image attributes to its components.
+#     See compose_image_meta() for more details.
+#
+#     meta: [batch, meta length] where meta length depends on NUM_CLASSES
+#     """
+#     image_id = meta[:, 0]
+#     image_shape = meta[:, 1:4]
+#     window = meta[:, 4:8]
+#     active_class_ids = meta[:, 8:]
+#     return [image_id, image_shape, window, active_class_ids]
 
 
 # def mold_image(images, config):
@@ -148,21 +148,21 @@ def minimize_mask(bbox, mask, mini_shape):
     return mini_mask
 
 
-def expand_mask(bbox, mini_mask, image_shape):
-    """Resizes mini masks back to image size. Reverses the change
-    of minimize_mask().
-
-    See inspect_data.ipynb notebook for more details.
-    """
-    mask = np.zeros(image_shape[:2] + (mini_mask.shape[-1],), dtype=bool)
-    for i in range(mask.shape[-1]):
-        m = mini_mask[:, :, i]
-        y1, x1, y2, x2 = bbox[i][:4]
-        h = y2 - y1
-        w = x2 - x1
-        m = scipy.misc.imresize(m.astype(float), (h, w), interp='bilinear')
-        mask[y1:y2, x1:x2, i] = np.where(m >= 128, 1, 0)
-    return mask
+# def expand_mask(bbox, mini_mask, image_shape):
+#     """Resizes mini masks back to image size. Reverses the change
+#     of minimize_mask().
+#
+#     See inspect_data.ipynb notebook for more details.
+#     """
+#     mask = np.zeros(image_shape[:2] + (mini_mask.shape[-1],), dtype=bool)
+#     for i in range(mask.shape[-1]):
+#         m = mini_mask[:, :, i]
+#         y1, x1, y2, x2 = bbox[i][:4]
+#         h = y2 - y1
+#         w = x2 - x1
+#         m = scipy.misc.imresize(m.astype(float), (h, w), interp='bilinear')
+#         mask[y1:y2, x1:x2, i] = np.where(m >= 128, 1, 0)
+#     return mask
 
 
 def unmold_mask(mask, bbox, image_shape):

@@ -215,8 +215,7 @@ class RPN(nn.Module):
     Returns:
         rpn_logits: [batch, H, W, 2] Anchor classifier logits (before softmax)
         rpn_probs: [batch, W, W, 2] Anchor classifier probabilities.
-        rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))] Deltas to be
-                  applied to anchors.
+        rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))] Deltas to be applied to anchors.
     """
     def __init__(self, anchors_per_location, anchor_stride, depth):
         super(RPN, self).__init__()
@@ -337,5 +336,5 @@ class Mask(nn.Module):
         x = self.relu(x)
         x = self.conv5(x)
         x = self.sigmoid(x)
-
+        # output is 28 x 28; matches the mask_shape
         return x

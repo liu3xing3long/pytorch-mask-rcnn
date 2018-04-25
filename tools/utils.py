@@ -124,13 +124,19 @@ def update_config_and_load_model(config, network):
                     del config.MODEL['PRETRAIN_IMAGENET_MODEL']
             else:
                 if choice.lower() == "imagenet_pretrain":
-                    model_path = config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
+                    model_path = config.MODEL.PRETRAIN_IMAGENET_MODEL
                     suffix = 'imagenet'
                     del config.MODEL['PRETRAIN_COCO_MODEL']
                 elif choice.lower() == "coco_pretrain":
-                    model_path = config.MODEL.PRETRAIN_COCO_MODEL_PATH
+                    model_path = config.MODEL.PRETRAIN_COCO_MODEL
                     suffix = 'coco'
                     del config.MODEL['PRETRAIN_IMAGENET_MODEL']
+                elif choice.lower() == 'last':
+                    model_path = config.MODEL.PRETRAIN_COCO_MODEL
+                    suffix = 'coco'
+                    del config.MODEL['PRETRAIN_IMAGENET_MODEL']
+                    print('init file choice is [LAST]; however no file found; '
+                          'use pretrain model to init')
                 print('use {:s} pretrain model...'.format(suffix))
 
         print('loading weights \t{:s}\n'.format(model_path))
@@ -153,11 +159,16 @@ def update_config_and_load_model(config, network):
     try:
         network.load_state_dict(checkpoints['state_dict'])
     except KeyError:
-        network.load_state_dict(checkpoints)
+        network.load_state_dict(checkpoints)  # legacy reason
 
     if phase == 'train':
-        network.start_epoch = checkpoints['epoch']
-        network.start_iter = checkpoints['iter']
+        try:
+            # indicate this is a resumed model
+            network.start_epoch = checkpoints['epoch']
+            network.start_iter = checkpoints['iter']
+        except KeyError:
+            # indicate this is a pretrain model
+            network.start_epoch, network.start_iter = 0, 0
         # init counters
         network.epoch = network.start_epoch
         network.iter = network.start_iter
