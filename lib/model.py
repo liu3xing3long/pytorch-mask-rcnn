@@ -225,14 +225,12 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     t_prediction = 0
     t_start = time.time()
 
-    results = []
     total_iter = math.ceil(num_test_im / model.config.BATCH_SIZE)
-    cnt = 0
+    results, cnt = [], 0
 
-    # for i, image_id in enumerate(image_ids):
     for iter_ind in range(total_iter):
-        curr_image_ids = image_ids[iter_ind*model.config.BATCH_SIZE :
-                            min(iter_ind*model.config.BATCH_SIZE + model.config.BATCH_SIZE, num_test_im)]
+        curr_image_ids = image_ids[iter_ind*model.config.BATCH_SIZE:min(
+            iter_ind*model.config.BATCH_SIZE + model.config.BATCH_SIZE, num_test_im)]
 
         # Run detection
         t_pred_start = time.time()
@@ -298,7 +296,8 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     cocoEval.summarize()
     print_log('Total time: {:.4f}'.format(time.time() - t_start), model.config.LOG_FILE)
     print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.format(
-              model.config.NAME, os.path.basename(model.config.START_MODEL_FILE), model.config.LOG_FILE)
+              model.config.NAME, os.path.basename(model.config.START_MODEL_FILE), cocoEval.stats[0]),
+              model.config.LOG_FILE)
 
 
 def compute_loss(target_rpn_match, target_rpn_bbox, inputs):
