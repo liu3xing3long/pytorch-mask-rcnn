@@ -1,4 +1,4 @@
-results/*/inference/*/*
+*.png
 *.swp
 *.txt*
 datasets/coco

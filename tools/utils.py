@@ -1,6 +1,7 @@
 import os
 import torch
 from torch.autograd import Variable
+import math
 # import cv2
 
 
@@ -78,7 +79,7 @@ def remove(file_name):
         pass
 
 
-def print_log(msg, file=None, init=False):
+def print_log(msg, file=None, init=False, additional_file=None):
 
     print(msg)
     if file is None:
@@ -88,6 +89,11 @@ def print_log(msg, file=None, init=False):
             remove(file)
         with open(file, 'a') as log_file:
             log_file.write('%s\n' % msg)
+
+        if additional_file is not None:
+            # TODO (low): a little buggy here: no removal of previous additional_file
+            with open(additional_file, 'a') as addition_log:
+                addition_log.write('%s\n' % msg)
 
 
 def _find_last(config):
@@ -103,11 +109,12 @@ def _find_last(config):
     return dir_name, checkpoint
 
 
-def update_config_and_load_model(config, network):
+def update_config_and_load_model(config, network, train_generator=None):
 
     choice = config.MODEL.INIT_FILE_CHOICE
     phase = config.CTRL.PHASE
 
+    # determine model_path
     if phase == 'train':
 
         if os.path.exists(choice):
@@ -120,8 +127,9 @@ def update_config_and_load_model(config, network):
             if model_path is not None:
                 if choice.lower() in ['coco_pretrain', 'imagenet_pretrain']:
                     print('WARNING: find existing model... ignore pretrain model')
-                    del config.MODEL['PRETRAIN_COCO_MODEL']
-                    del config.MODEL['PRETRAIN_IMAGENET_MODEL']
+
+                del config.MODEL['PRETRAIN_COCO_MODEL']
+                del config.MODEL['PRETRAIN_IMAGENET_MODEL']
             else:
                 if choice.lower() == "imagenet_pretrain":
                     model_path = config.MODEL.PRETRAIN_IMAGENET_MODEL
@@ -161,14 +169,22 @@ def update_config_and_load_model(config, network):
     except KeyError:
         network.load_state_dict(checkpoints)  # legacy reason
 
+    # determine start_iter and epoch for resume
     if phase == 'train':
         try:
             # indicate this is a resumed model
             network.start_epoch = checkpoints['epoch']
             network.start_iter = checkpoints['iter']
+            num_train_im = train_generator.dataset.dataset.num_images
+            iter_per_epoch = math.floor(num_train_im/config.CTRL.BATCH_SIZE)
+            if network.start_iter % iter_per_epoch == 0:
+                network.start_iter = 1
+                network.start_epoch += 1
+            else:
+                network.start_iter += 1
         except KeyError:
             # indicate this is a pretrain model
-            network.start_epoch, network.start_iter = 0, 0
+            network.start_epoch, network.start_iter = 1, 1
         # init counters
         network.epoch = network.start_epoch
         network.iter = network.start_iter
@@ -180,8 +196,11 @@ def update_config_and_load_model(config, network):
         config.MISC.LOG_FILE = os.path.join(
             config.MISC.RESULT_FOLDER,
             'train_log_start_ep_{:04d}_iter_{:04d}.txt'.format(network.start_epoch, network.start_iter))
+        if config.CTRL.DEBUG or config.TRAIN.DO_VALIDATION:
+            # set SAVE_IM=True
+            config.TEST.SAVE_IM = True
     else:
-        model_name = os.path.basename(model_path).replace('.pth', '')
+        model_name = os.path.basename(model_path).replace('.pth', '')   # mask_rcnn_ep_0053_iter_1234
         config.MISC.LOG_FILE = os.path.join(
             config.MISC.RESULT_FOLDER, 'inference_from_{:s}.txt'.format(model_name))
         model_suffix = os.path.basename(model_path).replace('mask_rcnn_', '')
@@ -196,4 +215,12 @@ def update_config_and_load_model(config, network):
     network.config = config
 
     return config, network
+
+
+def compute_left_time(iter_avg, curr_ep, total_ep, curr_iter, total_iter):
+
+    total_time = ((total_iter - curr_iter) + (total_ep - curr_ep)*total_iter) * iter_avg
+    days = math.floor(total_time / (3600*24))
+    hrs = (total_time - days*3600*24) / 3600
+    return days, hrs
 

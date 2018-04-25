@@ -5,7 +5,7 @@ import time
 from lib.layers import *
 from datasets.pycocotools import mask as maskUtils
 from datasets.pycocotools.cocoeval import COCOeval
-from tools.utils import print_log
+from tools.utils import print_log, compute_left_time
 import torch.nn as nn
 import math
 import matplotlib.pyplot as plt
@@ -42,7 +42,7 @@ CLASS_NAMES = ['BG', 'person', 'bicycle', 'car', 'motorcycle', 'airplane',
                'teddy bear', 'hair drier', 'toothbrush']
 
 
-def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_call, layers):
+def train_model(input_model, train_generator, valset, lr, total_ep_curr_call, layers, coco_api=None):
     """
     Args:
         input_model:        nn.DataParallel
@@ -63,6 +63,7 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
                 3+: Train Resnet stage 3 and up
                 4+: Train Resnet stage 4 and up
                 5+: Train Resnet stage 5 and up
+        coco_api
     """
     stage_name = layers.upper()
     if isinstance(input_model, nn.DataParallel):
@@ -72,7 +73,7 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
         model = input_model
 
     num_train_im = train_generator.dataset.dataset.num_images
-    iter_per_epoch = math.floor(len(train_generator)/model.config.CTRL.BATCH_SIZE)
+    iter_per_epoch = math.floor(num_train_im/model.config.CTRL.BATCH_SIZE)
 
     if (num_train_im % model.config.CTRL.BATCH_SIZE) % model.config.MISC.GPU_COUNT != 0:
         print_log('WARNING [TRAIN]: last mini-batch in an epoch is not divisible by gpu number.\n'
@@ -102,16 +103,17 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
 
     print_log('\n[Current stage: {:s}] start training at epoch {:d}, iter {:d}. \n'
               'Total epoch in this stage: {:d}, LR={:.4f}'.format(
-                stage_name, model.epoch+1, model.iter+1, total_ep_curr_call, lr), model.config.MISC.LOG_FILE)
+                stage_name, model.epoch, model.iter, total_ep_curr_call, lr), model.config.MISC.LOG_FILE)
 
-    for ep in range(model.epoch+1, total_ep_curr_call+1):
+    for ep in range(model.epoch, total_ep_curr_call+1):
 
-        epoch_str = "[Epoch {}/{}]".format(ep, total_ep_curr_call)
+        epoch_str = "[Ep {:03d}/{}]".format(ep, total_ep_curr_call)
         print_log(epoch_str, model.config.MISC.LOG_FILE)
         # Training
         loss = train_epoch_new(input_model, train_generator, optimizer,
                                stage_name=stage_name, epoch_str=epoch_str,
-                               epoch=ep, start_iter=model.iter+1, total_iter=iter_per_epoch)
+                               epoch=ep, start_iter=model.iter, total_iter=iter_per_epoch,
+                               valset=valset, coco_api=coco_api)
         # Validation (deprecated)
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
@@ -130,9 +132,15 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
             'iter':         iter_per_epoch,
         }, model_file)
 
-        # update iterator
-        model.iter = 0
+        # one epoch ends; update iterator
+        model.iter = 1
         model.epoch = ep
+
+    # Current stage ends; do validation if possible
+    if model.config.TRAIN.DO_VALIDATION:
+        print_log('\nDo validation at end of current stage [{:s}] (model ep {:d} iter {:d}) ...'.
+                  format(stage_name.upper(), total_ep_curr_call, iter_per_epoch), model.config.MISC.LOG_FILE)
+        test_model(input_model, valset, coco_api, during_train=True, epoch=ep, iter=iter_per_epoch)
 
 
 def train_epoch_new(input_model, data_loader, optimizer, **args):
@@ -151,11 +159,13 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     loss_sum = 0
     config = model.config
     data_iterator = iter(data_loader)
-    total_iter = args['total_iter']
+    start_iter, total_iter = args['start_iter'], args['total_iter']
+    actual_total_iter = total_iter - start_iter + 1
     save_iter_base = math.floor(total_iter / config.TRAIN.SAVE_FREQ_WITHIN_EPOCH)
 
-    for iter_ind in range(args['start_iter'], total_iter+1):
+    for iter_ind in range(start_iter, total_iter+1):
 
+        curr_iter_time_start = time.time()
         inputs = next(data_iterator)
 
         images = Variable(inputs[0].cuda())
@@ -179,10 +189,18 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         optimizer.step()
 
         # Progress
-        if iter_ind % config.MISC.SHOW_INTERVAL == 0 or iter_ind == args['start_iter']:
-            print_log('[{:s}][stage {:s}]{:s}\t{}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
+        if iter_ind % config.CTRL.SHOW_INTERVAL == 0 or iter_ind == args['start_iter']:
+
+            iter_time = time.time() - curr_iter_time_start
+            days, hrs = compute_left_time(iter_time, args['epoch'],
+                                          sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
+
+            print_log('[{:s}][stage {:s}]{:s}[est. left: {:d} days, {:02.2f} hrs]'
+                      '\t{:05d}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
                       '- mrcnn_cls: {:.5f} - mrcnn_bbox: {:.5f} - mrcnn_mask_loss: {:.5f}'.
-                      format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'], iter_ind, total_iter,
+                      format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'],
+                             days, hrs,
+                             iter_ind, total_iter,
                              loss.data.cpu()[0],
                              detailed_losses[0].data.cpu()[0],
                              detailed_losses[1].data.cpu()[0],
@@ -190,23 +208,31 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                              detailed_losses[3].data.cpu()[0],
                              detailed_losses[4].data.cpu()[0]), config.MISC.LOG_FILE)
         # Statistics
-        loss_sum += loss.data.cpu()[0]/total_iter
+        loss_sum += loss.data.cpu()[0]/actual_total_iter
 
         # save model
         if iter_ind % save_iter_base == 0:
             model_file = os.path.join(config.MISC.RESULT_FOLDER,
                                       'mask_rcnn_ep_{:04d}_iter_{:04d}.pth'.format(args['epoch'], iter_ind))
-            print_log('saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
+            print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
             torch.save({
                 'state_dict':   model.state_dict(),
                 'epoch':        args['epoch'],  # or model.epoch
                 'iter':         iter_ind,       # or model.iter
             }, model_file)
 
+        # for debug; test the model
+        if config.CTRL.DEBUG and iter_ind == (start_iter+5):
+            print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
+                      format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
+            test_model(input_model, args['valset'], args['coco_api'],
+                       during_train=True, epoch=args['epoch'], iter=iter_ind)
+
     return loss_sum
 
 
-def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
+def test_model(input_model, valset, coco_api,
+               limit=-1, image_ids=None, **args):
     """
         Test the trained model
         Args:
@@ -222,7 +248,28 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
         # single-gpu
         model = input_model
 
-    model_file_name = os.path.basename(model.config.MODEL.INIT_MODEL)
+    # set up save and log folder for both train and inference
+    if args['during_train']:
+        model_file_name = 'mask_rcnn_ep_{:04d}_iter_{:04d}.pth'.format(args['epoch'], args['iter'])
+        mode = 'inference'
+        _val_folder = model.config.MISC.RESULT_FOLDER.replace('train', 'inference')
+        _model_name = model_file_name.replace('.pth', '')
+        _model_suffix = _model_name.replace('mask_rcnn_', '')  # say, ep_0053_iter_1234
+        log_file = os.path.join(_val_folder, 'inference_from_{:s}.txt'.format(_model_name))
+        det_res_file = os.path.join(_val_folder, 'det_result_{:s}.pth'.format(_model_suffix))
+        train_log_file = model.config.MISC.LOG_FILE
+        save_im_folder = os.path.join(_val_folder, _model_suffix)
+        if not os.path.exists(save_im_folder):
+            os.makedirs(save_im_folder)
+    else:
+        # validation-only case
+        model_file_name = os.path.basename(model.config.MODEL.INIT_MODEL)
+        mode = model.config.CTRL.PHASE
+        log_file = model.config.MISC.LOG_FILE
+        det_res_file = model.config.MISC.DET_RESULT_FILE
+        train_log_file = None
+        save_im_folder = model.config.MISC.SAVE_IMAGE_DIR if model.config.TEST.SAVE_IM else None
+
     dataset = valset.dataset
 
     # Pick COCO images from the dataset
@@ -256,7 +303,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
         molded_images, image_metas, windows, images = _mold_inputs(model, curr_image_ids, dataset)
 
         # Run object detection; detections: 8,100,6; mrcnn_mask: 8,100,81,28,28
-        detections, mrcnn_mask = input_model([molded_images, image_metas], mode=model.config.CTRL.PHASE)
+        detections, mrcnn_mask = input_model([molded_images, image_metas], mode=mode)
 
         # Convert to numpy
         detections = detections.data.cpu().numpy()
@@ -286,23 +333,25 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
             # visualize result if necessary
             if model.config.TEST.SAVE_IM:
                 plt.close()
-                visualize.display_instances(image, final_rois, final_masks, final_class_ids,
-                                            CLASS_NAMES, final_scores)
-                im_file = os.path.join(model.config.MISC.SAVE_IMAGE_DIR,
-                                       'coco_im_id_{:d}.png'.format(curr_coco_id))
+                visualize.display_instances(
+                    image, final_rois, final_masks, final_class_ids, CLASS_NAMES, final_scores)
+
+                im_file = os.path.join(save_im_folder, 'coco_im_id_{:d}.png'.format(curr_coco_id))
                 plt.savefig(im_file)
 
         t_prediction += (time.time() - t_pred_start)
         cnt += len(curr_image_ids)
+
+        # show progress
         if iter_ind % (model.config.CTRL.SHOW_INTERVAL*10) == 0 or cnt == len(image_ids):
             print_log('[{:s}][{:s}] evaluation progress \t{:4d} images /{:4d} total ...'.
-                      format(model.config.CTRL.CONFIG_NAME, model_file_name,
-                             cnt, len(image_ids)), model.config.MISC.LOG_FILE)
+                      format(model.config.CTRL.CONFIG_NAME, model_file_name, cnt, len(image_ids)),
+                      log_file, additional_file=train_log_file)
 
     print_log("Prediction time: {:.4f}. Average {:.4f} sec/image".format(
-        t_prediction, t_prediction / len(image_ids)), model.config.MISC.LOG_FILE)
-    print_log('Saving results to {:s}'.format(model.config.MISC.DET_RESULT_FILE), model.config.MISC.LOG_FILE)
-    torch.save({'det_result': results}, model.config.MISC.DET_RESULT_FILE)
+        t_prediction, t_prediction / len(image_ids)), log_file, additional_file=train_log_file)
+    print_log('Saving results to {:s}'.format(det_res_file), log_file, additional_file=train_log_file)
+    torch.save({'det_result': results}, det_res_file)
 
     # Evaluate
     print('\nBegin to evaluate ...')
@@ -314,11 +363,11 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     cocoEval.evaluate()
     cocoEval.accumulate()
     cocoEval.summarize()
-    print_log('Total time: {:.4f}'.format(time.time() - t_start), model.config.MISC.LOG_FILE)
+    print_log('Total time: {:.4f}'.format(time.time() - t_start), log_file, additional_file=train_log_file)
     print_log('Config_name [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
               format(model.config.CTRL.CONFIG_NAME, model_file_name, cocoEval.stats[0]),
-              model.config.MISC.LOG_FILE)
-    print_log('Done!', model.config.MISC.LOG_FILE)
+              log_file, additional_file=train_log_file)
+    print_log('Done!', log_file, additional_file=train_log_file)
 
 
 # ======================

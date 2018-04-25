@@ -154,6 +154,8 @@ class Config(object):
 
     TRAIN.CLIP_GRAD = True
     TRAIN.MAX_GRAD_NORM = 5.0
+
+    TRAIN.DO_VALIDATION = True
     # (deprecated)
     # Use RPN ROIs or externally generated ROIs for training
     # Keep this True for most situations. Set to False if you want to train
@@ -175,6 +177,19 @@ class Config(object):
     def _set_value(self):
         """Set values of computed attributes."""
 
+        if self.CTRL.DEBUG:
+            self.CTRL.SHOW_INTERVAL = 1
+            self.DATA.IMAGE_MIN_DIM = 320
+            self.DATA.IMAGE_MAX_DIM = 512
+
+        # set folder
+        self.MISC.RESULT_FOLDER = os.path.join(
+            'results', self.CTRL.CONFIG_NAME.lower(), self.CTRL.PHASE)
+
+        if not os.path.exists(self.MISC.RESULT_FOLDER):
+            os.makedirs(self.MISC.RESULT_FOLDER)
+
+        # MUST be left at the end
         # Input image size
         self.DATA.IMAGE_SHAPE = np.array(
             [self.DATA.IMAGE_MAX_DIM, self.DATA.IMAGE_MAX_DIM, 3])
@@ -184,18 +199,6 @@ class Config(object):
             [[int(math.ceil(self.DATA.IMAGE_SHAPE[0] / stride)),
               int(math.ceil(self.DATA.IMAGE_SHAPE[1] / stride))]
              for stride in self.MODEL.BACKBONE_STRIDES])
-
-        if self.CTRL.DEBUG:
-            self.CTRL.SHOW_INTERVAL = 1
-            # self.DATA.IMAGE_MIN_DIM = 320
-            # self.DATA.IMAGE_MAX_DIM = 512
-
-        # set folder
-        self.MISC.RESULT_FOLDER = os.path.join(
-            'results', self.CTRL.CONFIG_NAME.lower(), self.CTRL.PHASE)
-
-        if not os.path.exists(self.MISC.RESULT_FOLDER):
-            os.makedirs(self.MISC.RESULT_FOLDER)
 
     def display(self, log_file):
         """Display Configuration values."""
@@ -230,11 +233,15 @@ class CocoConfig(Config):
         self.MISC.DEVICE_ID = [int(x) for x in args.device_id.split(',')]
         self.MISC.GPU_COUNT = len(self.MISC.DEVICE_ID)
 
+        # ================ (CUSTOMIZED CONFIG) ======================
         if self.CTRL.CONFIG_NAME == 'all_new':
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
             self.DATA.IMAGE_MIN_DIM = 256
             self.DATA.IMAGE_MAX_DIM = 320
 
+        elif self.CTRL.CONFIG_NAME == 'base_101':
+            self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
+            self.CTRL.BATCH_SIZE = 8
         else:
             print('WARNING: unknown config name!!! use default setting.')
 
