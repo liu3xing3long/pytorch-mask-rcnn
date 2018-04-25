@@ -857,7 +857,7 @@ def conduct_nms(class_ids, refined_rois, class_scores, keep, config):
     pre_nms_class_ids = class_ids[keep]
     pre_nms_scores = class_scores[keep]
     pre_nms_rois = refined_rois[torch.nonzero(keep).squeeze(), :]
-    _indx = torch.nonzero(keep)
+    _indx = torch.nonzero(keep).squeeze()
 
     # conduct nms per CLASS
     for i, class_id in enumerate(utils.unique1d(pre_nms_class_ids)):
