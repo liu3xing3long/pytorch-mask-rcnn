@@ -43,9 +43,9 @@ class Config(object):
     # are based on a Resnet101 backbone.
     MODEL.BACKBONE_STRIDES = [4, 8, 16, 32, 64]
     # Path to pretrained imagenet model # TODO: loading is buggy
-    MODEL.PRETRAIN_IMAGENET_MODEL_PATH = os.path.join('datasets/pretrain_model', "resnet50_imagenet.pth")
+    MODEL.PRETRAIN_IMAGENET_MODEL = os.path.join('datasets/pretrain_model', "resnet50_imagenet.pth")
     # Path to pretrained weights file
-    MODEL.PRETRAIN_COCO_MODEL_PATH = os.path.join('datasets/pretrain_model', 'mask_rcnn_coco.pth')
+    MODEL.PRETRAIN_COCO_MODEL = os.path.join('datasets/pretrain_model', 'mask_rcnn_coco.pth')
     MODEL.INIT_FILE_CHOICE = 'last'  # or file (xxx.pth)
 
     # ==================================
@@ -132,6 +132,7 @@ class Config(object):
     TEST.DET_MIN_CONFIDENCE = 0
     # Non-maximum suppression threshold for detection
     TEST.DET_NMS_THRESHOLD = 0.3
+    TEST.SAVE_IM = True
 
     # ==================================
     TRAIN = AttrDict()
@@ -225,15 +226,12 @@ class CocoConfig(Config):
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
             self.DATA.IMAGE_MIN_DIM = 256
             self.DATA.IMAGE_MAX_DIM = 320
-            # self.USE_MINI_MASK = False
-            # self.MINI_MASK_SHAPE = (28, 28)
-            # self.DETECTION_NMS_THRESHOLD = 0.3
 
         elif self.CTRL.CONFIG_NAME == 'all_new_2':
             self.CTRL.BATCH_SIZE = 8
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
         else:
             print('WARNING: unknown config name!!! use default setting.')
-            self.CTRL.CONFIG_NAME = 'default'
+            self.CTRL.CONFIG_NAME = self.CTRL.CONFIG_NAME
 
         self._set_value()

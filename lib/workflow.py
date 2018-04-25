@@ -107,14 +107,10 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
         epoch_str = "[Epoch {}/{}]".format(epoch, total_ep_curr_call)
         print_log(epoch_str, model.config.LOG_FILE)
         # Training
-        if model.config.old_scheme:
-            loss = train_epoch(input_model, train_generator, optimizer,
-                               model.config.STEPS_PER_EPOCH, stage_name, epoch_str)
-        else:
-            loss = train_epoch_new(input_model, train_generator, optimizer,
-                                   stage_name=stage_name, epoch_str=epoch_str,
-                                   epoch=epoch, start_iter=model.iter+1)
-        # Validation
+        loss = train_epoch_new(input_model, train_generator, optimizer,
+                               stage_name=stage_name, epoch_str=epoch_str,
+                               epoch=epoch, start_iter=model.iter+1)
+        # Validation (deprecated)
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
         # Statistics
@@ -207,7 +203,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
         # single-gpu
         model = input_model
 
-    model_file_name = os.path.basename(model.config.START_MODEL_FILE)
+    model_file_name = os.path.basename(model.config.MODEL.INIT_MODEL)
     dataset = valset.dataset
 
     # Pick COCO images from the dataset
@@ -218,23 +214,21 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
 
     num_test_im = len(image_ids)
     print("Running COCO evaluation on {} images.".format(num_test_im))
-    assert (num_test_im % model.config.BATCH_SIZE) % model.config.GPU_COUNT == 0, 'last mini-batch in an epoch' \
-                                                                                  'is not divisible by gpu number.'
+    assert (num_test_im % model.config.CTRL.BATCH_SIZE) % model.config.MISC.GPU_COUNT == 0, \
+        '[INFERENCE] last mini-batch in an epoch is not divisible by gpu number.'
     # Get corresponding COCO image IDs.
     coco_image_ids = [dataset.image_info[ind]["id"] for ind in image_ids]
 
     t_prediction = 0
     t_start = time.time()
 
-    results = []
+    results, cnt = [], 0
     total_iter = math.ceil(num_test_im / model.config.BATCH_SIZE)
-    cnt = 0
 
-    # for i, image_id in enumerate(image_ids):
     for iter_ind in range(total_iter):
-        curr_image_ids = image_ids[iter_ind*model.config.BATCH_SIZE :
-                            min(iter_ind*model.config.BATCH_SIZE + model.config.BATCH_SIZE, num_test_im)]
-
+        curr_image_ids = \
+            image_ids[iter_ind*model.config.BATCH_SIZE:min(iter_ind*model.config.BATCH_SIZE +
+                                                           model.config.BATCH_SIZE, num_test_im)]
         # Run detection
         t_pred_start = time.time()
         # Mold inputs to format expected by the neural network
@@ -248,7 +242,6 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
         mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
 
         # Process detections
-        results = []
         for i, image in enumerate(images):
 
             curr_coco_id = coco_image_ids[curr_image_ids[i]]
@@ -269,13 +262,13 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
                 results.append(curr_result)
 
             # visualize result if necessary
-            # if model.config.DEBUG:
-            #     plt.close()
-            #     visualize.display_instances(image, final_rois, final_masks, final_class_ids,
-            #                                 CLASS_NAMES, final_scores)
-            #     im_file = os.path.join(model.config.SAVE_IMAGE_DIR,
-            #                            'coco_im_id_{:d}.png'.format(curr_coco_id))
-            #     plt.savefig(im_file)
+            if model.config.TEST.SAVE_IM:
+                plt.close()
+                visualize.display_instances(image, final_rois, final_masks, final_class_ids,
+                                            CLASS_NAMES, final_scores)
+                im_file = os.path.join(model.config.MISC.SAVE_IMAGE_DIR,
+                                       'coco_im_id_{:d}.png'.format(curr_coco_id))
+                plt.savefig(im_file)
 
         t_prediction += (time.time() - t_pred_start)
         cnt += len(curr_image_ids)
@@ -300,7 +293,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     cocoEval.summarize()
     print_log('Total time: {:.4f}'.format(time.time() - t_start), model.config.LOG_FILE)
     print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
-              format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE)),
+              format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE), cocoEval.stats[0]),
               model.config.LOG_FILE)
 
 

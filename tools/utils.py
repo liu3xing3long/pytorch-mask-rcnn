@@ -113,32 +113,32 @@ def update_config_and_load_model(config, network):
         if os.path.exists(choice):
             print('[{:s}]loading designated weights\t{:s}\n'.format(phase.upper(), choice))
             model_path = choice
-            del config.MODEL.PRETRAIN_COCO_MODEL_PATH
-            del config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
+            del config.MODEL['PRETRAIN_COCO_MODEL']
+            del config.MODEL['PRETRAIN_IMAGENET_MODEL']
         else:
             model_path = _find_last(config)[1]
             if model_path is not None:
                 if choice.lower() in ['coco_pretrain', 'imagenet_pretrain']:
                     print('WARNING: find existing model... ignore pretrain model')
-                    del config.MODEL.PRETRAIN_COCO_MODEL_PATH
-                    del config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
+                    del config.MODEL['PRETRAIN_COCO_MODEL']
+                    del config.MODEL['PRETRAIN_IMAGENET_MODEL']
             else:
                 if choice.lower() == "imagenet_pretrain":
                     model_path = config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
                     suffix = 'imagenet'
-                    del config.MODEL.PRETRAIN_COCO_MODEL_PATH
+                    del config.MODEL['PRETRAIN_COCO_MODEL']
                 elif choice.lower() == "coco_pretrain":
                     model_path = config.MODEL.PRETRAIN_COCO_MODEL_PATH
                     suffix = 'coco'
-                    del config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
+                    del config.MODEL['PRETRAIN_IMAGENET_MODEL']
                 print('use {:s} pretrain model...'.format(suffix))
 
         print('loading weights \t{:s}\n'.format(model_path))
 
     elif phase == 'inference':
 
-        del config.MODEL.PRETRAIN_COCO_MODEL_PATH
-        del config.MODEL.PRETRAIN_IMAGENET_MODEL_PATH
+        del config.MODEL['PRETRAIN_COCO_MODEL']
+        del config.MODEL['PRETRAIN_IMAGENET_MODEL']
 
         if choice.lower() in ['coco_pretrain', 'imagenet_pretrain', 'last']:
             model_path = _find_last(config)[1]
@@ -148,8 +148,12 @@ def update_config_and_load_model(config, network):
             print('use designated model for inference')
         print('[{:s}] loading model weights\t{:s} for inference\n'.format(phase.upper(), model_path))
 
+    # load model
     checkpoints = torch.load(model_path)
-    network.load_state_dict(checkpoints['state_dict'])
+    try:
+        network.load_state_dict(checkpoints['state_dict'])
+    except KeyError:
+        network.load_state_dict(checkpoints)
 
     if phase == 'train':
         network.start_epoch = checkpoints['epoch']
@@ -172,9 +176,10 @@ def update_config_and_load_model(config, network):
         model_suffix = os.path.basename(model_path).replace('mask_rcnn_', '')
 
         config.MISC.DET_RESULT_FILE = os.path.join(config.MISC.RESULT_FOLDER, 'det_result_{:s}'.format(model_suffix))
-        config.MISC.SAVE_IMAGE_DIR = os.path.join(config.MISC.RESULT_FOLDER, model_suffix.replace('.pth', ''))
-        if not os.path.exists(config.MISC.SAVE_IMAGE_DIR):
-            os.makedirs(config.MISC.SAVE_IMAGE_DIR)
+        if config.TEST.SAVE_IM:
+            config.MISC.SAVE_IMAGE_DIR = os.path.join(config.MISC.RESULT_FOLDER, model_suffix.replace('.pth', ''))
+            if not os.path.exists(config.MISC.SAVE_IMAGE_DIR):
+                os.makedirs(config.MISC.SAVE_IMAGE_DIR)
 
     config.display(config.MISC.LOG_FILE)
     network.config = config

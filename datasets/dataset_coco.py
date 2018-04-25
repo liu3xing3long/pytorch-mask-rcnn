@@ -467,16 +467,16 @@ def get_data(config):
     # validation data
     dset_val = COCODataset(config)
     print('VAL:: load minival')
-    val_coco_api = dset_val.dataset.load_coco(DATASET.PATH, "minival", year=DATASET.YAER)
+    val_coco_api = dset_val.dataset.load_coco(DATASET.PATH, "minival", year=DATASET.YEAR)
     dset_val.dataset.prepare()
 
     # train data
     if not config.CTRL.DEBUG and config.CTRL.PHASE == 'train':
         dset_train = COCODataset(config)
         print('TRAIN:: load train')
-        dset_train.dataset.load_coco(DATASET.PATH, "train", year=DATASET.YAER)
+        dset_train.dataset.load_coco(DATASET.PATH, "train", year=DATASET.YEAR)
         print('TRAIN:: load val_minus_minival')
-        dset_train.dataset.load_coco(DATASET.PATH, "valminusminival", year=DATASET.YAER)
+        dset_train.dataset.load_coco(DATASET.PATH, "valminusminival", year=DATASET.YEAR)
         dset_train.dataset.prepare()
     else:
         dset_train = dset_val
