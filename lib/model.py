@@ -247,7 +247,6 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
         mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
 
         # Process detections
-        results = []
         for i, image in enumerate(images):
 
             curr_coco_id = coco_image_ids[curr_image_ids[i]]
@@ -268,7 +267,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
                 results.append(curr_result)
 
             # visualize result if necessary
-            # if model.config.DEBUG:
+            #if model.config.DEBUG:
             #     plt.close()
             #     visualize.display_instances(image, final_rois, final_masks, final_class_ids,
             #                                 CLASS_NAMES, final_scores)
@@ -299,7 +298,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     cocoEval.summarize()
     print_log('Total time: {:.4f}'.format(time.time() - t_start), model.config.LOG_FILE)
     print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
-              format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE, cocoEval.stats[0])),
+              format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE),
               model.config.LOG_FILE)
 
 
