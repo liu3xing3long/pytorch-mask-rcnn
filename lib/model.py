@@ -247,7 +247,6 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
         mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
 
         # Process detections
-        results = []
         for i, image in enumerate(images):
 
             curr_coco_id = coco_image_ids[curr_image_ids[i]]
