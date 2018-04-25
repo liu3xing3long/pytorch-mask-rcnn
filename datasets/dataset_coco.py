@@ -2,21 +2,18 @@ import os
 import shutil
 import urllib.request
 import zipfile
-import numpy as np
 from datasets.pycocotools.coco import COCO
 from datasets.pycocotools import mask as maskUtils
 import skimage.color
 import skimage.io
+from lib.layers import *
 
 import torch
-import tools.utils as utils
+import tools.image_utils as utils
 import torch.utils.data
 from torch.autograd import Variable
 
 
-############################################################
-#  Dataset
-############################################################
 class Dataset(object):
     """The base class for dataset classes.
     To use it, create a new class that adds functions specific to the dataset
@@ -62,15 +59,6 @@ class Dataset(object):
         }
         image_info.update(kwargs)
         self.image_info.append(image_info)
-
-    def image_reference(self, image_id):
-        """Return a link to the image in its source Website or details about
-        the image that help looking it up or debugging it.
-
-        Override for your dataset, but pass to this function
-        if you encounter images not in your dataset.
-        """
-        return ""
 
     def prepare(self, class_map=None):
         """Prepares the Dataset class for use.
@@ -150,37 +138,16 @@ class Dataset(object):
             image = skimage.color.gray2rgb(image)
         return image
 
-    def load_mask(self, image_id):
-        """Load instance masks for the given image.
-
-        Different datasets use different ways to store masks. Override this
-        method to load instance masks and return them in the form of am
-        array of binary masks of shape [height, width, instances].
-
-        Returns:
-            masks: A bool array of shape [height, width, instance count] with
-                a binary mask per instance.
-            class_ids: a 1D array of class IDs of the instance masks.
-        """
-        # Override this function to load a mask from your dataset.
-        # Otherwise, it returns an empty mask.
-        mask = np.empty([0, 0, 0])
-        class_ids = np.empty([0], np.int32)
-        return mask, class_ids
-
-
-class CocoDataset(Dataset):
-    def load_coco(self, dataset_dir, subset, year='2014', class_ids=None,
-                  class_map=None, return_coco_api=False, auto_download=False):
+    def load_coco(self, dataset_dir, subset, year='2014', class_ids=None, auto_download=False):
         """Load a subset of the COCO dataset.
-        dataset_dir: The root directory of the COCO dataset.
-        subset: What to load (train, val, minival, valminusminival)
-        year: What dataset year to load (2014, 2017) as a string, not an integer
-        class_ids: If provided, only loads images that have the given classes.
-        class_map: TODO: Not implemented yet. Supports maping classes from
-            different datasets to the same class ID.
-        return_coco: If True, returns the COCO object.
-        auto_download: Automatically download and unzip MS-COCO images and annotations
+        dataset_dir:    The root directory of the COCO dataset.
+        subset:         What to load (train, val, minival, valminusminival)
+        year:           What dataset year to load (2014, 2017) as a string, not an integer
+        class_ids:      If provided, only loads images that have the given classes.
+        class_map:      TODO: Not implemented yet.
+                            Supports mapping classes from different datasets to the same class ID.
+        return_coco:    If True, returns the COCO object.
+        auto_download:  Automatically download and unzip MS-COCO images and annotations
         """
 
         if auto_download is True:
@@ -309,7 +276,10 @@ class CocoDataset(Dataset):
         # If not a COCO image, delegate to parent class.
         image_info = self.image_info[image_id]
         if image_info["source"] != "coco":
-            return super(CocoDataset, self).load_mask(image_id)
+            # return super(COCODataset, self).load_mask(image_id)
+            mask = np.empty([0, 0, 0])
+            class_ids = np.empty([0], np.int32)
+            return mask, class_ids
 
         instance_masks = []
         class_ids = []
@@ -341,10 +311,12 @@ class CocoDataset(Dataset):
         if class_ids:
             mask = np.stack(instance_masks, axis=2)
             class_ids = np.array(class_ids, dtype=np.int32)
-            return mask, class_ids
         else:
             # Call super class to return an empty mask
-            return super(CocoDataset, self).load_mask(image_id)
+            # return super(CocoDataset, self).load_mask(image_id)
+            mask = np.empty([0, 0, 0])
+            class_ids = np.empty([0], np.int32)
+        return mask, class_ids
 
     def image_reference(self, image_id):
         """Return a link to the image in the COCO Website."""
@@ -352,7 +324,8 @@ class CocoDataset(Dataset):
         if info["source"] == "coco":
             return "http://cocodataset.org/#explore?id={}".format(info["id"])
         else:
-            super(CocoDataset, self).image_reference(image_id)
+            # super(CocoDataset, self).image_reference(image_id)
+            return ""
 
     # The following two functions are from pycocotools with a few changes.
     def annToRLE(self, ann, height, width):
@@ -384,8 +357,8 @@ class CocoDataset(Dataset):
         return m
 
 
-class DatasetPack(torch.utils.data.Dataset):
-    def __init__(self, dataset, config, augment=True):
+class COCODataset(torch.utils.data.Dataset):
+    def __init__(self, config, augment=True):
         """A generator that returns images and corresponding target class ids,
             bounding box deltas, and masks.
 
@@ -411,29 +384,24 @@ class DatasetPack(torch.utils.data.Dataset):
             outputs list: Usually empty in regular training. But if detection_targets
                 is True then the outputs list contains target class_ids, bbox deltas, and masks.
             """
-        self.b = 0  # batch item index
-        self.image_index = -1
-        self.image_ids = np.copy(dataset.image_ids)
-        self.error_count = 0
-
-        self.dataset = dataset
+        self.dataset = Dataset()
+        self.image_ids = np.copy(self.dataset.image_ids)
         self.config = config
         self.augment = augment
 
         # Anchors
         # [anchor_count, (y1, x1, y2, x2)]
-        self.anchors = utils.generate_pyramid_anchors(config.RPN_ANCHOR_SCALES,
-                                                      config.RPN_ANCHOR_RATIOS,
-                                                      config.BACKBONE_SHAPES,
-                                                      config.BACKBONE_STRIDES,
-                                                      config.RPN_ANCHOR_STRIDE)
+        self.anchors = \
+            generate_pyramid_anchors(
+                config.RPN.ANCHOR_SCALES, config.RPN.ANCHOR_RATIOS,
+                config.MODEL.BACKBONE_SHAPES, config.MODEL.BACKBONE_STRIDES, config.RPN.ANCHOR_STRIDE)
 
     def __getitem__(self, image_index):
         # Get GT bounding boxes and masks for image.
         image_id = self.image_ids[image_index]
         image, image_metas, gt_class_ids, gt_boxes, gt_masks = \
             utils.load_image_gt(self.dataset, self.config, image_id, augment=self.augment,
-                                use_mini_mask=self.config.USE_MINI_MASK)
+                                use_mini_mask=self.config.MRCNN.USE_MINI_MASK)
 
         # Skip images that have no instances. This can happen in cases
         # where we train on a subset of classes and the image doesn't
@@ -442,22 +410,22 @@ class DatasetPack(torch.utils.data.Dataset):
             return None
 
         # RPN Targets
-        rpn_match, rpn_bbox = utils.build_rpn_targets(self.anchors, gt_class_ids, gt_boxes, self.config)
+        rpn_match, rpn_bbox = build_rpn_targets(self.anchors, gt_class_ids, gt_boxes, self.config)
 
         # If more instances than fits in the array, sub-sample from them.
-        if gt_boxes.shape[0] > self.config.MAX_GT_INSTANCES:
+        if gt_boxes.shape[0] > self.config.DATA.MAX_GT_INSTANCES:
             ids = np.random.choice(
-                np.arange(gt_boxes.shape[0]), self.config.MAX_GT_INSTANCES, replace=False)
+                np.arange(gt_boxes.shape[0]), self.config.DATA.MAX_GT_INSTANCES, replace=False)
             gt_class_ids = gt_class_ids[ids]
             gt_boxes = gt_boxes[ids]
             gt_masks = gt_masks[:, :, ids]
 
         # Add to batch
         rpn_match = rpn_match[:, np.newaxis]
-        images = utils.mold_image(image.astype(np.float32), self.config)
+        image = image.astype(np.float32) - self.config.DATA.MEAN_PIXEL
 
         # Convert to Tensors
-        images = torch.from_numpy(images.transpose(2, 0, 1)).float()
+        image = torch.from_numpy(image.transpose(2, 0, 1)).float()
         image_metas = torch.from_numpy(image_metas)
         target_rpn_match = torch.from_numpy(rpn_match)
         target_rpn_bbox = torch.from_numpy(rpn_bbox).float()
@@ -466,7 +434,7 @@ class DatasetPack(torch.utils.data.Dataset):
         # gt_boxes = torch.from_numpy(gt_boxes).float()
         # gt_masks = torch.from_numpy(gt_masks.astype(int).transpose(2, 0, 1)).float()
 
-        return images, image_metas, target_rpn_match, target_rpn_bbox, gt_class_ids, gt_boxes, gt_masks
+        return image, image_metas, target_rpn_match, target_rpn_bbox, gt_class_ids, gt_boxes, gt_masks
 
     def __len__(self):
         return self.image_ids.shape[0]
@@ -492,41 +460,31 @@ def detection_collate(batch):
            torch.stack(rpn_match, 0), torch.stack(rpn_bbox, 0), gt_class_ids, gt_boxes, gt_masks
 
 
-def get_data(config, args):
+def get_data(config):
+
+    DATASET = config.DATASET
 
     # validation data
-    dset_val = CocoDataset()
+    dset_val = COCODataset(config)
     print('VAL:: load minival')
-    val_coco_api = dset_val.load_coco(args.dataset_path, "minival", year=args.year, auto_download=args.download)
-    dset_val.prepare()
+    val_coco_api = dset_val.dataset.load_coco(DATASET.PATH, "minival", year=DATASET.YAER)
+    dset_val.dataset.prepare()
 
     # train data
-    if not args.debug and args.phase == 'train':
-        dset_train = CocoDataset()
+    if not config.CTRL.DEBUG and config.CTRL.PHASE == 'train':
+        dset_train = COCODataset(config)
         print('TRAIN:: load train')
-        dset_train.load_coco(args.dataset_path, "train", year=args.year, auto_download=args.download)
+        dset_train.dataset.load_coco(DATASET.PATH, "train", year=DATASET.YAER)
         print('TRAIN:: load val_minus_minival')
-        dset_train.load_coco(args.dataset_path, "valminusminival", year=args.year, auto_download=args.download)
-        dset_train.prepare()
-
-    # data generators
-    val_set = DatasetPack(dset_val, config, augment=True)
-
-    if args.phase == 'train':
-        if not args.debug:
-            train_set = DatasetPack(dset_train, config, augment=True)
-        else:
-            train_set = val_set
-
-    if config.old_scheme:
-        # old stuff
-        train_generator = None if args.phase == 'inference' else \
-            torch.utils.data.DataLoader(train_set, batch_size=1, shuffle=True, num_workers=4)
+        dset_train.dataset.load_coco(DATASET.PATH, "valminusminival", year=DATASET.YAER)
+        dset_train.dataset.prepare()
     else:
-        train_generator = None if args.phase == 'inference' else \
-            torch.utils.data.DataLoader(train_set, batch_size=config.BATCH_SIZE,
-                                        shuffle=True, num_workers=16,
-                                        collate_fn=detection_collate, drop_last=True)
+        dset_train = dset_val
 
-    return train_generator, val_set, val_coco_api
+    train_generator = None if config.CTRL.PHASE == 'inference' else \
+        torch.utils.data.DataLoader(dset_train, batch_size=config.CTRL.BATCH_SIZE,
+                                    shuffle=True, num_workers=16,
+                                    collate_fn=detection_collate, drop_last=True, pin_memory=True)
+
+    return train_generator, dset_val, val_coco_api
 

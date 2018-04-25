@@ -6,7 +6,7 @@ import skimage.io
 import torch
 
 import main
-from lib import model as modellib
+from lib import workflow as modellib
 from tools import visualize
 
 # Root directory of the project

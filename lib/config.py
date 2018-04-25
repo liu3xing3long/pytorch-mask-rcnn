@@ -144,6 +144,7 @@ class Config(object):
     # Weight decay regularization
     TRAIN.WEIGHT_DECAY = 0.0001
     TRAIN.LR_POLICY = 'steps_with_decay'
+    TRAIN.LR_WARM_UP = True
 
     # (deprecated)
     # Use RPN ROIs or externally generated ROIs for training

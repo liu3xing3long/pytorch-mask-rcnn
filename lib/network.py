@@ -1,6 +1,6 @@
 import re
+from lib.workflow import *
 from lib.model import *
-from lib.layers import *
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
@@ -39,16 +39,14 @@ class MaskRCNN(nn.Module):
         C1, C2, C3, C4, C5 = resnet.stages()
 
         # Top-down Layers
-        # TODO: add assert to verify feature map sizes match what is in config
+        # TODO (low): add assert to verify feature map sizes match what is in config
         self.fpn = FPN(C1, C2, C3, C4, C5, out_channels=256)
 
         # Generate Anchors
         self.anchors = torch.from_numpy(
-            utils.generate_pyramid_anchors(config.RPN.ANCHOR_SCALES,
-                                           config.RPN.ANCHOR_RATIOS,
-                                           config.MODEL.BACKBONE_SHAPES,
-                                           config.MODEL.BACKBONE_STRIDES,
-                                           config.RPN.ANCHOR_STRIDE)).float()
+            generate_pyramid_anchors(config.RPN.ANCHOR_SCALES, config.RPN.ANCHOR_RATIOS,
+                                     config.MODEL.BACKBONE_SHAPES, config.MODEL.BACKBONE_STRIDES,
+                                     config.RPN.ANCHOR_STRIDE)).float()
 
         # RPN
         self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, 256)
@@ -93,33 +91,33 @@ class MaskRCNN(nn.Module):
     #     self.checkpoint_path = os.path.join(self.log_dir, 'mask_rcnn_*epoch*.pth')
     #     self.checkpoint_path = self.checkpoint_path.replace('*epoch*', '{:04d}')
 
-    def load_weights(self, filepath):
-        """called in model.py"""
-        if filepath is not None:
-            if os.path.exists(filepath):
-                checkpoints = torch.load(filepath)
-                try:
-                    self.load_state_dict(checkpoints['state_dict'])
-                except KeyError:
-                    self.load_state_dict(checkpoints)
-
-                if self.config.PHASE == 'train':
-                    try:
-                        self.start_epoch = checkpoints['epoch']
-                        self.start_iter = checkpoints['iter']
-                    except KeyError:
-                        print_log('[TRAIN] the loaded model does not have start epoch and iter;\n'
-                                  'if that is pretrain model, it is ok; if resuming, check your model\n'
-                                  'start epoch and iter set to zeros')
-                        self.start_epoch, self.start_iter = 0, 0
-
-                    self.epoch = self.start_epoch
-                    self.iter = self.start_iter
-            else:
-                raise Exception("Weight file not found ...")
+    # def load_weights(self, filepath):
+    #     """called in workflow.py"""
+    #     if filepath is not None:
+    #         if os.path.exists(filepath):
+    #             checkpoints = torch.load(filepath)
+    #             try:
+    #                 self.load_state_dict(checkpoints['state_dict'])
+    #             except KeyError:
+    #                 self.load_state_dict(checkpoints)
+    #
+    #             if self.config.PHASE == 'train':
+    #                 try:
+    #                     self.start_epoch = checkpoints['epoch']
+    #                     self.start_iter = checkpoints['iter']
+    #                 except KeyError:
+    #                     print_log('[TRAIN] the loaded model does not have start epoch and iter;\n'
+    #                               'if that is pretrain model, it is ok; if resuming, check your model\n'
+    #                               'start epoch and iter set to zeros')
+    #                     self.start_epoch, self.start_iter = 0, 0
+    #
+    #                 self.epoch = self.start_epoch
+    #                 self.iter = self.start_iter
+    #         else:
+    #             raise Exception("Weight file not found ...")
 
     def set_trainable(self, layer_regex):
-        """called in 'model.py'
+        """called in 'workflow.py'
         Sets model layers as trainable if their names match the given regular expression.
         """
         for param in self.named_parameters():
@@ -127,6 +125,31 @@ class MaskRCNN(nn.Module):
             trainable = bool(re.fullmatch(layer_regex, layer_name))
             if not trainable:
                 param[1].requires_grad = False
+
+    @staticmethod
+    def adjust_input_gt(*args):
+        """zero-padding different number of GTs for each image within the batch"""
+        gt_cls_ids = args[0]
+        gt_boxes = args[1]
+        gt_masks = args[2]
+        gt_num = [x.shape[0] for x in gt_cls_ids]
+        max_gt_num = max(gt_num)
+        bs = len(gt_cls_ids)
+        mask_shape = gt_masks[0].shape[1]
+
+        GT_CLS_IDS = torch.zeros(bs, max_gt_num)
+        GT_BOXES = torch.zeros(bs, max_gt_num, 4)
+        GT_MASKS = torch.zeros(bs, max_gt_num, mask_shape, mask_shape)
+        for i in range(bs):
+            GT_CLS_IDS[i, :gt_num[i]] = torch.from_numpy(gt_cls_ids[i])
+            GT_BOXES[i, :gt_num[i], :] = torch.from_numpy(gt_boxes[i]).float()
+            GT_MASKS[i, :gt_num[i], :, :] = torch.from_numpy(gt_masks[i]).float()
+
+        GT_CLS_IDS = Variable(GT_CLS_IDS.cuda(), requires_grad=False)
+        GT_BOXES = Variable(GT_BOXES.cuda(), requires_grad=False)
+        GT_MASKS = Variable(GT_MASKS.cuda(), requires_grad=False)
+
+        return GT_CLS_IDS, GT_BOXES, GT_MASKS, gt_num
 
     def forward(self, input, mode):
         """forward function of the Mask-RCNN network"""
@@ -174,11 +197,11 @@ class MaskRCNN(nn.Module):
         # Proposals are [batch, N, (y1, x1, y2, x2)] in normalized coordinates and zero padded.
         _proposals = proposal_layer([_rpn_class_score, rpn_pred_bbox],
                                     proposal_count=proposal_count,
-                                    nms_threshold=self.config.RPN_NMS_THRESHOLD,
+                                    nms_threshold=self.config.RPN.NMS_THRESHOLD,
                                     anchors=self.anchors,
                                     config=self.config)
         # Normalize coordinates
-        h, w = self.config.IMAGE_SHAPE[:2]
+        h, w = self.config.DATA.IMAGE_SHAPE[:2]
         scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False).cuda()
 
         if mode == 'inference':
@@ -226,8 +249,8 @@ class MaskRCNN(nn.Module):
             else:
                 # if **ALL** samples within the batch has empty "_rois", skip the heads and output zero predictions.
                 # this is really rare case. otherwise, pass the heads even some samples don't have _rois.
-                num_rois, mask_sz, num_cls = self.config.TRAIN_ROIS_PER_IMAGE, \
-                                             self.config.MASK_SHAPE[0], self.config.NUM_CLASSES
+                num_rois, mask_sz, num_cls = self.config.ROIS.TRAIN_ROIS_PER_IMAGE, \
+                                             self.config.MRCNN.MASK_SHAPE[0], self.config.DATASET.NUM_CLASSES
                 mrcnn_class_logits = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls).cuda())
                 mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
                 mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
@@ -240,26 +263,3 @@ class MaskRCNN(nn.Module):
             return [rpn_class_logits, rpn_pred_bbox, target_class_ids, mrcnn_class_logits,
                     target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
 
-    def adjust_input_gt(self, *args):
-        """zero-padding different number of GTs for each image within the batch"""
-        gt_cls_ids = args[0]
-        gt_boxes = args[1]
-        gt_masks = args[2]
-        gt_num = [x.shape[0] for x in gt_cls_ids]
-        max_gt_num = max(gt_num)
-        bs = len(gt_cls_ids)
-        mask_shape = gt_masks[0].shape[1]
-
-        GT_CLS_IDS = torch.zeros(bs, max_gt_num)
-        GT_BOXES = torch.zeros(bs, max_gt_num, 4)
-        GT_MASKS = torch.zeros(bs, max_gt_num, mask_shape, mask_shape)
-        for i in range(bs):
-            GT_CLS_IDS[i, :gt_num[i]] = torch.from_numpy(gt_cls_ids[i])
-            GT_BOXES[i, :gt_num[i], :] = torch.from_numpy(gt_boxes[i]).float()
-            GT_MASKS[i, :gt_num[i], :, :] = torch.from_numpy(gt_masks[i]).float()
-
-        GT_CLS_IDS = Variable(GT_CLS_IDS.cuda(), requires_grad=False)
-        GT_BOXES = Variable(GT_BOXES.cuda(), requires_grad=False)
-        GT_MASKS = Variable(GT_MASKS.cuda(), requires_grad=False)
-
-        return GT_CLS_IDS, GT_BOXES, GT_MASKS, gt_num
