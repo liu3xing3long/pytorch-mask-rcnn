@@ -297,13 +297,8 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     cocoEval.accumulate()
     cocoEval.summarize()
     print_log('Total time: {:.4f}'.format(time.time() - t_start), model.config.LOG_FILE)
-    print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
-<<<<<<< HEAD
-              format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE),
-=======
-              format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE)),
->>>>>>> 30c42196d82c773619fe6952d451750aa932a010
-              model.config.LOG_FILE)
+    print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.format(
+              model.config.NAME, os.path.basename(model.config.START_MODEL_FILE), model.config.LOG_FILE)
 
 
 def compute_loss(target_rpn_match, target_rpn_bbox, inputs):
