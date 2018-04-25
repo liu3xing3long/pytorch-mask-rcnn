@@ -144,6 +144,7 @@ class Config(object):
     # Weight decay regularization
     TRAIN.WEIGHT_DECAY = 0.0001
     TRAIN.LR_POLICY = 'steps_with_decay'
+    TRAIN.LR_WARM_UP = True
 
     # (deprecated)
     # Use RPN ROIs or externally generated ROIs for training
@@ -213,6 +214,28 @@ class CocoConfig(Config):
     def __init__(self, args):
         super(CocoConfig, self).__init__()
 
+<<<<<<< HEAD
+        self.PHASE = args.phase
+        self.DEBUG = args.debug
+        self.DEVICE_ID = [int(x) for x in args.device_id.split(',')]
+        self.GPU_COUNT = len(self.DEVICE_ID)
+        self.NAME = config_name
+
+        if self.PHASE == 'inference':
+            self.DETECTION_MIN_CONFIDENCE = 0
+
+        if self.NAME == 'hyli_default' or \
+                        self.NAME == 'hyli_default_old':
+            self.IMAGES_PER_GPU = 16
+            # self.GPU_COUNT = 1
+            self.MODEL_FILE_CHOICE='/DATA/hyli/project/pytorch-mask-rcnn/results/hyli_default_old_20180327T0234/train/mask_rcnn_hyli_default_0030.pth'
+
+        elif self.NAME == 'all_new':
+            self.BATCH_SIZE = 6
+            self.MODEL_FILE_CHOICE = 'coco_pretrain'
+            self.IMAGE_MIN_DIM = 256
+            self.IMAGE_MAX_DIM = 320
+=======
         self.CTRL.CONFIG_NAME = args.config_name
         self.CTRL.PHASE = args.phase
         self.CTRL.DEBUG = args.debug
@@ -224,6 +247,7 @@ class CocoConfig(Config):
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
             self.DATA.IMAGE_MIN_DIM = 256
             self.DATA.IMAGE_MAX_DIM = 320
+>>>>>>> 9b90a30ce80fefff1a893f0a99d6b341bca0d809
             # self.USE_MINI_MASK = False
             # self.MINI_MASK_SHAPE = (28, 28)
             # self.DETECTION_NMS_THRESHOLD = 0.3

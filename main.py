@@ -1,7 +1,7 @@
 import argparse
 import lib.network as network
 from lib.config import CocoConfig
-from lib.model import *
+from lib.workflow import *
 from tools.utils import update_config_and_load_model
 
 if __name__ == '__main__':
@@ -40,16 +40,16 @@ if __name__ == '__main__':
     # update start epoch and iter if resume
     config, model = update_config_and_load_model(config, model)
 
-    # show the final configuration
-    config.display(config.LOG_FILE)
-    model.config = config
-
-    model = model.cuda()
-    if config.GPU_COUNT > 1:
+    if config.MISC.GPU_COUNT < 1:
+        print('CPU mode ...')
+    elif config.MISC.GPU_COUNT == 1:
+        print('single gpu mode ...')
+        model = model.cuda()
+    else:
         model = torch.nn.DataParallel(model).cuda()
 
     # Get data
-    train_data, val_data, val_api = get_data(config, args)
+    train_data, val_data, val_api = get_data(config)
 
     # Train or inference
     if args.phase == 'train':
