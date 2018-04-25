@@ -43,9 +43,9 @@ class Config(object):
     # are based on a Resnet101 backbone.
     MODEL.BACKBONE_STRIDES = [4, 8, 16, 32, 64]
     # Path to pretrained imagenet model # TODO: loading is buggy
-    MODEL.PRETRAIN_IMAGENET_MODEL_PATH = os.path.join('datasets/pretrain_model', "resnet50_imagenet.pth")
+    MODEL.PRETRAIN_IMAGENET_MODEL = os.path.join('datasets/pretrain_model', "resnet50_imagenet.pth")
     # Path to pretrained weights file
-    MODEL.PRETRAIN_COCO_MODEL_PATH = os.path.join('datasets/pretrain_model', 'mask_rcnn_coco.pth')
+    MODEL.PRETRAIN_COCO_MODEL = os.path.join('datasets/pretrain_model', 'mask_rcnn_coco.pth')
     MODEL.INIT_FILE_CHOICE = 'last'  # or file (xxx.pth)
 
     # ==================================
@@ -132,6 +132,7 @@ class Config(object):
     TEST.DET_MIN_CONFIDENCE = 0
     # Non-maximum suppression threshold for detection
     TEST.DET_NMS_THRESHOLD = 0.3
+    TEST.SAVE_IM = False
 
     # ==================================
     TRAIN = AttrDict()
@@ -139,13 +140,22 @@ class Config(object):
     # The Mask RCNN paper uses lr=0.02, but on TensorFlow it causes
     # weights to explode. Likely due to differences in optimzer
     # implementation.
-    TRAIN.LEARNING_RATE = 0.001
+    TRAIN.LEARNING_RATE = 0.01
     TRAIN.LEARNING_MOMENTUM = 0.9
     # Weight decay regularization
     TRAIN.WEIGHT_DECAY = 0.0001
+    TRAIN.GAMMA = 0.1
     TRAIN.LR_POLICY = 'steps_with_decay'
+    # in epoch
+    TRAIN.SCHEDULE = [10, 5, 5]
     TRAIN.LR_WARM_UP = True
 
+    TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
+
+    TRAIN.CLIP_GRAD = True
+    TRAIN.MAX_GRAD_NORM = 5.0
+
+    TRAIN.DO_VALIDATION = True
     # (deprecated)
     # Use RPN ROIs or externally generated ROIs for training
     # Keep this True for most situations. Set to False if you want to train
@@ -156,11 +166,10 @@ class Config(object):
     # ==============================
     CTRL = AttrDict()
     CTRL.SHOW_INTERVAL = 200
-    CTRL.SAVE_TIME_WITHIN_EPOCH = 10
     CTRL.USE_VISDOM = False
 
     # for train and inference
-    CTRL.BATCH_SIZE = 4
+    CTRL.BATCH_SIZE = 6
 
     # ==============================
     MISC = AttrDict()
@@ -168,6 +177,19 @@ class Config(object):
     def _set_value(self):
         """Set values of computed attributes."""
 
+        if self.CTRL.DEBUG:
+            self.CTRL.SHOW_INTERVAL = 1
+            self.DATA.IMAGE_MIN_DIM = 320
+            self.DATA.IMAGE_MAX_DIM = 512
+
+        # set folder
+        self.MISC.RESULT_FOLDER = os.path.join(
+            'results', self.CTRL.CONFIG_NAME.lower(), self.CTRL.PHASE)
+
+        if not os.path.exists(self.MISC.RESULT_FOLDER):
+            os.makedirs(self.MISC.RESULT_FOLDER)
+
+        # MUST be left at the end
         # Input image size
         self.DATA.IMAGE_SHAPE = np.array(
             [self.DATA.IMAGE_MAX_DIM, self.DATA.IMAGE_MAX_DIM, 3])
@@ -177,16 +199,6 @@ class Config(object):
             [[int(math.ceil(self.DATA.IMAGE_SHAPE[0] / stride)),
               int(math.ceil(self.DATA.IMAGE_SHAPE[1] / stride))]
              for stride in self.MODEL.BACKBONE_STRIDES])
-
-        if self.CTRL.DEBUG:
-            self.CTRL.SHOW_INTERVAL = 1
-
-        # set folder
-        self.MISC.RESULT_FOLDER = os.path.join(
-            'results', self.CTRL.CONFIG_NAME.lower(), self.CTRL.PHASE)
-
-        if not os.path.exists(self.MISC.RESULT_FOLDER):
-            os.makedirs(self.MISC.RESULT_FOLDER)
 
     def display(self, log_file):
         """Display Configuration values."""
@@ -214,28 +226,6 @@ class CocoConfig(Config):
     def __init__(self, args):
         super(CocoConfig, self).__init__()
 
-<<<<<<< HEAD
-        self.PHASE = args.phase
-        self.DEBUG = args.debug
-        self.DEVICE_ID = [int(x) for x in args.device_id.split(',')]
-        self.GPU_COUNT = len(self.DEVICE_ID)
-        self.NAME = config_name
-
-        if self.PHASE == 'inference':
-            self.DETECTION_MIN_CONFIDENCE = 0
-
-        if self.NAME == 'hyli_default' or \
-                        self.NAME == 'hyli_default_old':
-            self.IMAGES_PER_GPU = 16
-            # self.GPU_COUNT = 1
-            self.MODEL_FILE_CHOICE='/DATA/hyli/project/pytorch-mask-rcnn/results/hyli_default_old_20180327T0234/train/mask_rcnn_hyli_default_0030.pth'
-
-        elif self.NAME == 'all_new':
-            self.BATCH_SIZE = 6
-            self.MODEL_FILE_CHOICE = 'coco_pretrain'
-            self.IMAGE_MIN_DIM = 256
-            self.IMAGE_MAX_DIM = 320
-=======
         self.CTRL.CONFIG_NAME = args.config_name
         self.CTRL.PHASE = args.phase
         self.CTRL.DEBUG = args.debug
@@ -243,20 +233,16 @@ class CocoConfig(Config):
         self.MISC.DEVICE_ID = [int(x) for x in args.device_id.split(',')]
         self.MISC.GPU_COUNT = len(self.MISC.DEVICE_ID)
 
+        # ================ (CUSTOMIZED CONFIG) ======================
         if self.CTRL.CONFIG_NAME == 'all_new':
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
             self.DATA.IMAGE_MIN_DIM = 256
             self.DATA.IMAGE_MAX_DIM = 320
->>>>>>> 9b90a30ce80fefff1a893f0a99d6b341bca0d809
-            # self.USE_MINI_MASK = False
-            # self.MINI_MASK_SHAPE = (28, 28)
-            # self.DETECTION_NMS_THRESHOLD = 0.3
 
-        elif self.CTRL.CONFIG_NAME == 'all_new_2':
-            self.CTRL.BATCH_SIZE = 8
+        elif self.CTRL.CONFIG_NAME == 'base_101':
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
+            self.CTRL.BATCH_SIZE = 8
         else:
             print('WARNING: unknown config name!!! use default setting.')
-            self.CTRL.CONFIG_NAME = 'default'
 
         self._set_value()

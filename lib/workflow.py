@@ -5,11 +5,11 @@ import time
 from lib.layers import *
 from datasets.pycocotools import mask as maskUtils
 from datasets.pycocotools.cocoeval import COCOeval
-import numpy as np
-from tools.utils import print_log
+from tools.utils import print_log, compute_left_time
 import torch.nn as nn
 import math
 import matplotlib.pyplot as plt
+from tools.image_utils import *
 
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
@@ -42,7 +42,7 @@ CLASS_NAMES = ['BG', 'person', 'bicycle', 'car', 'motorcycle', 'airplane',
                'teddy bear', 'hair drier', 'toothbrush']
 
 
-def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_call, layers):
+def train_model(input_model, train_generator, valset, lr, total_ep_curr_call, layers, coco_api=None):
     """
     Args:
         input_model:        nn.DataParallel
@@ -63,6 +63,7 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
                 3+: Train Resnet stage 3 and up
                 4+: Train Resnet stage 4 and up
                 5+: Train Resnet stage 5 and up
+        coco_api
     """
     stage_name = layers.upper()
     if isinstance(input_model, nn.DataParallel):
@@ -72,64 +73,83 @@ def train_model(input_model, train_generator, val_generator, lr, total_ep_curr_c
         model = input_model
 
     num_train_im = train_generator.dataset.dataset.num_images
-    if (num_train_im % model.config.BATCH_SIZE) % model.config.GPU_COUNT != 0:
-        print_log('WARNING: last mini-batch in an epoch is not divisible by gpu number.\n'
+    iter_per_epoch = math.floor(num_train_im/model.config.CTRL.BATCH_SIZE)
+
+    if (num_train_im % model.config.CTRL.BATCH_SIZE) % model.config.MISC.GPU_COUNT != 0:
+        print_log('WARNING [TRAIN]: last mini-batch in an epoch is not divisible by gpu number.\n'
                   'total train im: {:d}, batch size: {:d}, gpu num {:d}\n'
                   'last mini-batch size: {:d}\n'.format(
-            num_train_im, model.config.BATCH_SIZE, model.config.GPU_COUNT,
-            (num_train_im % model.config.BATCH_SIZE)),
-            model.config.LOG_FILE)
+                    num_train_im, model.config.CTRL.BATCH_SIZE, model.config.MISC.GPU_COUNT,
+                    (num_train_im % model.config.CTRL.BATCH_SIZE)), model.config.MISC.LOG_FILE)
 
     if model.epoch > total_ep_curr_call:
-        print_log('skip {:s} stage ...'.format(stage_name), model.config.LOG_FILE)
+        print_log('skip {:s} stage ...'.format(stage_name.upper()), model.config.MISC.LOG_FILE)
         return None
 
     if layers in LAYER_REGEX.keys():
         layers = LAYER_REGEX[layers]
+
     model.set_trainable(layers)
 
     # Optimizer object, add L2 Regularization
     # Skip gamma and beta weights of batch normalization layers.
-    trainables_wo_bn = [param for name, param in model.named_parameters() if param.requires_grad and 'bn' not in name]
-    trainables_only_bn = [param for name, param in model.named_parameters() if param.requires_grad and 'bn' in name]
+    trainables_wo_bn = [param for name, param in input_model.named_parameters()
+                        if param.requires_grad and 'bn' not in name]
+    trainables_only_bn = [param for name, param in input_model.named_parameters()
+                          if param.requires_grad and 'bn' in name]
     optimizer = optim.SGD([
-        {'params': trainables_wo_bn, 'weight_decay': model.config.WEIGHT_DECAY},
-        {'params': trainables_only_bn}
-    ], lr=lr, momentum=model.config.LEARNING_MOMENTUM)
+        {'params': trainables_wo_bn, 'weight_decay': model.config.TRAIN.WEIGHT_DECAY},
+        {'params': trainables_only_bn}], lr=lr, momentum=model.config.TRAIN.LEARNING_MOMENTUM)
 
     print_log('\n[Current stage: {:s}] start training at epoch {:d}, iter {:d}. \n'
-              'Total epoch this stage: {:d}, LR={:.4f}'.format(
-                stage_name, model.epoch+1, model.iter+1, total_ep_curr_call, lr),
-                model.config.LOG_FILE)
+              'Total epoch in this stage: {:d}, LR={:.4f}'.format(
+                stage_name, model.epoch, model.iter, total_ep_curr_call, lr), model.config.MISC.LOG_FILE)
 
-    for epoch in range(model.epoch+1, total_ep_curr_call+1):
+    for ep in range(model.epoch, total_ep_curr_call+1):
 
-        epoch_str = "[Epoch {}/{}]".format(epoch, total_ep_curr_call)
-        print_log(epoch_str, model.config.LOG_FILE)
+        epoch_str = "[Ep {:03d}/{}]".format(ep, total_ep_curr_call)
+        print_log(epoch_str, model.config.MISC.LOG_FILE)
         # Training
-        if model.config.old_scheme:
-            loss = train_epoch(input_model, train_generator, optimizer,
-                               model.config.STEPS_PER_EPOCH, stage_name, epoch_str)
-        else:
-            loss = train_epoch_new(input_model, train_generator, optimizer,
-                                   stage_name=stage_name, epoch_str=epoch_str,
-                                   epoch=epoch, start_iter=model.iter+1)
-        # Validation
+        loss = train_epoch_new(input_model, train_generator, optimizer,
+                               stage_name=stage_name, epoch_str=epoch_str,
+                               epoch=ep, start_iter=model.iter, total_iter=iter_per_epoch,
+                               valset=valset, coco_api=coco_api)
+        # Validation (deprecated)
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
         # Statistics
         model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
-        visualize.plot_loss(model.loss_history, model.val_loss_history, save=True, log_dir=model.log_dir)
-        model_file = model.checkpoint_path.format(epoch)
-        print_log('saving model: {:s}\n'.format(model_file), model.config.LOG_FILE)
-        torch.save({'state_dict': model.state_dict()}, model_file)
-        model.iter = 0
-        model.epoch = epoch
+        visualize.plot_loss(model.loss_history, model.val_loss_history,
+                            save=True, log_dir=model.config.MISC.RESULT_FOLDER)
+        # save model
+        model_file = os.path.join(model.config.MISC.RESULT_FOLDER,
+                                  'mask_rcnn_ep_{:04d}_iter_{:04d}.pth'.format(ep, iter_per_epoch))
+        print_log('saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
+        torch.save({
+            'state_dict':   model.state_dict(),
+            'epoch':        ep,
+            'iter':         iter_per_epoch,
+        }, model_file)
+
+        # one epoch ends; update iterator
+        model.iter = 1
+        model.epoch = ep
+
+    # Current stage ends; do validation if possible
+    if model.config.TRAIN.DO_VALIDATION:
+        print_log('\nDo validation at end of current stage [{:s}] (model ep {:d} iter {:d}) ...'.
+                  format(stage_name.upper(), total_ep_curr_call, iter_per_epoch), model.config.MISC.LOG_FILE)
+        test_model(input_model, valset, coco_api, during_train=True, epoch=ep, iter=iter_per_epoch)
 
 
 def train_epoch_new(input_model, data_loader, optimizer, **args):
-    """new training flow scheme"""
+    """new training flow scheme
+    Args:
+        input_model
+        data_loader
+        optimizer
+    """
     if isinstance(input_model, nn.DataParallel):
         model = input_model.module
     else:
@@ -139,11 +159,13 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     loss_sum = 0
     config = model.config
     data_iterator = iter(data_loader)
-    iter_per_epoch = math.ceil(len(data_loader)/config.BATCH_SIZE)
-    save_iter_base = math.floor(iter_per_epoch / config.SAVE_TIME_WITHIN_EPOCH)
+    start_iter, total_iter = args['start_iter'], args['total_iter']
+    actual_total_iter = total_iter - start_iter + 1
+    save_iter_base = math.floor(total_iter / config.TRAIN.SAVE_FREQ_WITHIN_EPOCH)
 
-    for iter_ind in range(args['start_iter'], iter_per_epoch+1):
+    for iter_ind in range(start_iter, total_iter+1):
 
+        curr_iter_time_start = time.time()
         inputs = next(data_iterator)
 
         images = Variable(inputs[0].cuda())
@@ -155,43 +177,62 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # Run object detection
         # [rpn_class_logits, rpn_pred_bbox,
         # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
-        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks], mode=model.config.PHASE)
+        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks], mode='train')
 
         # Compute losses
         loss, detailed_losses = compute_loss(target_rpn_match, target_rpn_bbox, outputs)
 
         optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm(input_model.parameters(), 5.0)
+        if config.TRAIN.CLIP_GRAD:
+            torch.nn.utils.clip_grad_norm(input_model.parameters(), config.TRAIN.MAX_GRAD_NORM)
         optimizer.step()
 
         # Progress
-        if iter_ind % model.config.SHOW_INTERVAL == 0 or iter_ind == args['start_iter']:
-            print_log('[{:s}][stage {:s}]{:s}\t{}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
+        if iter_ind % config.CTRL.SHOW_INTERVAL == 0 or iter_ind == args['start_iter']:
+
+            iter_time = time.time() - curr_iter_time_start
+            days, hrs = compute_left_time(iter_time, args['epoch'],
+                                          sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
+
+            print_log('[{:s}][stage {:s}]{:s}[est. left: {:d} days, {:02.2f} hrs]'
+                      '\t{:05d}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
                       '- mrcnn_cls: {:.5f} - mrcnn_bbox: {:.5f} - mrcnn_mask_loss: {:.5f}'.
-                      format(model.config.NAME, args['stage_name'], args['epoch_str'], iter_ind+1, iter_per_epoch,
+                      format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'],
+                             days, hrs,
+                             iter_ind, total_iter,
                              loss.data.cpu()[0],
                              detailed_losses[0].data.cpu()[0],
                              detailed_losses[1].data.cpu()[0],
                              detailed_losses[2].data.cpu()[0],
                              detailed_losses[3].data.cpu()[0],
-                             detailed_losses[4].data.cpu()[0]), config.LOG_FILE)
+                             detailed_losses[4].data.cpu()[0]), config.MISC.LOG_FILE)
         # Statistics
-        loss_sum += loss.data.cpu()[0]/iter_per_epoch
+        loss_sum += loss.data.cpu()[0]/actual_total_iter
+
+        # save model
         if iter_ind % save_iter_base == 0:
-            model_file = os.path.join(model.log_dir,
-                                      'mask_rcnn_{:04d}_iter_{:d}.pth'.format(args['epoch'], iter_ind))
-            print_log('saving model file to: {:s}'.format(model_file), config.LOG_FILE)
+            model_file = os.path.join(config.MISC.RESULT_FOLDER,
+                                      'mask_rcnn_ep_{:04d}_iter_{:04d}.pth'.format(args['epoch'], iter_ind))
+            print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
             torch.save({
                 'state_dict':   model.state_dict(),
-                'epoch':        model.epoch,
-                'iter':         iter_ind,
+                'epoch':        args['epoch'],  # or model.epoch
+                'iter':         iter_ind,       # or model.iter
             }, model_file)
+
+        # for debug; test the model
+        if config.CTRL.DEBUG and iter_ind == (start_iter+5):
+            print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
+                      format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
+            test_model(input_model, args['valset'], args['coco_api'],
+                       during_train=True, epoch=args['epoch'], iter=iter_ind)
 
     return loss_sum
 
 
-def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
+def test_model(input_model, valset, coco_api,
+               limit=-1, image_ids=None, **args):
     """
         Test the trained model
         Args:
@@ -207,7 +248,28 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
         # single-gpu
         model = input_model
 
-    model_file_name = os.path.basename(model.config.START_MODEL_FILE)
+    # set up save and log folder for both train and inference
+    if args['during_train']:
+        model_file_name = 'mask_rcnn_ep_{:04d}_iter_{:04d}.pth'.format(args['epoch'], args['iter'])
+        mode = 'inference'
+        _val_folder = model.config.MISC.RESULT_FOLDER.replace('train', 'inference')
+        _model_name = model_file_name.replace('.pth', '')
+        _model_suffix = _model_name.replace('mask_rcnn_', '')  # say, ep_0053_iter_1234
+        log_file = os.path.join(_val_folder, 'inference_from_{:s}.txt'.format(_model_name))
+        det_res_file = os.path.join(_val_folder, 'det_result_{:s}.pth'.format(_model_suffix))
+        train_log_file = model.config.MISC.LOG_FILE
+        save_im_folder = os.path.join(_val_folder, _model_suffix)
+        if not os.path.exists(save_im_folder):
+            os.makedirs(save_im_folder)
+    else:
+        # validation-only case
+        model_file_name = os.path.basename(model.config.MODEL.INIT_MODEL)
+        mode = model.config.CTRL.PHASE
+        log_file = model.config.MISC.LOG_FILE
+        det_res_file = model.config.MISC.DET_RESULT_FILE
+        train_log_file = None
+        save_im_folder = model.config.MISC.SAVE_IMAGE_DIR if model.config.TEST.SAVE_IM else None
+
     dataset = valset.dataset
 
     # Pick COCO images from the dataset
@@ -218,22 +280,22 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
 
     num_test_im = len(image_ids)
     print("Running COCO evaluation on {} images.".format(num_test_im))
-    assert (num_test_im % model.config.BATCH_SIZE) % model.config.GPU_COUNT == 0, 'last mini-batch in an epoch' \
-                                                                                  'is not divisible by gpu number.'
+    assert (num_test_im % model.config.CTRL.BATCH_SIZE) % model.config.MISC.GPU_COUNT == 0, \
+        '[INFERENCE] last mini-batch in an epoch is not divisible by gpu number.'
     # Get corresponding COCO image IDs.
     coco_image_ids = [dataset.image_info[ind]["id"] for ind in image_ids]
 
     t_prediction = 0
     t_start = time.time()
 
-    results = []
-    total_iter = math.ceil(num_test_im / model.config.BATCH_SIZE)
-    cnt = 0
+    results, cnt = [], 0
+    total_iter = math.ceil(num_test_im / model.config.CTRL.BATCH_SIZE)
 
-    # for i, image_id in enumerate(image_ids):
     for iter_ind in range(total_iter):
-        curr_image_ids = image_ids[iter_ind*model.config.BATCH_SIZE :
-                            min(iter_ind*model.config.BATCH_SIZE + model.config.BATCH_SIZE, num_test_im)]
+
+        curr_start_id = iter_ind*model.config.CTRL.BATCH_SIZE
+        curr_end_id = min(curr_start_id + model.config.CTRL.BATCH_SIZE, num_test_im)
+        curr_image_ids = image_ids[curr_start_id:curr_end_id]
 
         # Run detection
         t_pred_start = time.time()
@@ -241,17 +303,17 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
         molded_images, image_metas, windows, images = _mold_inputs(model, curr_image_ids, dataset)
 
         # Run object detection; detections: 8,100,6; mrcnn_mask: 8,100,81,28,28
-        detections, mrcnn_mask = input_model([molded_images, image_metas], mode=model.config.PHASE)
+        detections, mrcnn_mask = input_model([molded_images, image_metas], mode=mode)
 
         # Convert to numpy
         detections = detections.data.cpu().numpy()
         mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
 
         # Process detections
-        results = []
         for i, image in enumerate(images):
 
             curr_coco_id = coco_image_ids[curr_image_ids[i]]
+
             final_rois, final_class_ids, final_scores, final_masks = _unmold_detections(
                 detections[i], mrcnn_mask[i], image.shape, windows[i])
 
@@ -269,24 +331,27 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
                 results.append(curr_result)
 
             # visualize result if necessary
-            # if model.config.DEBUG:
-            #     plt.close()
-            #     visualize.display_instances(image, final_rois, final_masks, final_class_ids,
-            #                                 CLASS_NAMES, final_scores)
-            #     im_file = os.path.join(model.config.SAVE_IMAGE_DIR,
-            #                            'coco_im_id_{:d}.png'.format(curr_coco_id))
-            #     plt.savefig(im_file)
+            if model.config.TEST.SAVE_IM:
+                plt.close()
+                visualize.display_instances(
+                    image, final_rois, final_masks, final_class_ids, CLASS_NAMES, final_scores)
+
+                im_file = os.path.join(save_im_folder, 'coco_im_id_{:d}.png'.format(curr_coco_id))
+                plt.savefig(im_file)
 
         t_prediction += (time.time() - t_pred_start)
         cnt += len(curr_image_ids)
-        if iter_ind % (model.config.SHOW_INTERVAL*10) == 0 or cnt == len(image_ids):
+
+        # show progress
+        if iter_ind % (model.config.CTRL.SHOW_INTERVAL*10) == 0 or cnt == len(image_ids):
             print_log('[{:s}][{:s}] evaluation progress \t{:4d} images /{:4d} total ...'.
-                      format(model.config.NAME, model_file_name, cnt, len(image_ids)), model.config.LOG_FILE)
+                      format(model.config.CTRL.CONFIG_NAME, model_file_name, cnt, len(image_ids)),
+                      log_file, additional_file=train_log_file)
 
     print_log("Prediction time: {:.4f}. Average {:.4f} sec/image".format(
-        t_prediction, t_prediction / len(image_ids)), model.config.LOG_FILE)
-    print_log('Saving results to {:s}'.format(model.config.RESULT_FILE), model.config.LOG_FILE)
-    torch.save({'det_result': results}, model.config.RESULT_FILE)
+        t_prediction, t_prediction / len(image_ids)), log_file, additional_file=train_log_file)
+    print_log('Saving results to {:s}'.format(det_res_file), log_file, additional_file=train_log_file)
+    torch.save({'det_result': results}, det_res_file)
 
     # Evaluate
     print('\nBegin to evaluate ...')
@@ -298,10 +363,11 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None):
     cocoEval.evaluate()
     cocoEval.accumulate()
     cocoEval.summarize()
-    print_log('Total time: {:.4f}'.format(time.time() - t_start), model.config.LOG_FILE)
-    print_log('config [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
-              format(model.config.NAME, os.path.basename(model.config.START_MODEL_FILE)),
-              model.config.LOG_FILE)
+    print_log('Total time: {:.4f}'.format(time.time() - t_start), log_file, additional_file=train_log_file)
+    print_log('Config_name [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
+              format(model.config.CTRL.CONFIG_NAME, model_file_name, cocoEval.stats[0]),
+              log_file, additional_file=train_log_file)
+    print_log('Done!', log_file, additional_file=train_log_file)
 
 
 # ======================
@@ -341,22 +407,21 @@ def _mold_inputs(model, image_ids, dataset):
     for curr_id in image_ids:
         image = dataset.load_image(curr_id)
         # Resize image to fit the model expected size
-        molded_image, window, scale, padding = utils.resize_image(
-            image,
-            min_dim=model.config.IMAGE_MIN_DIM,
-            max_dim=model.config.IMAGE_MAX_DIM,
-            padding=model.config.IMAGE_PADDING)
+        molded_image, window, scale, padding = resize_image(
+            image, min_dim=model.config.DATA.IMAGE_MIN_DIM,
+            max_dim=model.config.DATA.IMAGE_MAX_DIM, padding=model.config.DATA.IMAGE_PADDING)
         molded_image = molded_image.astype(np.float32) - model.config.DATA.MEAN_PIXEL
 
         # Build image_meta
-        image_meta = utils.compose_image_meta(
+        image_meta = compose_image_meta(
             0, image.shape, window,
-            np.zeros([model.config.NUM_CLASSES], dtype=np.int32))
+            np.zeros([model.config.DATASET.NUM_CLASSES], dtype=np.int32))
         # Append
         molded_images.append(molded_image)
         windows.append(window)
         image_metas.append(image_meta)
         images.append(image)
+
     # Pack into arrays
     molded_images = np.stack(molded_images)
     image_metas = np.stack(image_metas)
@@ -365,6 +430,7 @@ def _mold_inputs(model, image_ids, dataset):
     # Convert images to torch tensor
     molded_images = torch.from_numpy(molded_images.transpose(0, 3, 1, 2)).float()
     molded_images = Variable(molded_images.cuda(), volatile=True)
+    image_metas = Variable(torch.from_numpy(image_metas).cuda(), volatile=True)
 
     return molded_images, image_metas, windows, images
 
@@ -424,7 +490,7 @@ def _unmold_detections(detections, mrcnn_mask, image_shape, window):
     full_masks = []
     for i in range(N):
         # Convert neural network mask to full size mask
-        full_mask = utils.unmold_mask(masks[i], boxes[i], image_shape)
+        full_mask = unmold_mask(masks[i], boxes[i], image_shape)
         full_masks.append(full_mask)
     full_masks = np.stack(full_masks, axis=-1)\
         if full_masks else np.empty((0,) + masks.shape[1:3])

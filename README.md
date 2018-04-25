@@ -75,3 +75,8 @@ with the default configuration and backbone initialized with pretrained
 | segm | TODO | 0.296 | 0.296 | 0.354 |
 
 
+#### Annoying warning
+``~/anaconda3/lib/python3.6/site-packages/scipy/ndimage/interpolation.py:616``
+
+
+
