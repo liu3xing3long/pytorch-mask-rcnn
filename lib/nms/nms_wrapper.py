@@ -13,7 +13,7 @@ import numpy as np
 
 def nms(dets, thresh):
     """Dispatch to either CPU or GPU NMS implementations.
-    Accept dets as Tensor, not Variable; used in both inference and 'proposal_layer'
+    used in both inference (keep_out is 1D) and 'proposal_layer' (keep_out is 2D)
     Args:
         dets:       [bs, N, 4]
         thresh:     nms threshold

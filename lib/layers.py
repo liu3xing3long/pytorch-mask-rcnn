@@ -3,6 +3,7 @@ from lib.roialign.roi_align.crop_and_resize import CropAndResizeFunction
 from lib.nms.nms_wrapper import nms
 import torch.nn.functional as F
 from tools.box_utils import *
+from tools.image_utils import *
 
 
 def build_rpn_targets(anchors, gt_class_ids, gt_boxes, config):
@@ -185,8 +186,8 @@ def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
 
     Args:
         inputs
-            rpn_probs: [batch, anchors, (bg prob, fg prob)]
-            rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
+            [0] rpn_probs: [batch, anchors, (bg prob, fg prob)]
+            [1] rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
         proposal_count
         nms_threshold
         anchors
@@ -202,7 +203,7 @@ def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
 
     # Box deltas [batch, num_rois, 4]
     deltas = inputs[1]
-    std_dev = Variable(torch.from_numpy(np.reshape(config.RPN.BBOX_STD_DEV, [1, 1, 4])).float(),
+    std_dev = Variable(torch.from_numpy(np.reshape(config.DATA.BBOX_STD_DEV, [1, 1, 4])).float(),
                        requires_grad=False).cuda()
     deltas = deltas * std_dev
 
@@ -229,6 +230,7 @@ def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
     # Clip to image boundaries. [batch, N, (y1, x1, y2, x2)]
     height, width = config.DATA.IMAGE_SHAPE[:2]
     window = np.array([0, 0, height, width]).astype(np.float32)
+    window = Variable(torch.from_numpy(window).cuda(), requires_grad=False)
     boxes = clip_boxes(boxes, window)
 
     # Filter out small boxes
@@ -240,7 +242,7 @@ def proposal_layer(inputs, proposal_count, nms_threshold, anchors, config=None):
     keep = keep[:, :proposal_count]
     boxes_keep = Variable(torch.FloatTensor(bs, keep.shape[1], 4).cuda())  # bs, proposal_count(1000), 4
     for i in range(bs):
-        boxes_keep[i] = boxes[i][keep[i], :]   # TODO(high): in earlier version, it is "keep[0]"
+        boxes_keep[i] = boxes[i][keep[i], :]
 
     # Normalize dimensions to range of 0 to 1.
     norm = Variable(torch.from_numpy(np.array([height, width, height, width])).float(), requires_grad=False).cuda()
@@ -303,14 +305,13 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
         # Keep track of which box is mapped to which level
         box_to_level.append(index.data)
 
-        # Stop gradient propagation to ROI proposals
+        # Stop gradient propagation to ROI proposals (_rois is already detached)
         # level_boxes = level_boxes.detach()
-        level_boxes = level_boxes  # TODO: delete detach()
 
         # Crop and Resize
         box_ind = index[:, 0].int()
         curr_feature_maps = feature_maps[i]
-        pooled_features = CropAndResizeFunction(pool_size, pool_size, 0)(curr_feature_maps, level_boxes, box_ind)
+        pooled_features = CropAndResizeFunction(pool_size, pool_size)(curr_feature_maps, level_boxes, box_ind)
         pooled.append(pooled_features)
 
     # Pack pooled features into one tensor
@@ -333,7 +334,7 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
 
 
 ############################################################
-#  Detection Target Layer
+#  Detection Target Layer (Train)
 ############################################################
 def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
     # PER SAMPLE OPERATION
@@ -424,12 +425,10 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
             y2 = (y2 - gt_y1) / gt_h
             x2 = (x2 - gt_x1) / gt_w
             boxes = torch.cat([y1, x1, y2, x2], dim=1)
-        box_ids = Variable(torch.arange(roi_masks.size(0)), requires_grad=False).int()
-        if config.GPU_COUNT:
-            box_ids = box_ids.cuda()
 
+        box_ids = Variable(torch.arange(roi_masks.size(0)), requires_grad=False).cuda().int()
         masks = Variable(
-            CropAndResizeFunction(config.MRCNN.MASK_SHAPE[0], config.MRCNN.MASK_SHAPE[1], 0)
+            CropAndResizeFunction(config.MRCNN.MASK_SHAPE[0], config.MRCNN.MASK_SHAPE[1])
             (roi_masks.unsqueeze(1), boxes, box_ids).data,
             requires_grad=False)
         masks = masks.squeeze(1)
@@ -466,7 +465,7 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
         zeros = Variable(torch.zeros(neg_cnt, 4).cuda(), requires_grad=False)
         DELTAS = torch.cat([DELTAS, zeros], dim=0)
 
-        zeros = Variable(torch.zeros(neg_cnt, config.MASK_SHAPE[0], config.MASK_SHAPE[1]).cuda(),
+        zeros = Variable(torch.zeros(neg_cnt, config.MRCNN.MASK_SHAPE[0], config.MRCNN.MASK_SHAPE[1]).cuda(),
                          requires_grad=False)
         MASKS = torch.cat([MASKS, zeros], dim=0)
 
@@ -484,7 +483,7 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
         zeros = Variable(torch.zeros(neg_cnt, 4).cuda(), requires_grad=False)
         DELTAS = zeros
 
-        zeros = Variable(torch.zeros(neg_cnt, config.MASK_SHAPE[0], config.MASK_SHAPE[1]).cuda(),
+        zeros = Variable(torch.zeros(neg_cnt, config.MRCNN.MASK_SHAPE[0], config.MRCNN.MASK_SHAPE[1]).cuda(),
                          requires_grad=False)
         MASKS = zeros
 
@@ -507,7 +506,7 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
                                 Might be zero padded if there are not enough proposals.
         gt_class_ids:       [batch, MAX_GT_NUM] Integer class IDs.
         gt_boxes:           [batch, MAX_GT_NUM, (y1, x1, y2, x2)] in normalized coordinates.
-        gt_masks:           [batch, MAX_GT_NUM, height, width] of boolean type
+        gt_masks:           [batch, MAX_GT_NUM, height (or smaller), width] of boolean type (might be mini-masked)
         config:             configuration
 
     Notes:
@@ -518,7 +517,7 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
         target_class_ids:   [batch, TRAIN_ROIS_PER_IMAGE]. Integer class IDs.
         target_deltas:      [batch, TRAIN_ROIS_PER_IMAGE, NUM_CLASSES, (dy, dx, log(dh), log(dw), class_id)]
                                 Class-specific bbox refinements.
-        target_mask:        [batch, TRAIN_ROIS_PER_IMAGE, height, width)
+        target_mask:        [batch, TRAIN_ROIS_PER_IMAGE, height (exactly MASK_SHAPE), width)
                                 Masks cropped to bbox boundaries and resized to neural network output size.
         volatiles:          prepare empty output if rois_out is all zeros.
     """
@@ -556,13 +555,13 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
 def conduct_nms(class_ids, refined_rois, class_scores, keep, config):
     """per SAMPLE operation; no batch size dim!
     Args:
-        class_ids
-        refined_rois
-        class_scores
-        keep            [True, False, ...]
+        class_ids       [say 1000]
+        refined_rois    [1000 4]
+        class_scores    [1000]
+        keep            [True, False, ...] altogether 1000
         config
     Returns:
-        detection:      [DETECTION_MAX_INSTANCES, (y1, x1, y2, x2, class_id, class_score)]
+        detection:      [DET_MAX_INSTANCES, (y1, x1, y2, x2, class_id, class_score)]
     """
     pre_nms_class_ids = class_ids[keep]
     pre_nms_scores = class_scores[keep]
@@ -583,10 +582,10 @@ def conduct_nms(class_ids, refined_rois, class_scores, keep, config):
         ix_rois = ix_rois[order, :]
 
         class_keep = nms(torch.cat((ix_rois, ix_scores.unsqueeze(1)), dim=1).unsqueeze(0).data,
-                         config.DETECTION_NMS_THRESHOLD)[0]
+                         config.TEST.DET_NMS_THRESHOLD)[0]
 
         # Map indices
-        class_keep = _indx[ixs[order[class_keep.tolist()]]]  # TODO: why not order[class_keep] directly?
+        class_keep = _indx[ixs[order[class_keep.tolist()]]]  # TODO (low): why not order[class_keep] directly?
 
         if i == 0:
             nms_keep = class_keep
@@ -598,9 +597,9 @@ def conduct_nms(class_ids, refined_rois, class_scores, keep, config):
     # Keep top detections
     roi_count = config.TEST.DET_MAX_INSTANCES
     top_ids = class_scores[nms_indx].sort(descending=True)[1][:roi_count]
-    final_index = _indx[top_ids].squeeze()
+    final_index = nms_indx[top_ids].squeeze()
 
-    # Arrange output as [N, (y1, x1, y2, x2, class_id, score)]
+    # Arrange output as [DET_MAX_INSTANCES, (y1, x1, y2, x2, class_id, score)]
     # Coordinates are in image domain.
     detections = torch.cat((refined_rois[final_index],
                             class_ids[final_index].unsqueeze(1).float(),
@@ -617,7 +616,7 @@ def detection_layer(rois, probs, deltas, image_meta, config):
         rois:                   [bs, 1000 (just an example), 4 (y1, x1, y2, x2)], in normalized coordinates
         probs (mrcnn_class):    [bs*1000, 81]
         deltas (mrcnn_bbox):    [bs*1000, 81, 4], (dy, dx, log(dh), log(dw))
-        image_meta:             [bs, 89] numpy data
+        image_meta:             [bs, 89] Variable
     Returns:
         detections:             [batch, num_detections, (y1, x1, y2, x2, class_id, class_score)]
     """
@@ -627,18 +626,18 @@ def detection_layer(rois, probs, deltas, image_meta, config):
 
     # windows: (y1, x1, y2, x2) in image coordinates.
     # The part of the image that contains the image excluding the padding.
-    _, _, windows, _ = utils.parse_image_meta(image_meta)
+    _, _, windows, _ = parse_image_meta(image_meta)
     # Class IDs per ROI
     class_scores, class_ids = torch.max(probs, dim=1)
 
     # Class probability of the top class of each ROI
     # Class-specific bounding box deltas
-    _idx = torch.arange(class_ids.size(0).cuda()).long()
-    deltas_specific = deltas[_idx, class_ids]
+    _idx = torch.arange(class_ids.size(0)).cuda().long()
+    deltas_specific = deltas[_idx, class_ids]   # TODO (important): good example of 2D index
 
     # Apply bounding box deltas
     # Shape: [boxes, (y1, x1, y2, x2)] in normalized coordinates
-    std_dev = Variable(torch.from_numpy(np.reshape(config.RPN.BBOX_STD_DEV, [1, 4])).float(), requires_grad=False)
+    std_dev = Variable(torch.from_numpy(np.reshape(config.DATA.BBOX_STD_DEV, [1, 4])).float(), requires_grad=False)
     if config.MISC.GPU_COUNT:
         std_dev = std_dev.cuda()
     deltas_specific *= std_dev

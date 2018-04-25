@@ -385,7 +385,7 @@ class COCODataset(torch.utils.data.Dataset):
                 is True then the outputs list contains target class_ids, bbox deltas, and masks.
             """
         self.dataset = Dataset()
-        self.image_ids = np.copy(self.dataset.image_ids)
+        # self.image_ids = np.copy(self.dataset.image_ids)
         self.config = config
         self.augment = augment
 
@@ -398,7 +398,7 @@ class COCODataset(torch.utils.data.Dataset):
 
     def __getitem__(self, image_index):
         # Get GT bounding boxes and masks for image.
-        image_id = self.image_ids[image_index]
+        image_id = self.dataset.image_ids[image_index]
         image, image_metas, gt_class_ids, gt_boxes, gt_masks = \
             utils.load_image_gt(self.dataset, self.config, image_id, augment=self.augment,
                                 use_mini_mask=self.config.MRCNN.USE_MINI_MASK)
@@ -430,14 +430,11 @@ class COCODataset(torch.utils.data.Dataset):
         target_rpn_match = torch.from_numpy(rpn_match)
         target_rpn_bbox = torch.from_numpy(rpn_bbox).float()
         gt_masks = gt_masks.astype(int).transpose(2, 0, 1)
-        # gt_class_ids = torch.from_numpy(gt_class_ids)
-        # gt_boxes = torch.from_numpy(gt_boxes).float()
-        # gt_masks = torch.from_numpy(gt_masks.astype(int).transpose(2, 0, 1)).float()
 
         return image, image_metas, target_rpn_match, target_rpn_bbox, gt_class_ids, gt_boxes, gt_masks
 
     def __len__(self):
-        return self.image_ids.shape[0]
+        return self.dataset.image_ids.shape[0]
 
 
 def detection_collate(batch):
@@ -467,16 +464,16 @@ def get_data(config):
     # validation data
     dset_val = COCODataset(config)
     print('VAL:: load minival')
-    val_coco_api = dset_val.dataset.load_coco(DATASET.PATH, "minival", year=DATASET.YAER)
+    val_coco_api = dset_val.dataset.load_coco(DATASET.PATH, "minival", year=DATASET.YEAR)
     dset_val.dataset.prepare()
 
     # train data
     if not config.CTRL.DEBUG and config.CTRL.PHASE == 'train':
         dset_train = COCODataset(config)
         print('TRAIN:: load train')
-        dset_train.dataset.load_coco(DATASET.PATH, "train", year=DATASET.YAER)
+        dset_train.dataset.load_coco(DATASET.PATH, "train", year=DATASET.YEAR)
         print('TRAIN:: load val_minus_minival')
-        dset_train.dataset.load_coco(DATASET.PATH, "valminusminival", year=DATASET.YAER)
+        dset_train.dataset.load_coco(DATASET.PATH, "valminusminival", year=DATASET.YEAR)
         dset_train.dataset.prepare()
     else:
         dset_train = dset_val
