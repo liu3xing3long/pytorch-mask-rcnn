@@ -170,17 +170,16 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                 
         curr_iter_time_start = time.time()
         inputs = next(data_iterator)
-        
+
+        print('curr iter: ', iter_ind)
         if iter_ind < 4700:
             continue
-        else:
-            print('curr iter: ', iter_ind)
 
         images = Variable(inputs[0].cuda())
         # pad with zeros
         gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
 
-        if config.CTRL.DEBUG:
+        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
             print('\nfetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
             t = time.time()
 
@@ -194,7 +193,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # Compute losses
         # loss, detailed_loss = compute_loss(outputs)
 
-        if config.CTRL.DEBUG:
+        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
             print('forward time: {:.4f}'.format(time.time() - t))
             t = time.time()
 
@@ -204,7 +203,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             torch.nn.utils.clip_grad_norm(input_model.parameters(), config.TRAIN.MAX_GRAD_NORM)
         optimizer.step()
 
-        if config.CTRL.DEBUG:
+        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
             print('backward time: {:.4f}'.format(time.time() - t))
             t = time.time()
 
