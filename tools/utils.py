@@ -195,12 +195,12 @@ def update_config_and_load_model(config, network, train_generator=None):
     if phase == 'train':
         config.MISC.LOG_FILE = os.path.join(
             config.MISC.RESULT_FOLDER,
-            'train_log_start_ep_{:04d}_iter_{:04d}.txt'.format(network.start_epoch, network.start_iter))
+            'train_log_start_ep_{:04d}_iter_{:06d}.txt'.format(network.start_epoch, network.start_iter))
         if config.CTRL.DEBUG or config.TRAIN.DO_VALIDATION:
             # set SAVE_IM=True
             config.TEST.SAVE_IM = True
     else:
-        model_name = os.path.basename(model_path).replace('.pth', '')   # mask_rcnn_ep_0053_iter_1234
+        model_name = os.path.basename(model_path).replace('.pth', '')   # mask_rcnn_ep_0053_iter_001234
         config.MISC.LOG_FILE = os.path.join(
             config.MISC.RESULT_FOLDER, 'inference_from_{:s}.txt'.format(model_name))
         model_suffix = os.path.basename(model_path).replace('mask_rcnn_', '')

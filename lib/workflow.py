@@ -167,15 +167,19 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     save_iter_base = math.floor(total_iter / config.TRAIN.SAVE_FREQ_WITHIN_EPOCH)
 
     for iter_ind in range(start_iter, total_iter+1):
-
+                
         curr_iter_time_start = time.time()
         inputs = next(data_iterator)
+
+        print('curr iter: ', iter_ind)
+        if iter_ind < 4700:
+            continue
 
         images = Variable(inputs[0].cuda())
         # pad with zeros
         gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
 
-        if config.CTRL.DEBUG:
+        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
             print('\nfetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
             t = time.time()
 
@@ -189,7 +193,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # Compute losses
         # loss, detailed_loss = compute_loss(outputs)
 
-        if config.CTRL.DEBUG:
+        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
             print('forward time: {:.4f}'.format(time.time() - t))
             t = time.time()
 
@@ -199,7 +203,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             torch.nn.utils.clip_grad_norm(input_model.parameters(), config.TRAIN.MAX_GRAD_NORM)
         optimizer.step()
 
-        if config.CTRL.DEBUG:
+        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
             print('backward time: {:.4f}'.format(time.time() - t))
             t = time.time()
 
@@ -209,9 +213,9 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             days, hrs = compute_left_time(iter_time, args['epoch'],
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
 
-            print_log('[{:s}][stage {:s}]{:s}[est. left: {:d} days, {:02.2f} hrs] (iter_time: {:.2f}) '
-                      '{:05d}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
-                      '- mrcnn_cls: {:.5f} - mrcnn_bbox: {:.5f} - mrcnn_mask_loss: {:.5f}'.
+            print_log('[{:s}][stage {:s}]{:s} {:06d}/{} [est. left: {:d} days, {:02.2f} hrs] (iter_time: {:.2f})'
+                      '\tloss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} '
+                      '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}'.
                       format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'],
                              days, hrs, iter_time,
                              iter_ind, total_iter,
