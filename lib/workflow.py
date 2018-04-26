@@ -209,9 +209,9 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             days, hrs = compute_left_time(iter_time, args['epoch'],
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
 
-            print_log('[{:s}][stage {:s}]{:s}[est. left: {:d} days, {:02.2f} hrs] (iter_time: {:.2f}) '
-                      '{:05d}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
-                      '- mrcnn_cls: {:.5f} - mrcnn_bbox: {:.5f} - mrcnn_mask_loss: {:.5f}'.
+            print_log('[{:s}][stage {:s}]{:s} {:06d}/{} [est. left: {:d} days, {:02.2f} hrs] (iter_time: {:.2f})'
+                      '\tloss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} '
+                      '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}'.
                       format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'],
                              days, hrs, iter_time,
                              iter_ind, total_iter,
