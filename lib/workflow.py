@@ -172,6 +172,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         inputs = next(data_iterator)
         
         if iter_ind < 4700:
+            print('curr iter: ', iter_ind)
             continue
         else:
             print('curr iter: ', iter_ind)
