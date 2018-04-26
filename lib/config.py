@@ -80,6 +80,9 @@ class Config(object):
     RPN.POST_NMS_ROIS_TRAINING = 2000
     RPN.POST_NMS_ROIS_INFERENCE = 1000
 
+    RPN.TARGET_POS_THRES = .7
+    RPN.TARGET_NEG_THRES = .3
+
     # ==================================
     MRCNN = AttrDict()
     # If enabled, resize instance masks to a smaller size to reduce

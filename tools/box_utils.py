@@ -139,24 +139,24 @@ def compute_iou(boxes1, boxes2):
     return overlaps
 
 
-def np_compute_iou(box, boxes, box_area, boxes_area):
-    """Calculates IoU of the given box with the array of the given boxes.
-    box: 1D vector [y1, x1, y2, x2]
-    boxes: [boxes_count, (y1, x1, y2, x2)]
-    box_area: float. the area of 'box'
-    boxes_area: array of length boxes_count.
-    Note: the areas are passed in rather than calculated here for
-          efficency. Calculate once in the caller to avoid duplicate work.
-    """
-    # Calculate intersection areas
-    y1 = np.maximum(box[0], boxes[:, 0])
-    y2 = np.minimum(box[2], boxes[:, 2])
-    x1 = np.maximum(box[1], boxes[:, 1])
-    x2 = np.minimum(box[3], boxes[:, 3])
-    intersection = np.maximum(x2 - x1, 0) * np.maximum(y2 - y1, 0)
-    union = box_area + boxes_area[:] - intersection[:]
-    iou = intersection / union
-    return iou
+# def np_compute_iou(box, boxes, box_area, boxes_area):
+#     """Calculates IoU of the given box with the array of the given boxes.
+#     box: 1D vector [y1, x1, y2, x2]
+#     boxes: [boxes_count, (y1, x1, y2, x2)]
+#     box_area: float. the area of 'box'
+#     boxes_area: array of length boxes_count.
+#     Note: the areas are passed in rather than calculated here for
+#           efficency. Calculate once in the caller to avoid duplicate work.
+#     """
+#     # Calculate intersection areas
+#     y1 = np.maximum(box[0], boxes[:, 0])
+#     y2 = np.minimum(box[2], boxes[:, 2])
+#     x1 = np.maximum(box[1], boxes[:, 1])
+#     x2 = np.minimum(box[3], boxes[:, 3])
+#     intersection = np.maximum(x2 - x1, 0) * np.maximum(y2 - y1, 0)
+#     union = box_area + boxes_area[:] - intersection[:]
+#     iou = intersection / union
+#     return iou
 
 
 def bbox_overlaps(boxes1, boxes2):
@@ -165,30 +165,31 @@ def bbox_overlaps(boxes1, boxes2):
         boxes1: [(bs, optional), N, (y1, x1, y2, x2)]
         boxes2: [(bs, optional), N, (y1, x1, y2, x2)]
     """
-    # TODO: merge this two types of data
-    if isinstance(boxes1, np.ndarray):
-        # numpy
-        # Areas of anchors and GT boxes
-        area1 = (boxes1[:, 2] - boxes1[:, 0]) * (boxes1[:, 3] - boxes1[:, 1])
-        area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
-        # Compute overlaps to generate matrix [boxes1 count, boxes2 count]
-        # Each cell contains the IoU value.
-        overlaps = np.zeros((boxes1.shape[0], boxes2.shape[0]))
-        for i in range(overlaps.shape[1]):
-            box2 = boxes2[i]
-            overlaps[:, i] = np_compute_iou(box2, boxes1, area2[i], area1)
-        return overlaps
 
+    # if isinstance(boxes1, np.ndarray):
+    #     # numpy
+    #     # Areas of anchors and GT boxes
+    #     area1 = (boxes1[:, 2] - boxes1[:, 0]) * (boxes1[:, 3] - boxes1[:, 1])
+    #     area2 = (boxes2[:, 2] - boxes2[:, 0]) * (boxes2[:, 3] - boxes2[:, 1])
+    #     # Compute overlaps to generate matrix [boxes1 count, boxes2 count]
+    #     # Each cell contains the IoU value.
+    #     overlaps = np.zeros((boxes1.shape[0], boxes2.shape[0]))
+    #     for i in range(overlaps.shape[1]):
+    #         box2 = boxes2[i]
+    #         overlaps[:, i] = np_compute_iou(box2, boxes1, area2[i], area1)
+    #     return overlaps
+    #
+    # else:
+
+    # Variable
+    assert boxes1.dim() == boxes2.dim()
+    if boxes1.dim() == 3:
+        # has bs dim
+        overlaps = Variable(torch.zeros(boxes1.size(0), boxes1.size(1), boxes2.size(1)).cuda(),
+                            requires_grad=False)
+        for i in range(boxes1.size(0)):
+            overlaps[i] = compute_iou(boxes1[i], boxes2[i])
     else:
-        # Variable
-        assert boxes1.dim() == boxes2.dim()
-        if boxes1.dim() == 3:
-            # has bs dim
-            overlaps = Variable(torch.zeros(boxes1.size(0), boxes1.size(1), boxes2.size(1)).cuda(),
-                                requires_grad=False)
-            for i in range(boxes1.size(0)):
-                overlaps[i] = compute_iou(boxes1[i], boxes2[i])
-        else:
-            overlaps = compute_iou(boxes1, boxes2)
+        overlaps = compute_iou(boxes1, boxes2)
 
-        return overlaps
+    return overlaps

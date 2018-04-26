@@ -392,7 +392,8 @@ class COCODataset(torch.utils.data.Dataset):
     def __getitem__(self, image_index):
         # Get GT bounding boxes and masks for image.
         image_id = self.dataset.image_ids[image_index]
-        image, image_metas, gt_class_ids, gt_boxes, gt_masks = \
+
+        image, _, gt_class_ids, gt_boxes, gt_masks = \
             utils.load_image_gt(self.dataset, self.config, image_id, augment=self.augment,
                                 use_mini_mask=self.config.MRCNN.USE_MINI_MASK)
 
@@ -402,10 +403,6 @@ class COCODataset(torch.utils.data.Dataset):
         if not np.any(gt_class_ids > 0):
             return None
 
-        # RPN Targets
-        # TODO (important): move to forward and compute on-the-fly
-        rpn_match, rpn_bbox = build_rpn_targets(self.anchors, gt_class_ids, gt_boxes, self.config)
-
         # If more instances than fits in the array, sub-sample from them.
         if gt_boxes.shape[0] > self.config.DATA.MAX_GT_INSTANCES:
             ids = np.random.choice(
@@ -414,18 +411,12 @@ class COCODataset(torch.utils.data.Dataset):
             gt_boxes = gt_boxes[ids]
             gt_masks = gt_masks[:, :, ids]
 
-        # Add to batch
-        rpn_match = rpn_match[:, np.newaxis]
         image = image.astype(np.float32) - self.config.DATA.MEAN_PIXEL
-
-        # Convert to Tensors
         image = torch.from_numpy(image.transpose(2, 0, 1)).float()
-        image_metas = torch.from_numpy(image_metas)
-        target_rpn_match = torch.from_numpy(rpn_match)
-        target_rpn_bbox = torch.from_numpy(rpn_bbox).float()
+        # image_metas = torch.from_numpy(image_metas)
         gt_masks = gt_masks.astype(int).transpose(2, 0, 1)
 
-        return image, image_metas, target_rpn_match, target_rpn_bbox, gt_class_ids, gt_boxes, gt_masks
+        return image, gt_class_ids, gt_boxes, gt_masks
 
     def __len__(self):
         return self.dataset.image_ids.shape[0]
@@ -436,19 +427,20 @@ def detection_collate(batch):
     number of associated object annotations (bounding boxes).
     """
     imgs = []
-    imgs_metas = []
-    rpn_match, rpn_bbox = [], []
+    # imgs_metas = []
+    # rpn_match, rpn_bbox = [], []
     gt_class_ids, gt_boxes, gt_masks = [], [], []
     for sample in batch:
         imgs.append(sample[0])
-        imgs_metas.append(sample[1])
-        rpn_match.append(sample[2])
-        rpn_bbox.append(sample[3])
-        gt_class_ids.append(sample[4])
-        gt_boxes.append(sample[5])
-        gt_masks.append(sample[6])
-    return torch.stack(imgs, 0), torch.stack(imgs_metas, 0), \
-           torch.stack(rpn_match, 0), torch.stack(rpn_bbox, 0), gt_class_ids, gt_boxes, gt_masks
+        # imgs_metas.append(sample[1])
+        # rpn_match.append(sample[2])
+        # rpn_bbox.append(sample[3])
+        gt_class_ids.append(sample[1])
+        gt_boxes.append(sample[2])
+        gt_masks.append(sample[3])
+    return torch.stack(imgs, 0), gt_class_ids, gt_boxes, gt_masks
+           # torch.stack(imgs_metas, 0), \
+           # torch.stack(rpn_match, 0), torch.stack(rpn_bbox, 0), \
 
 
 def get_data(config):

@@ -17,12 +17,12 @@ if __name__ == '__main__':
 
     parser.add_argument('--config_name',
                         required=False,
-                        default='all_new')
+                        # default='all_new')
                         # default='hyli_default_old')
-                        # default='fuck')
+                        default='fuck')
 
     parser.add_argument('--debug',
-                        default=0, type=int)  # no bool type here please
+                        default=1, type=int)  # no bool type here please
 
     parser.add_argument('--device_id',
                         default='0,1', type=str)

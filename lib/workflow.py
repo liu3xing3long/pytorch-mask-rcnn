@@ -169,18 +169,16 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         inputs = next(data_iterator)
 
         images = Variable(inputs[0].cuda())
-        target_rpn_match = Variable(inputs[2].cuda())
-        target_rpn_bbox = Variable(inputs[3].cuda())
         # pad with zeros
-        gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[4], inputs[5], inputs[6])
+        gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
 
         # Run object detection
-        # [rpn_class_logits, rpn_pred_bbox,
+        # [target_rpn_match, rpn_class_logits, target_rpn_bbox, rpn_pred_bbox,
         # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
         outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks], mode='train')
 
         # Compute losses
-        loss, detailed_losses = compute_loss(target_rpn_match, target_rpn_bbox, outputs)
+        loss, detailed_losses = compute_loss(outputs)
 
         optimizer.zero_grad()
         loss.backward()
@@ -221,12 +219,12 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                 'iter':         iter_ind,       # or model.iter
             }, model_file)
 
-        # for debug; test the model
-        if config.CTRL.DEBUG and iter_ind == (start_iter+5):
-            print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
-                      format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
-            test_model(input_model, args['valset'], args['coco_api'],
-                       during_train=True, epoch=args['epoch'], iter=iter_ind)
+        # # for debug; test the model
+        # if config.CTRL.DEBUG and iter_ind == (start_iter+5):
+        #     print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
+        #               format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
+        #     test_model(input_model, args['valset'], args['coco_api'],
+        #                during_train=True, epoch=args['epoch'], iter=iter_ind)
 
     return loss_sum
 
@@ -371,11 +369,15 @@ def test_model(input_model, valset, coco_api,
 
 
 # ======================
-def compute_loss(target_rpn_match, target_rpn_bbox, inputs):
+def compute_loss(inputs):
 
-    rpn_class_logits, rpn_pred_bbox, target_class_ids, \
-        mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask = \
-        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], inputs[5], inputs[6], inputs[7]
+    target_rpn_match, rpn_class_logits, \
+    target_rpn_bbox, rpn_pred_bbox, \
+    target_class_ids, mrcnn_class_logits, \
+    target_deltas, mrcnn_bbox, \
+    target_mask, mrcnn_mask = \
+        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], \
+        inputs[5], inputs[6], inputs[7], inputs[8], inputs[9]
 
     rpn_class_loss = compute_rpn_class_loss(target_rpn_match, rpn_class_logits)
     rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, rpn_pred_bbox)

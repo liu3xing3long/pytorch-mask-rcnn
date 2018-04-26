@@ -60,7 +60,7 @@ class MaskRCNN(nn.Module):
         # TODO (low): add assert to verify feature map sizes match what is in config
         self.fpn = FPN(C1, C2, C3, C4, C5, out_channels=256)
 
-        # Generate Anchors
+        # Generate Anchors (Tensor; do not assign cuda() here)
         self.priors = torch.from_numpy(
             generate_pyramid_priors(config.RPN.ANCHOR_SCALES, config.RPN.ANCHOR_RATIOS,
                                     config.MODEL.BACKBONE_SHAPES, config.MODEL.BACKBONE_STRIDES,
@@ -208,11 +208,14 @@ class MaskRCNN(nn.Module):
         elif mode == 'train':
 
             gt_class_ids, gt_boxes, gt_masks = input[1], input[2], input[3]
-            gt_boxes = gt_boxes / scale
+
+            # compute RPN Targets
+            target_rpn_match, target_rpn_bbox = \
+                prepare_rpn_target(self.priors, gt_class_ids, gt_boxes, self.config)
 
             # _rois: N, TRAIN_ROIS_PER_IMAGE, 4; zero padded
             _rois, target_class_ids, target_deltas, target_mask = \
-                prepare_det_target(_proposals.detach(), gt_class_ids, gt_boxes, gt_masks, self.config)
+                prepare_det_target(_proposals.detach(), gt_class_ids, gt_boxes/scale, gt_masks, self.config)
 
             if torch.sum(_rois).data[0] != 0:
                 # classifier
@@ -233,7 +236,8 @@ class MaskRCNN(nn.Module):
                 mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
                 mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
-            return [RPN_PRED_CLS_LOGITS, RPN_PRED_BBOX,
+            return [target_rpn_match, RPN_PRED_CLS_LOGITS,
+                    target_rpn_bbox, RPN_PRED_BBOX,
                     target_class_ids, mrcnn_class_logits,
                     target_deltas, mrcnn_bbox,
                     target_mask, mrcnn_mask]
