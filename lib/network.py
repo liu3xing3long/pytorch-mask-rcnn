@@ -236,9 +236,20 @@ class MaskRCNN(nn.Module):
                 mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
                 mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
-            return [target_rpn_match, RPN_PRED_CLS_LOGITS,
-                    target_rpn_bbox, RPN_PRED_BBOX,
-                    target_class_ids, mrcnn_class_logits,
-                    target_deltas, mrcnn_bbox,
-                    target_mask, mrcnn_mask]
+            # compute loss directly
+            rpn_class_loss = compute_rpn_class_loss(target_rpn_match, RPN_PRED_CLS_LOGITS)
+            rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, RPN_PRED_BBOX)
+            mrcnn_class_loss = compute_mrcnn_class_loss(target_class_ids, mrcnn_class_logits)
+            mrcnn_bbox_loss = compute_mrcnn_bbox_loss(target_deltas, target_class_ids, mrcnn_bbox)
+            mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
+
+            outputs = torch.stack((rpn_class_loss, rpn_bbox_loss,
+                                   mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss), dim=1)
+            return outputs
+
+            # return [target_rpn_match, RPN_PRED_CLS_LOGITS,
+            #         target_rpn_bbox, RPN_PRED_BBOX,
+            #         target_class_ids, mrcnn_class_logits,
+            #         target_deltas, mrcnn_bbox,
+            #         target_mask, mrcnn_mask]
 

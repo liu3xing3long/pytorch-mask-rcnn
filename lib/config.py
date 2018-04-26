@@ -168,7 +168,7 @@ class Config(object):
 
     # ==============================
     CTRL = AttrDict()
-    CTRL.SHOW_INTERVAL = 200
+    CTRL.SHOW_INTERVAL = 20
     CTRL.USE_VISDOM = False
 
     # for train and inference

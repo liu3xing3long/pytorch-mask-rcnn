@@ -40,14 +40,15 @@ CLASS_NAMES = ['BG', 'person', 'bicycle', 'car', 'motorcycle', 'airplane',
                'keyboard', 'cell phone', 'microwave', 'oven', 'toaster',
                'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors',
                'teddy bear', 'hair drier', 'toothbrush']
+_TEMP = {'heads': 1, '4+': 2, 'all': 3}
 
 
-def train_model(input_model, train_generator, valset, lr, total_ep_curr_call, layers, coco_api=None):
+def train_model(input_model, train_generator, valset, lr, layers, coco_api=None):
     """
     Args:
         input_model:        nn.DataParallel
         train_generator:
-        val_generator:
+        valset:
         lr:
             The learning rate to train with
         total_ep_curr_call:
@@ -65,6 +66,7 @@ def train_model(input_model, train_generator, valset, lr, total_ep_curr_call, la
                 5+: Train Resnet stage 5 and up
         coco_api
     """
+
     stage_name = layers.upper()
     if isinstance(input_model, nn.DataParallel):
         model = input_model.module
@@ -74,6 +76,7 @@ def train_model(input_model, train_generator, valset, lr, total_ep_curr_call, la
 
     num_train_im = train_generator.dataset.dataset.num_images
     iter_per_epoch = math.floor(num_train_im/model.config.CTRL.BATCH_SIZE)
+    total_ep_till_now = sum(model.config.TRAIN.SCHEDULE[:_TEMP[layers]])
 
     if (num_train_im % model.config.CTRL.BATCH_SIZE) % model.config.MISC.GPU_COUNT != 0:
         print_log('WARNING [TRAIN]: last mini-batch in an epoch is not divisible by gpu number.\n'
@@ -82,7 +85,7 @@ def train_model(input_model, train_generator, valset, lr, total_ep_curr_call, la
                     num_train_im, model.config.CTRL.BATCH_SIZE, model.config.MISC.GPU_COUNT,
                     (num_train_im % model.config.CTRL.BATCH_SIZE)), model.config.MISC.LOG_FILE)
 
-    if model.epoch > total_ep_curr_call:
+    if model.epoch > total_ep_till_now:
         print_log('skip {:s} stage ...'.format(stage_name.upper()), model.config.MISC.LOG_FILE)
         return None
 
@@ -103,11 +106,11 @@ def train_model(input_model, train_generator, valset, lr, total_ep_curr_call, la
 
     print_log('\n[Current stage: {:s}] start training at epoch {:d}, iter {:d}. \n'
               'Total epoch in this stage: {:d}, LR={:.4f}'.format(
-                stage_name, model.epoch, model.iter, total_ep_curr_call, lr), model.config.MISC.LOG_FILE)
+                stage_name, model.epoch, model.iter, total_ep_till_now, lr), model.config.MISC.LOG_FILE)
 
-    for ep in range(model.epoch, total_ep_curr_call+1):
+    for ep in range(model.epoch, total_ep_till_now+1):
 
-        epoch_str = "[Ep {:03d}/{}]".format(ep, total_ep_curr_call)
+        epoch_str = "[Ep {:03d}/{}]".format(ep, total_ep_till_now)
         print_log(epoch_str, model.config.MISC.LOG_FILE)
         # Training
         loss = train_epoch_new(input_model, train_generator, optimizer,
@@ -139,7 +142,7 @@ def train_model(input_model, train_generator, valset, lr, total_ep_curr_call, la
     # Current stage ends; do validation if possible
     if model.config.TRAIN.DO_VALIDATION:
         print_log('\nDo validation at end of current stage [{:s}] (model ep {:d} iter {:d}) ...'.
-                  format(stage_name.upper(), total_ep_curr_call, iter_per_epoch), model.config.MISC.LOG_FILE)
+                  format(stage_name.upper(), total_ep_till_now, iter_per_epoch), model.config.MISC.LOG_FILE)
         test_model(input_model, valset, coco_api, during_train=True, epoch=ep, iter=iter_per_epoch)
 
 
@@ -172,13 +175,23 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # pad with zeros
         gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
 
+        if config.CTRL.DEBUG:
+            print('\nfetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
+            t = time.time()
+
         # Run object detection
         # [target_rpn_match, rpn_class_logits, target_rpn_bbox, rpn_pred_bbox,
         # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
-        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks], mode='train')
+        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks], mode='train')  # shape: gpu_num x 5
+        detailed_loss = torch.mean(outputs, dim=0)
+        loss = torch.sum(detailed_loss)
 
         # Compute losses
-        loss, detailed_losses = compute_loss(outputs)
+        # loss, detailed_loss = compute_loss(outputs)
+
+        if config.CTRL.DEBUG:
+            print('forward time: {:.4f}'.format(time.time() - t))
+            t = time.time()
 
         optimizer.zero_grad()
         loss.backward()
@@ -186,25 +199,29 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             torch.nn.utils.clip_grad_norm(input_model.parameters(), config.TRAIN.MAX_GRAD_NORM)
         optimizer.step()
 
+        if config.CTRL.DEBUG:
+            print('backward time: {:.4f}'.format(time.time() - t))
+            t = time.time()
+
         # Progress
         if iter_ind % config.CTRL.SHOW_INTERVAL == 0 or iter_ind == args['start_iter']:
-
             iter_time = time.time() - curr_iter_time_start
             days, hrs = compute_left_time(iter_time, args['epoch'],
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
 
-            print_log('[{:s}][stage {:s}]{:s}[est. left: {:d} days, {:02.2f} hrs]'
-                      '\t{:05d}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
+            print_log('[{:s}][stage {:s}]{:s}[est. left: {:d} days, {:02.2f} hrs] (iter_time: {:.2f}) '
+                      '{:05d}/{}\tloss: {:.5f} - rpn_cls: {:.5f} - rpn_bbox: {:.5f} '
                       '- mrcnn_cls: {:.5f} - mrcnn_bbox: {:.5f} - mrcnn_mask_loss: {:.5f}'.
                       format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'],
-                             days, hrs,
+                             days, hrs, iter_time,
                              iter_ind, total_iter,
                              loss.data.cpu()[0],
-                             detailed_losses[0].data.cpu()[0],
-                             detailed_losses[1].data.cpu()[0],
-                             detailed_losses[2].data.cpu()[0],
-                             detailed_losses[3].data.cpu()[0],
-                             detailed_losses[4].data.cpu()[0]), config.MISC.LOG_FILE)
+                             detailed_loss[0].data.cpu()[0],
+                             detailed_loss[1].data.cpu()[0],
+                             detailed_loss[2].data.cpu()[0],
+                             detailed_loss[3].data.cpu()[0],
+                             detailed_loss[4].data.cpu()[0]),
+                      config.MISC.LOG_FILE)
         # Statistics
         loss_sum += loss.data.cpu()[0]/actual_total_iter
 

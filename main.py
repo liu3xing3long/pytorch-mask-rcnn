@@ -60,21 +60,21 @@ if __name__ == '__main__':
         print("\nTraining network heads")
         train_model(model, train_data, val_data,
                     lr=config.TRAIN.LEARNING_RATE,
-                    total_ep_curr_call=config.TRAIN.SCHEDULE[0], layers='heads', coco_api=val_api)
+                    layers='heads', coco_api=val_api)
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
         print("\nFinetune Resnet stage 4 and up")
         train_model(model, train_data, val_data,
                     lr=config.TRAIN.LEARNING_RATE*config.TRAIN.GAMMA,
-                    total_ep_curr_call=config.TRAIN.SCHEDULE[1], layers='4+', coco_api=val_api)
+                    layers='4+', coco_api=val_api)
 
         # Training - Stage 3
         # Fine tune all layers
         print("\nFine tune all layers")
         train_model(model, train_data, val_data,
                     lr=config.LEARNING_RATE*config.TRAIN.GAMMA**2,
-                    total_ep_curr_call=config.TRAIN.SCHEDULE[2], layers='all', coco_api=val_api)
+                    layers='all', coco_api=val_api)
 
     elif args.phase == 'inference':
 
