@@ -61,10 +61,10 @@ class MaskRCNN(nn.Module):
         self.fpn = FPN(C1, C2, C3, C4, C5, out_channels=256)
 
         # Generate Anchors
-        self.anchors = torch.from_numpy(
-            generate_pyramid_anchors(config.RPN.ANCHOR_SCALES, config.RPN.ANCHOR_RATIOS,
-                                     config.MODEL.BACKBONE_SHAPES, config.MODEL.BACKBONE_STRIDES,
-                                     config.RPN.ANCHOR_STRIDE)).float()
+        self.priors = torch.from_numpy(
+            generate_pyramid_priors(config.RPN.ANCHOR_SCALES, config.RPN.ANCHOR_RATIOS,
+                                    config.MODEL.BACKBONE_SHAPES, config.MODEL.BACKBONE_STRIDES,
+                                    config.RPN.ANCHOR_STRIDE)).float()
 
         # RPN
         self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, 256)
@@ -179,7 +179,7 @@ class MaskRCNN(nn.Module):
         _proposals = proposal_layer([_rpn_class_score, RPN_PRED_BBOX],
                                     proposal_count=proposal_count,
                                     nms_threshold=self.config.RPN.NMS_THRESHOLD,
-                                    anchors=self.anchors, config=self.config)
+                                    priors=self.priors, config=self.config)
         # Normalize coordinates
         h, w = self.config.DATA.IMAGE_SHAPE[:2]
         scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False).cuda()

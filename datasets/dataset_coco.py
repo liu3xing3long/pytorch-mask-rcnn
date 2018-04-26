@@ -389,13 +389,6 @@ class COCODataset(torch.utils.data.Dataset):
         self.config = config
         self.augment = augment
 
-        # Anchors
-        # [anchor_count, (y1, x1, y2, x2)]
-        self.anchors = \
-            generate_pyramid_anchors(
-                config.RPN.ANCHOR_SCALES, config.RPN.ANCHOR_RATIOS,
-                config.MODEL.BACKBONE_SHAPES, config.MODEL.BACKBONE_STRIDES, config.RPN.ANCHOR_STRIDE)
-
     def __getitem__(self, image_index):
         # Get GT bounding boxes and masks for image.
         image_id = self.dataset.image_ids[image_index]
@@ -410,6 +403,7 @@ class COCODataset(torch.utils.data.Dataset):
             return None
 
         # RPN Targets
+        # TODO (important): move to forward and compute on-the-fly
         rpn_match, rpn_bbox = build_rpn_targets(self.anchors, gt_class_ids, gt_boxes, self.config)
 
         # If more instances than fits in the array, sub-sample from them.
