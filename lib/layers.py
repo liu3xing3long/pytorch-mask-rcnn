@@ -80,7 +80,7 @@ def proposal_layer(inputs, proposal_count, nms_threshold, priors, config=None):
             [1] rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
         proposal_count
         nms_threshold
-        anchors
+        priors
         config
 
     Returns:

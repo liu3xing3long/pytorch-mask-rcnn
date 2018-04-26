@@ -127,7 +127,7 @@ def train_model(input_model, train_generator, valset, lr, layers, coco_api=None)
                             save=True, log_dir=model.config.MISC.RESULT_FOLDER)
         # save model
         model_file = os.path.join(model.config.MISC.RESULT_FOLDER,
-                                  'mask_rcnn_ep_{:04d}_iter_{:04d}.pth'.format(ep, iter_per_epoch))
+                                  'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(ep, iter_per_epoch))
         print_log('saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
         torch.save({
             'state_dict':   model.state_dict(),
@@ -228,7 +228,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # save model
         if iter_ind % save_iter_base == 0:
             model_file = os.path.join(config.MISC.RESULT_FOLDER,
-                                      'mask_rcnn_ep_{:04d}_iter_{:04d}.pth'.format(args['epoch'], iter_ind))
+                                      'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(args['epoch'], iter_ind))
             print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
             torch.save({
                 'state_dict':   model.state_dict(),
@@ -236,12 +236,12 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                 'iter':         iter_ind,       # or model.iter
             }, model_file)
 
-        # # for debug; test the model
-        # if config.CTRL.DEBUG and iter_ind == (start_iter+5):
-        #     print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
-        #               format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
-        #     test_model(input_model, args['valset'], args['coco_api'],
-        #                during_train=True, epoch=args['epoch'], iter=iter_ind)
+        # for debug; test the model
+        if config.CTRL.DEBUG and iter_ind == (start_iter+50):
+            print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
+                      format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
+            test_model(input_model, args['valset'], args['coco_api'],
+                       during_train=True, epoch=args['epoch'], iter=iter_ind)
 
     return loss_sum
 
