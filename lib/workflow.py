@@ -213,7 +213,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             days, hrs = compute_left_time(iter_time, args['epoch'],
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
 
-            print_log('[{:s}][stage {:s}]{:s} {:06d}/{} [est. left: {:d} days, {:02.2f} hrs] (iter_time: {:.2f})'
+            print_log('[{:s}][stage {:s}]{:s} {:06d}/{} [est. left: {:d} days, {:02.2f} hrs] (iter_t: {:.2f})'
                       '\tloss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} '
                       '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}'.
                       format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'],
@@ -241,7 +241,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             }, model_file)
 
         # for debug; test the model
-        if config.CTRL.DEBUG and iter_ind == (start_iter+50):
+        if config.CTRL.DEBUG and iter_ind == (start_iter+100):
             print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
                       format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
             test_model(input_model, args['valset'], args['coco_api'],
@@ -438,7 +438,7 @@ def _mold_inputs(model, image_ids, dataset):
         # Build image_meta
         image_meta = compose_image_meta(
             0, image.shape, window,
-            np.zeros([model.config.DATASET.NUM_CLASSES], dtype=np.int32))
+            np.zeros([model.config.DATASET.NUM_CLASSES], dtype=np.int32), 0)
         # Append
         molded_images.append(molded_image)
         windows.append(window)

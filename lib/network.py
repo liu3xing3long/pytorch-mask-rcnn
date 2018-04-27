@@ -185,8 +185,9 @@ class MaskRCNN(nn.Module):
 
         if self.config.CTRL.PROFILE_ANALYSIS:
             curr_gpu_id = torch.cuda.current_device()
-            print('\t[gpu {:d}] curr_coco_im_ids: {}'.format(curr_gpu_id,
-                                                             input[-1][:, -1].data.cpu().numpy()))
+            curr_coco_im_id = input[-1][:, -1].data.cpu().numpy()
+            self.config.temp_id = curr_coco_im_id
+            print('\t[gpu {:d}] curr_coco_im_ids: {}'.format(curr_gpu_id, curr_coco_im_id))
             print('\t[gpu {:d}] pass feature extraction'.format(curr_gpu_id))
 
         if mode == 'inference':
@@ -195,7 +196,7 @@ class MaskRCNN(nn.Module):
             _, mrcnn_class, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _proposals)
 
             # Detections
-            image_metas = input[1]  # (3, 89), Variable
+            image_metas = input[1]  # (3, 90), Variable
             # output is [batch, num_detections (say 100), (y1, x1, y2, x2, class_id, score)] in image coordinates
             detections = detection_layer(_proposals, mrcnn_class, mrcnn_bbox, image_metas, self.config)
 
