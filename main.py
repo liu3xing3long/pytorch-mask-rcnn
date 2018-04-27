@@ -21,6 +21,9 @@ if __name__ == '__main__':
                         # default='hyli_default_old')
                         default='fuck')
 
+    # debug mode: set train_data to val_data for faster data loading.
+    # show loss step by step; smaller input image size
+    # do validation right after a few steps and visualize predictions
     parser.add_argument('--debug',
                         default=1, type=int)  # no bool type here please
 

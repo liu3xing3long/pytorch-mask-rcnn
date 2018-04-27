@@ -467,7 +467,7 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         crowd_iou_max = torch.max(crowd_overlaps, dim=-1)[0]
         no_crowd_bool = (crowd_iou_max < 0.001)
         if config.CTRL.PROFILE_ANALYSIS:
-            print('\t\t[sample_id {}, im {}] passed crowd reduction in generate_rpn_target'.
+            print('\t\t[sample_id {}, im {}] 0. passed crowd reduction in generate_rpn_target'.
                   format(curr_sample_id, coco_im_id[curr_sample_id]))
     else:
         # All anchors don't intersect a crowd
@@ -500,7 +500,7 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
     target_rpn_match[anchor_iou_max >= config.RPN.TARGET_POS_THRES] = 1
 
     if config.CTRL.PROFILE_ANALYSIS:
-        print('\t\t[sample_id {}, im {}] passed initial assignment in generate_rpn_target'.
+        print('\t\t[sample_id {}, im {}] 1. passed initial assignment in generate_rpn_target'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
 
     # Subsample to balance positive and negative anchors
@@ -508,13 +508,14 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
     pos_ids = torch.nonzero(target_rpn_match == 1).squeeze()
     extra = pos_ids.size(0) - (config.RPN.TRAIN_ANCHORS_PER_IMAGE // 2)
     if extra > 0:
-        print('\t\t[sample_id {}, im {}] enter pos reduction ...'.
+        print('\t\t\t[sample_id {}, im {}] enter pos reduction ...'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
         # Reset the extra ones to neutral
-        _ids = pos_ids[Variable(torch.randperm(pos_ids.size(0)).cuda())[:extra]]
+        # _ids = pos_ids[Variable(torch.randperm(pos_ids.size(0)).cuda())[:extra]]
+        _ids = pos_ids[:extra]
         target_rpn_match[_ids] = 0
         if config.CTRL.PROFILE_ANALYSIS:
-            print('\t\t[sample_id {}, im {}] set extra anchors of positive to neutral '
+            print('\t\t\t[sample_id {}, im {}] set extra anchors of positive to neutral '
                   'in generate_rpn_target'.format(curr_sample_id, coco_im_id[curr_sample_id]))
 
     # Same for negative proposals
@@ -523,14 +524,15 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
                                torch.sum((target_rpn_match == 1).long()).data[0])
     if extra > 0:
         # Reset the extra ones to neutral
-        _ids = neg_ids[Variable(torch.randperm(neg_ids.size(0)).cuda())[:extra]]
+        # _ids = neg_ids[Variable(torch.randperm(neg_ids.size(0)).cuda())[:extra]] # TODO
+        _ids = neg_ids[:extra]
         target_rpn_match[_ids] = 0
 
     assert (torch.sum((target_rpn_match == 1).long()) +
             torch.sum((target_rpn_match == -1).long())).data[0] == config.RPN.TRAIN_ANCHORS_PER_IMAGE
 
     if config.CTRL.PROFILE_ANALYSIS:
-        print('\t\t[sample_id {}, im {}] passed rpn_target_match'.
+        print('\t\t[sample_id {}, im {}] 2. passed rpn_target_match'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
     # For positive anchors, compute shift and scale needed to transform them
     # to match the corresponding GT boxes.

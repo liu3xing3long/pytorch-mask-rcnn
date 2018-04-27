@@ -212,7 +212,6 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             iter_time = time.time() - curr_iter_time_start
             days, hrs = compute_left_time(iter_time, args['epoch'],
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
-
             print_log('[{:s}][stage {:s}]{:s} {:06d}/{} [est. left: {:d} days, {:02.2f} hrs] (iter_t: {:.2f})'
                       '\tloss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} '
                       '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}'.
@@ -241,11 +240,11 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             }, model_file)
 
         # for debug; test the model
-        if config.CTRL.DEBUG and iter_ind == (start_iter+100):
-            print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
-                      format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
-            test_model(input_model, args['valset'], args['coco_api'],
-                       during_train=True, epoch=args['epoch'], iter=iter_ind)
+        # if config.CTRL.DEBUG and iter_ind == (start_iter+100):
+        #     print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
+        #               format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
+        #     test_model(input_model, args['valset'], args['coco_api'],
+        #                during_train=True, epoch=args['epoch'], iter=iter_ind)
 
     return loss_sum
 
