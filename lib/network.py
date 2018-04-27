@@ -137,7 +137,9 @@ class MaskRCNN(nn.Module):
         """forward function of the Mask-RCNN network"""
         molded_images = input[0]
         sample_per_gpu = molded_images.size(0)  # aka, actual batch size
-        curr_coco_im_id = []
+        # for debug only
+        curr_gpu_id = torch.cuda.current_device()
+        curr_coco_im_id = input[-1][:, -1]
 
         # set model state
         if mode == 'inference':
@@ -186,8 +188,7 @@ class MaskRCNN(nn.Module):
         scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False).cuda()
 
         if self.config.CTRL.PROFILE_ANALYSIS and mode == 'train':
-            curr_gpu_id = torch.cuda.current_device()
-            curr_coco_im_id = input[-1][:, -1]
+
             print('\t[gpu {:d}] curr_coco_im_ids: {}'.format(curr_gpu_id, curr_coco_im_id.data.cpu().numpy()))
             print('\t[gpu {:d}] pass feature extraction'.format(curr_gpu_id))
 
