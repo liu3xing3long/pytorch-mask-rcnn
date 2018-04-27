@@ -249,7 +249,7 @@ class CocoConfig(Config):
             self.CTRL.BATCH_SIZE = 16
             self.CTRL.PROFILE_ANALYSIS = False
 
-        elif self.CTRL.CONFIG_NAME == 'base_101_8gpu':
+        elif self.CTRL.CONFIG_NAME == 'base_102':
             self.MODEL.INIT_FILE_CHOICE = 'imagenet_pretrain'
             self.CTRL.BATCH_SIZE = 16
             self.CTRL.PROFILE_ANALYSIS = False
