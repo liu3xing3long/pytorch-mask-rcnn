@@ -173,6 +173,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         inputs = next(data_iterator)
 
         images = Variable(inputs[0].cuda())
+        image_metas = Variable(inputs[-1].cuda())
         # pad with zeros
         gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
 
@@ -184,7 +185,8 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # Run object detection
         # [target_rpn_match, rpn_class_logits, target_rpn_bbox, rpn_pred_bbox,
         # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
-        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks], mode='train')  # shape: gpu_num x 5
+        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks,
+                               image_metas], mode='train')  # shape: gpu_num x 5
         detailed_loss = torch.mean(outputs, dim=0)
         loss = torch.sum(detailed_loss)
 

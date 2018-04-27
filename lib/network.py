@@ -134,7 +134,6 @@ class MaskRCNN(nn.Module):
 
     def forward(self, input, mode):
         """forward function of the Mask-RCNN network"""
-        # curr_gpu_id = torch.cuda.current_device()
         molded_images = input[0]
         sample_per_gpu = molded_images.size(0)  # aka, actual batch size
 
@@ -185,7 +184,10 @@ class MaskRCNN(nn.Module):
         scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False).cuda()
 
         if self.config.CTRL.PROFILE_ANALYSIS:
-            print('\tpass feature extraction')
+            curr_gpu_id = torch.cuda.current_device()
+            print('\t[gpu {:d}] curr_coco_im_ids: {}'.format(curr_gpu_id,
+                                                             input[-1][:, -1].data.cpu().numpy()))
+            print('\t[gpu {:d}] pass feature extraction'.format(curr_gpu_id))
 
         if mode == 'inference':
             # Network Heads
@@ -216,14 +218,14 @@ class MaskRCNN(nn.Module):
             target_rpn_match, target_rpn_bbox = \
                 prepare_rpn_target(self.priors, gt_class_ids, gt_boxes, self.config)
             if self.config.CTRL.PROFILE_ANALYSIS:
-                print('\tpass rpn_target generation')
+                print('\t[gpu {:d}] pass rpn_target generation'.format(curr_gpu_id))
 
             # _rois: N, TRAIN_ROIS_PER_IMAGE, 4; zero padded
             _rois, target_class_ids, target_deltas, target_mask = \
                 prepare_det_target(_proposals.detach(), gt_class_ids, gt_boxes/scale, gt_masks, self.config)
 
             if self.config.CTRL.PROFILE_ANALYSIS:
-                print('\tpass pass det_target generation')
+                print('\t[gpu {:d}] pass pass det_target generation'.format(curr_gpu_id))
             if torch.sum(_rois).data[0] != 0:
                 # classifier
                 mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _rois)
@@ -244,7 +246,7 @@ class MaskRCNN(nn.Module):
                 mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
             if self.config.CTRL.PROFILE_ANALYSIS:
-                print('\tpass mask and cls generation')
+                print('\t[gpu {:d}] pass mask and cls generation'.format(curr_gpu_id))
             # compute loss directly
             rpn_class_loss = compute_rpn_class_loss(target_rpn_match, RPN_PRED_CLS_LOGITS)
             rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, RPN_PRED_BBOX)
@@ -255,7 +257,7 @@ class MaskRCNN(nn.Module):
             outputs = torch.stack((rpn_class_loss, rpn_bbox_loss,
                                    mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss), dim=1)
             if self.config.CTRL.PROFILE_ANALYSIS:
-                print('\tpass loss compute!')
+                print('\t[gpu {:d}] pass loss compute!'.format(curr_gpu_id))
             return outputs
 
             # return [target_rpn_match, RPN_PRED_CLS_LOGITS,

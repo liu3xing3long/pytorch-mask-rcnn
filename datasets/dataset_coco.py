@@ -393,7 +393,7 @@ class COCODataset(torch.utils.data.Dataset):
         # Get GT bounding boxes and masks for image.
         image_id = self.dataset.image_ids[image_index]
 
-        image, _, gt_class_ids, gt_boxes, gt_masks = \
+        image, image_metas, gt_class_ids, gt_boxes, gt_masks = \
             utils.load_image_gt(self.dataset, self.config, image_id, augment=self.augment,
                                 use_mini_mask=self.config.MRCNN.USE_MINI_MASK)
 
@@ -413,10 +413,10 @@ class COCODataset(torch.utils.data.Dataset):
 
         image = image.astype(np.float32) - self.config.DATA.MEAN_PIXEL
         image = torch.from_numpy(image.transpose(2, 0, 1)).float()
-        # image_metas = torch.from_numpy(image_metas)
+        image_metas = torch.from_numpy(image_metas)
         gt_masks = gt_masks.astype(int).transpose(2, 0, 1)
 
-        return image, gt_class_ids, gt_boxes, gt_masks
+        return image, gt_class_ids, gt_boxes, gt_masks, image_metas
 
     def __len__(self):
         return self.dataset.image_ids.shape[0]
@@ -427,19 +427,19 @@ def detection_collate(batch):
     number of associated object annotations (bounding boxes).
     """
     imgs = []
-    # imgs_metas = []
+    imgs_metas = []
     # rpn_match, rpn_bbox = [], []
     gt_class_ids, gt_boxes, gt_masks = [], [], []
     for sample in batch:
         imgs.append(sample[0])
-        # imgs_metas.append(sample[1])
         # rpn_match.append(sample[2])
         # rpn_bbox.append(sample[3])
         gt_class_ids.append(sample[1])
         gt_boxes.append(sample[2])
         gt_masks.append(sample[3])
-    return torch.stack(imgs, 0), gt_class_ids, gt_boxes, gt_masks
-           # torch.stack(imgs_metas, 0), \
+        imgs_metas.append(sample[4])
+    return torch.stack(imgs, 0), gt_class_ids, gt_boxes, gt_masks, \
+           torch.stack(imgs_metas, 0)
            # torch.stack(rpn_match, 0), torch.stack(rpn_bbox, 0), \
 
 

@@ -185,6 +185,7 @@ class Config(object):
             self.CTRL.SHOW_INTERVAL = 1
             self.DATA.IMAGE_MIN_DIM = 320
             self.DATA.IMAGE_MAX_DIM = 512
+            self.CTRL.PROFILE_ANALYSIS = True
 
         # set folder
         self.MISC.RESULT_FOLDER = os.path.join(

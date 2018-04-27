@@ -5,7 +5,7 @@ import scipy.ndimage
 from tools.box_utils import extract_bboxes
 
 
-def compose_image_meta(image_id, image_shape, window, active_class_ids):
+def compose_image_meta(image_id, image_shape, window, active_class_ids, coco_image_id):
     """Takes attributes of an image and puts them in one 1D array. Use
     parse_image_meta() to parse the values back.
 
@@ -18,10 +18,11 @@ def compose_image_meta(image_id, image_shape, window, active_class_ids):
         where not all classes are present in all datasets.
     """
     meta = np.array(
-        [image_id] +            # size=1
-        list(image_shape) +     # size=3
-        list(window) +          # size=4 (y1, x1, y2, x2) in image coordinates
-        list(active_class_ids)  # size=num_classes
+        [image_id] +                # size=1
+        list(image_shape) +         # size=3
+        list(window) +              # size=4 (y1, x1, y2, x2) in image coordinates
+        list(active_class_ids) +    # size=num_classes
+        [coco_image_id]             # size=1
     )
     return meta
 
@@ -34,8 +35,9 @@ def parse_image_meta(meta):
     image_id = meta[:, 0]
     image_shape = meta[:, 1:4]
     window = meta[:, 4:8]   # (y1, x1, y2, x2) window of image in in pixels
-    active_class_ids = meta[:, 8:]
-    return image_id, image_shape, window, active_class_ids
+    active_class_ids = meta[:, 8:-1]
+    coco_image_id = meta[:, -1]
+    return image_id, image_shape, window, active_class_ids, coco_image_id
 
 
 # def parse_image_meta_graph(meta):
@@ -238,6 +240,7 @@ def load_image_gt(dataset, config, image_id, augment=False, use_mini_mask=False)
         mask = minimize_mask(bbox, mask, config.MRCNN.MINI_MASK_SHAPE)
 
     # Image meta datasets
-    image_meta = compose_image_meta(image_id, shape, window, active_class_ids)
+    coco_image_id = dataset.image_info[image_id]["id"]
+    image_meta = compose_image_meta(image_id, shape, window, active_class_ids, coco_image_id)
 
     return image, image_meta, class_ids, bbox, mask

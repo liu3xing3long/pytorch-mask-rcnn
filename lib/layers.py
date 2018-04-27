@@ -636,7 +636,7 @@ def detection_layer(rois, probs, deltas, image_meta, config):
 
     # windows: (y1, x1, y2, x2) in image coordinates.
     # The part of the image that contains the image excluding the padding.
-    _, _, windows, _ = parse_image_meta(image_meta)
+    _, _, windows, _, _ = parse_image_meta(image_meta)
     # Class IDs per ROI
     class_scores, class_ids = torch.max(probs, dim=1)
 
