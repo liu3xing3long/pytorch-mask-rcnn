@@ -508,8 +508,9 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
     pos_ids = torch.nonzero(target_rpn_match == 1).squeeze()
     extra = pos_ids.size(0) - (config.RPN.TRAIN_ANCHORS_PER_IMAGE // 2)
     if extra > 0:
-        print('\t\t\t[sample_id {}, im {}] enter pos reduction ...'.
-              format(curr_sample_id, coco_im_id[curr_sample_id]))
+        if config.CTRL.PROFILE_ANALYSIS:
+            print('\t\t\t[sample_id {}, im {}] enter pos reduction ...'.
+                  format(curr_sample_id, coco_im_id[curr_sample_id]))
         # Reset the extra ones to neutral
         _tmp = torch.from_numpy(np.random.permutation(pos_ids.size(0))).cuda()
         # _tmp = torch.randperm(pos_ids.size(0)).cuda()
