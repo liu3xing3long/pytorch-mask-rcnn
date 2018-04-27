@@ -334,7 +334,7 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
         neg_ind = torch.nonzero(neg_roi_bool)[:, 0]
         r = 1.0 / config.ROIS.ROI_POSITIVE_RATIO
         neg_cnt = int(r * pos_cnt - pos_cnt)
-        rand_idx = torch.randperm(neg_ind.size(0))
+        rand_idx = torch.randperm(neg_ind.size(0)).cuda()
         rand_idx = rand_idx[:neg_cnt]
         if config.MISC.GPU_COUNT:
             rand_idx = rand_idx.cuda()
@@ -442,7 +442,10 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
 ############################################################
 #  RPN target layer (previously in __get_item__)
 ############################################################
-def generate_target(config, anchors, gt_class_ids, gt_boxes):
+def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
+
+    curr_sample_id = args[0]
+    coco_im_id = args[1].data.cpu().numpy()
 
     # RPN Match: 1 = positive anchor, -1 = negative anchor, 0 = neutral
     target_rpn_match = Variable(torch.zeros(anchors.size(0)).cuda(), requires_grad=False)
@@ -463,6 +466,9 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes):
         crowd_overlaps = bbox_overlaps(anchors, crowd_boxes)
         crowd_iou_max = torch.max(crowd_overlaps, dim=-1)[0]
         no_crowd_bool = (crowd_iou_max < 0.001)
+        if config.CTRL.PROFILE_ANALYSIS:
+            print('\t\t[sample_id {}, im {}] 0. passed crowd reduction in generate_rpn_target'.
+                  format(curr_sample_id, coco_im_id[curr_sample_id]))
     else:
         # All anchors don't intersect a crowd
         no_crowd_bool = Variable(torch.ByteTensor(anchors.size(0)), requires_grad=False).cuda()
@@ -493,14 +499,26 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes):
     # 3. Set anchors with high overlap as positive.
     target_rpn_match[anchor_iou_max >= config.RPN.TARGET_POS_THRES] = 1
 
+    if config.CTRL.PROFILE_ANALYSIS:
+        print('\t\t[sample_id {}, im {}] 1. passed initial assignment in generate_rpn_target'.
+              format(curr_sample_id, coco_im_id[curr_sample_id]))
+
     # Subsample to balance positive and negative anchors
     # Don't let positives be more than half the anchors
     pos_ids = torch.nonzero(target_rpn_match == 1).squeeze()
     extra = pos_ids.size(0) - (config.RPN.TRAIN_ANCHORS_PER_IMAGE // 2)
     if extra > 0:
+        print('\t\t\t[sample_id {}, im {}] enter pos reduction ...'.
+              format(curr_sample_id, coco_im_id[curr_sample_id]))
         # Reset the extra ones to neutral
-        _ids = pos_ids[Variable(torch.randperm(pos_ids.size(0)).cuda())[:extra]]
+        _tmp = torch.from_numpy(np.random.permutation(pos_ids.size(0))).cuda()
+        # _tmp = torch.randperm(pos_ids.size(0)).cuda()
+        _ids = pos_ids[_tmp[:extra]]
+        # _ids = pos_ids[:extra]
         target_rpn_match[_ids] = 0
+        if config.CTRL.PROFILE_ANALYSIS:
+            print('\t\t\t[sample_id {}, im {}] set extra anchors of positive to neutral '
+                  'in generate_rpn_target'.format(curr_sample_id, coco_im_id[curr_sample_id]))
 
     # Same for negative proposals
     neg_ids = torch.nonzero(target_rpn_match == -1).squeeze()
@@ -508,12 +526,19 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes):
                                torch.sum((target_rpn_match == 1).long()).data[0])
     if extra > 0:
         # Reset the extra ones to neutral
-        _ids = neg_ids[Variable(torch.randperm(neg_ids.size(0)).cuda())[:extra]]
+        # _ids = neg_ids[Variable(torch.randperm(neg_ids.size(0)).cuda())[:extra]]
+        # _ids = neg_ids[:extra]
+        # _tmp = torch.randperm(neg_ids.size(0)).cuda()
+        _tmp = torch.from_numpy(np.random.permutation(neg_ids.size(0))).cuda()
+        _ids = neg_ids[_tmp[:extra]]
         target_rpn_match[_ids] = 0
 
     assert (torch.sum((target_rpn_match == 1).long()) +
             torch.sum((target_rpn_match == -1).long())).data[0] == config.RPN.TRAIN_ANCHORS_PER_IMAGE
 
+    if config.CTRL.PROFILE_ANALYSIS:
+        print('\t\t[sample_id {}, im {}] 2. passed rpn_target_match'.
+              format(curr_sample_id, coco_im_id[curr_sample_id]))
     # For positive anchors, compute shift and scale needed to transform them
     # to match the corresponding GT boxes.
     ix = 0
@@ -524,10 +549,14 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes):
         anchor = anchors[pos_id]
         target_rpn_bbox[ix] = box_refinement(anchor, gt)
         ix += 1
+    # if config.CTRL.PROFILE_ANALYSIS:
+    #     print('\t\t[sample_id {}, im {}] passed rpn_target_bbox'.
+    #           format(curr_sample_id, coco_im_id[curr_sample_id]))
+
     return target_rpn_match, target_rpn_bbox
 
 
-def prepare_rpn_target(anchors, gt_class_ids, gt_boxes, config):
+def prepare_rpn_target(anchors, gt_class_ids, gt_boxes, config, curr_coco_im_id=None):
     """Given the anchors and GT boxes, compute overlaps and identify positive
     anchors and deltas to refine them to match their corresponding GT boxes.
 
@@ -548,7 +577,8 @@ def prepare_rpn_target(anchors, gt_class_ids, gt_boxes, config):
     rpn_match, rpn_bbox = [], []
 
     for i in range(bs):
-        _rpn_match, _rpn_bbox = generate_target(config, anchors, gt_class_ids[i], gt_boxes[i])
+        _rpn_match, _rpn_bbox = generate_target(
+            config, anchors, gt_class_ids[i], gt_boxes[i], i, curr_coco_im_id)
         rpn_match.append(_rpn_match)
         rpn_bbox.append(_rpn_bbox)
 
@@ -636,7 +666,7 @@ def detection_layer(rois, probs, deltas, image_meta, config):
 
     # windows: (y1, x1, y2, x2) in image coordinates.
     # The part of the image that contains the image excluding the padding.
-    _, _, windows, _ = parse_image_meta(image_meta)
+    _, _, windows, _, _ = parse_image_meta(image_meta)
     # Class IDs per ROI
     class_scores, class_ids = torch.max(probs, dim=1)
 

@@ -86,8 +86,9 @@ class MaskRCNN(nn.Module):
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
+                # n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                # m.weight.data.normal_(0, math.sqrt(2. / n))
+                nn.init.xavier_uniform(m.weight)
                 if m.bias is not None:
                     m.bias.data.zero_()
             elif isinstance(m, nn.BatchNorm2d):
@@ -134,9 +135,11 @@ class MaskRCNN(nn.Module):
 
     def forward(self, input, mode):
         """forward function of the Mask-RCNN network"""
-        # curr_gpu_id = torch.cuda.current_device()
         molded_images = input[0]
         sample_per_gpu = molded_images.size(0)  # aka, actual batch size
+        # for debug only
+        curr_gpu_id = torch.cuda.current_device()
+        curr_coco_im_id = input[-1][:, -1]
 
         # set model state
         if mode == 'inference':
@@ -184,13 +187,18 @@ class MaskRCNN(nn.Module):
         h, w = self.config.DATA.IMAGE_SHAPE[:2]
         scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False).cuda()
 
+        if self.config.CTRL.PROFILE_ANALYSIS and mode == 'train':
+
+            print('\t[gpu {:d}] curr_coco_im_ids: {}'.format(curr_gpu_id, curr_coco_im_id.data.cpu().numpy()))
+            print('\t[gpu {:d}] pass feature extraction'.format(curr_gpu_id))
+
         if mode == 'inference':
             # Network Heads
             # Proposal classifier and BBox regressor heads
             _, mrcnn_class, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _proposals)
 
             # Detections
-            image_metas = input[1]  # (3, 89), Variable
+            image_metas = input[1]  # (3, 90), Variable
             # output is [batch, num_detections (say 100), (y1, x1, y2, x2, class_id, score)] in image coordinates
             detections = detection_layer(_proposals, mrcnn_class, mrcnn_bbox, image_metas, self.config)
 
@@ -211,12 +219,16 @@ class MaskRCNN(nn.Module):
 
             # compute RPN Targets
             target_rpn_match, target_rpn_bbox = \
-                prepare_rpn_target(self.priors, gt_class_ids, gt_boxes, self.config)
+                prepare_rpn_target(self.priors, gt_class_ids, gt_boxes, self.config, curr_coco_im_id)
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\t[gpu {:d}] pass rpn_target generation'.format(curr_gpu_id))
 
             # _rois: N, TRAIN_ROIS_PER_IMAGE, 4; zero padded
             _rois, target_class_ids, target_deltas, target_mask = \
                 prepare_det_target(_proposals.detach(), gt_class_ids, gt_boxes/scale, gt_masks, self.config)
 
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\t[gpu {:d}] pass pass det_target generation'.format(curr_gpu_id))
             if torch.sum(_rois).data[0] != 0:
                 # classifier
                 mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _rois)
@@ -236,6 +248,8 @@ class MaskRCNN(nn.Module):
                 mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
                 mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\t[gpu {:d}] pass mask and cls generation'.format(curr_gpu_id))
             # compute loss directly
             rpn_class_loss = compute_rpn_class_loss(target_rpn_match, RPN_PRED_CLS_LOGITS)
             rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, RPN_PRED_BBOX)
@@ -245,6 +259,8 @@ class MaskRCNN(nn.Module):
 
             outputs = torch.stack((rpn_class_loss, rpn_bbox_loss,
                                    mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss), dim=1)
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\t[gpu {:d}] pass loss compute!'.format(curr_gpu_id))
             return outputs
 
             # return [target_rpn_match, RPN_PRED_CLS_LOGITS,

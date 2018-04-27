@@ -128,7 +128,7 @@ def train_model(input_model, train_generator, valset, lr, layers, coco_api=None)
         # save model
         model_file = os.path.join(model.config.MISC.RESULT_FOLDER,
                                   'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(ep, iter_per_epoch))
-        print_log('saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
+        print_log('Epoch ends, saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
         torch.save({
             'state_dict':   model.state_dict(),
             'epoch':        ep,
@@ -172,6 +172,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         inputs = next(data_iterator)
 
         images = Variable(inputs[0].cuda())
+        image_metas = Variable(inputs[-1].cuda())
         # pad with zeros
         gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
 
@@ -185,7 +186,8 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # Run object detection
         # [target_rpn_match, rpn_class_logits, target_rpn_bbox, rpn_pred_bbox,
         # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
-        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks], mode='train')  # shape: gpu_num x 5
+        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks,
+                               image_metas], mode='train')  # shape: gpu_num x 5
         detailed_loss = torch.mean(outputs, dim=0)
         loss = torch.sum(detailed_loss)
 
@@ -211,8 +213,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             iter_time = time.time() - curr_iter_time_start
             days, hrs = compute_left_time(iter_time, args['epoch'],
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
-
-            print_log('[{:s}][stage {:s}]{:s} {:06d}/{} [est. left: {:d} days, {:02.2f} hrs] (iter_time: {:.2f})'
+            print_log('[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:02.2f} hrs] (iter_t: {:.2f})'
                       '\tloss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} '
                       '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}'.
                       format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'],
@@ -240,11 +241,11 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             }, model_file)
 
         # for debug; test the model
-        if config.CTRL.DEBUG and iter_ind == (start_iter+50):
-            print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
-                      format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
-            test_model(input_model, args['valset'], args['coco_api'],
-                       during_train=True, epoch=args['epoch'], iter=iter_ind)
+        # if config.CTRL.DEBUG and iter_ind == (start_iter+100):
+        #     print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
+        #               format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
+        #     test_model(input_model, args['valset'], args['coco_api'],
+        #                during_train=True, epoch=args['epoch'], iter=iter_ind)
 
     return loss_sum
 
@@ -435,9 +436,8 @@ def _mold_inputs(model, image_ids, dataset):
         molded_image = molded_image.astype(np.float32) - model.config.DATA.MEAN_PIXEL
 
         # Build image_meta
-        image_meta = compose_image_meta(
-            0, image.shape, window,
-            np.zeros([model.config.DATASET.NUM_CLASSES], dtype=np.int32))
+        image_meta = compose_image_meta(0, image.shape, window,
+                                        np.zeros([model.config.DATASET.NUM_CLASSES], dtype=np.int32), 0)
         # Append
         molded_images.append(molded_image)
         windows.append(window)

@@ -5,7 +5,7 @@ import scipy.ndimage
 from tools.box_utils import extract_bboxes
 
 
-def compose_image_meta(image_id, image_shape, window, active_class_ids):
+def compose_image_meta(image_id, image_shape, window, active_class_ids, coco_image_id):
     """Takes attributes of an image and puts them in one 1D array. Use
     parse_image_meta() to parse the values back.
 
@@ -18,10 +18,11 @@ def compose_image_meta(image_id, image_shape, window, active_class_ids):
         where not all classes are present in all datasets.
     """
     meta = np.array(
-        [image_id] +            # size=1
-        list(image_shape) +     # size=3
-        list(window) +          # size=4 (y1, x1, y2, x2) in image coordinates
-        list(active_class_ids)  # size=num_classes
+        [image_id] +                # size=1
+        list(image_shape) +         # size=3
+        list(window) +              # size=4 (y1, x1, y2, x2) in image coordinates
+        list(active_class_ids) +    # size=num_classes
+        [coco_image_id]             # size=1
     )
     return meta
 
@@ -34,8 +35,9 @@ def parse_image_meta(meta):
     image_id = meta[:, 0]
     image_shape = meta[:, 1:4]
     window = meta[:, 4:8]   # (y1, x1, y2, x2) window of image in in pixels
-    active_class_ids = meta[:, 8:]
-    return image_id, image_shape, window, active_class_ids
+    active_class_ids = meta[:, 8:-1]
+    coco_image_id = meta[:, -1]
+    return image_id, image_shape, window, active_class_ids, coco_image_id
 
 
 # def parse_image_meta_graph(meta):
@@ -68,20 +70,21 @@ def resize_image(image, min_dim=None, max_dim=None, padding=False):
     """
     Resizes an image keeping the aspect ratio.
 
-    min_dim: if provided, resizes the image such that it's smaller
-        dimension == min_dim
-    max_dim: if provided, ensures that the image longest side doesn't
-        exceed this value.
-    padding: If true, pads image with zeros so it's size is max_dim x max_dim
+    Args:
+        image
+        min_dim:    if provided, resizes the image such that its smaller dimension == min_dim
+        max_dim:    if provided, ensures that the image longest side doesn't exceed this value.
+
+        padding:    if true, pads image with zeros so it's size is max_dim x max_dim
 
     Returns:
-    image: the resized image
-    window: (y1, x1, y2, x2). If max_dim is provided, padding might
-        be inserted in the returned image. If so, this window is the
-        coordinates of the image part of the full image (excluding
-        the padding). The x2, y2 pixels are not included.
-    scale: The scale factor used to resize the image
-    padding: Padding added to the image [(top, bottom), (left, right), (0, 0)]
+        image:      the resized image
+        window:     (y1, x1, y2, x2). If max_dim is provided, padding might
+                            be inserted in the returned image. If so, this window is the
+                            coordinates of the image part of the full image (excluding
+                            the padding). The x2, y2 pixels are not included.
+        scale:      The scale factor used to resize the image
+        padding:    Padding added to the image [(top, bottom), (left, right), (0, 0)]
     """
     # Default window (y1, x1, y2, x2) and default scale == 1.
     h, w = image.shape[:2]
@@ -188,7 +191,7 @@ def unmold_mask(mask, bbox, image_shape):
 ############################################################
 #  Data Generator (called in __get_item__)
 ############################################################
-def load_image_gt(dataset, config, image_id, augment=False, use_mini_mask=False):
+def load_image_and_gt(dataset, config, image_id, augment=False, use_mini_mask=False):
     """Load and return ground truth datasets for an image (image, mask, bounding boxes).
 
     augment:        If true, apply random image augmentation.
@@ -209,7 +212,6 @@ def load_image_gt(dataset, config, image_id, augment=False, use_mini_mask=False)
     # Load image and mask
     image = dataset.load_image(image_id)
     mask, class_ids = dataset.load_mask(image_id)
-    shape = image.shape
     image, window, scale, padding = \
         resize_image(image, min_dim=config.DATA.IMAGE_MIN_DIM,
                      max_dim=config.DATA.IMAGE_MAX_DIM, padding=config.DATA.IMAGE_PADDING)
@@ -238,6 +240,7 @@ def load_image_gt(dataset, config, image_id, augment=False, use_mini_mask=False)
         mask = minimize_mask(bbox, mask, config.MRCNN.MINI_MASK_SHAPE)
 
     # Image meta datasets
-    image_meta = compose_image_meta(image_id, shape, window, active_class_ids)
+    coco_image_id = dataset.image_info[image_id]["id"]
+    image_meta = compose_image_meta(image_id, image.shape, window, active_class_ids, coco_image_id)
 
     return image, image_meta, class_ids, bbox, mask

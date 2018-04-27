@@ -20,7 +20,11 @@ if __name__ == '__main__':
                         # default='all_new')
                         # default='hyli_default_old')
                         default='fuck')
+                        # default='base_101')
 
+    # debug mode: set train_data to val_data for faster data loading.
+    # show loss step by step; smaller input image size
+    # do validation right after a few steps and visualize predictions
     parser.add_argument('--debug',
                         default=1, type=int)  # no bool type here please
 

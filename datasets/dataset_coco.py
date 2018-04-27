@@ -37,29 +37,6 @@ class Dataset(object):
         self.class_info = [{"source": "", "id": 0, "name": "BG"}]
         self.source_class_ids = {}
 
-    def add_class(self, source, class_id, class_name):
-        assert "." not in source, "Source name cannot contain a dot"
-        # Does the class exist already?
-        for info in self.class_info:
-            if info['source'] == source and info["id"] == class_id:
-                # source.class_id combination already available, skip
-                return
-        # Add the class
-        self.class_info.append({
-            "source": source,
-            "id": class_id,
-            "name": class_name,
-        })
-
-    def add_image(self, source, image_id, path, **kwargs):
-        image_info = {
-            "id": image_id,
-            "source": source,
-            "path": path,
-        }
-        image_info.update(kwargs)
-        self.image_info.append(image_info)
-
     def prepare(self, class_map=None):
         """Prepares the Dataset class for use.
 
@@ -106,27 +83,27 @@ class Dataset(object):
         assert info['source'] == source
         return info['id']
 
-    def append_data(self, class_info, image_info):
-        self.external_to_class_id = {}
-        for i, c in enumerate(self.class_info):
-            for ds, id in c["map"]:
-                self.external_to_class_id[ds + str(id)] = i
-
-        # Map external image IDs to internal ones.
-        self.external_to_image_id = {}
-        for i, info in enumerate(self.image_info):
-            self.external_to_image_id[info["ds"] + str(info["id"])] = i
+    # def append_data(self, class_info, image_info):
+    #     self.external_to_class_id = {}
+    #     for i, c in enumerate(self.class_info):
+    #         for ds, id in c["map"]:
+    #             self.external_to_class_id[ds + str(id)] = i
+    #
+    #     # Map external image IDs to internal ones.
+    #     self.external_to_image_id = {}
+    #     for i, info in enumerate(self.image_info):
+    #         self.external_to_image_id[info["ds"] + str(info["id"])] = i
 
     @property
     def image_ids(self):
         return self._image_ids
 
-    def source_image_link(self, image_id):
-        """Returns the path or URL to the image.
-        Override this to return a URL to the image if it's availble online for easy
-        debugging.
-        """
-        return self.image_info[image_id]["path"]
+    # def source_image_link(self, image_id):
+    #     """Returns the path or URL to the image.
+    #     Override this to return a URL to the image if it's availble online for easy
+    #     debugging.
+    #     """
+    #     return self.image_info[image_id]["path"]
 
     def load_image(self, image_id):
         """Load the specified image and return a [H,W,3] Numpy array.
@@ -137,6 +114,29 @@ class Dataset(object):
         if image.ndim != 3:
             image = skimage.color.gray2rgb(image)
         return image
+
+    def add_class(self, source, class_id, class_name):
+        assert "." not in source, "Source name cannot contain a dot"
+        # Does the class exist already?
+        for info in self.class_info:
+            if info['source'] == source and info["id"] == class_id:
+                # source.class_id combination already available, skip
+                return
+        # Add the class
+        self.class_info.append({
+            "source": source,
+            "id": class_id,
+            "name": class_name,
+        })
+
+    def add_image(self, source, image_id, path, **kwargs):
+        image_info = {
+            "id": image_id,
+            "source": source,
+            "path": path,
+        }
+        image_info.update(kwargs)
+        self.image_info.append(image_info)
 
     def load_coco(self, dataset_dir, subset, year='2014', class_ids=None, auto_download=False):
         """Load a subset of the COCO dataset.
@@ -318,14 +318,14 @@ class Dataset(object):
             class_ids = np.empty([0], np.int32)
         return mask, class_ids
 
-    def image_reference(self, image_id):
-        """Return a link to the image in the COCO Website."""
-        info = self.image_info[image_id]
-        if info["source"] == "coco":
-            return "http://cocodataset.org/#explore?id={}".format(info["id"])
-        else:
-            # super(CocoDataset, self).image_reference(image_id)
-            return ""
+    # def image_reference(self, image_id):
+    #     """Return a link to the image in the COCO Website."""
+    #     info = self.image_info[image_id]
+    #     if info["source"] == "coco":
+    #         return "http://cocodataset.org/#explore?id={}".format(info["id"])
+    #     else:
+    #         # super(CocoDataset, self).image_reference(image_id)
+    #         return ""
 
     # The following two functions are from pycocotools with a few changes.
     def annToRLE(self, ann, height, width):
@@ -393,9 +393,9 @@ class COCODataset(torch.utils.data.Dataset):
         # Get GT bounding boxes and masks for image.
         image_id = self.dataset.image_ids[image_index]
 
-        image, _, gt_class_ids, gt_boxes, gt_masks = \
-            utils.load_image_gt(self.dataset, self.config, image_id, augment=self.augment,
-                                use_mini_mask=self.config.MRCNN.USE_MINI_MASK)
+        image, image_metas, gt_class_ids, gt_boxes, gt_masks = \
+            utils.load_image_and_gt(self.dataset, self.config, image_id, augment=self.augment,
+                                    use_mini_mask=self.config.MRCNN.USE_MINI_MASK)
 
         # Skip images that have no instances. This can happen in cases
         # where we train on a subset of classes and the image doesn't
@@ -413,10 +413,10 @@ class COCODataset(torch.utils.data.Dataset):
 
         image = image.astype(np.float32) - self.config.DATA.MEAN_PIXEL
         image = torch.from_numpy(image.transpose(2, 0, 1)).float()
-        # image_metas = torch.from_numpy(image_metas)
+        image_metas = torch.from_numpy(image_metas)
         gt_masks = gt_masks.astype(int).transpose(2, 0, 1)
 
-        return image, gt_class_ids, gt_boxes, gt_masks
+        return image, gt_class_ids, gt_boxes, gt_masks, image_metas
 
     def __len__(self):
         return self.dataset.image_ids.shape[0]
@@ -427,19 +427,19 @@ def detection_collate(batch):
     number of associated object annotations (bounding boxes).
     """
     imgs = []
-    # imgs_metas = []
+    imgs_metas = []
     # rpn_match, rpn_bbox = [], []
     gt_class_ids, gt_boxes, gt_masks = [], [], []
     for sample in batch:
         imgs.append(sample[0])
-        # imgs_metas.append(sample[1])
         # rpn_match.append(sample[2])
         # rpn_bbox.append(sample[3])
         gt_class_ids.append(sample[1])
         gt_boxes.append(sample[2])
         gt_masks.append(sample[3])
-    return torch.stack(imgs, 0), gt_class_ids, gt_boxes, gt_masks
-           # torch.stack(imgs_metas, 0), \
+        imgs_metas.append(sample[4])
+    return torch.stack(imgs, 0), gt_class_ids, gt_boxes, gt_masks, \
+           torch.stack(imgs_metas, 0)
            # torch.stack(rpn_match, 0), torch.stack(rpn_bbox, 0), \
 
 

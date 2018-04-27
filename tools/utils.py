@@ -165,9 +165,9 @@ def update_config_and_load_model(config, network, train_generator=None):
     # load model
     checkpoints = torch.load(model_path)
     try:
-        network.load_state_dict(checkpoints['state_dict'])
+        network.load_state_dict(checkpoints['state_dict'], strict=False)
     except KeyError:
-        network.load_state_dict(checkpoints)  # legacy reason
+        network.load_state_dict(checkpoints, strict=False)  # legacy reason
 
     # determine start_iter and epoch for resume
     if phase == 'train':
