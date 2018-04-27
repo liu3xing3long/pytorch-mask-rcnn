@@ -245,8 +245,9 @@ class CocoConfig(Config):
 
         elif self.CTRL.CONFIG_NAME == 'base_101':
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
-            self.CTRL.BATCH_SIZE = 4
-            self.CTRL.PROFILE_ANALYSIS = False
+            self.CTRL.BATCH_SIZE = 8
+            self.CTRL.PROFILE_ANALYSIS = True
+
         elif self.CTRL.CONFIG_NAME == 'base_101_8gpu':
             self.CTRL.BATCH_SIZE = 16
             self.CTRL.PROFILE_ANALYSIS = True
