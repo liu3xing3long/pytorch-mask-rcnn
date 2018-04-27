@@ -170,6 +170,7 @@ class Config(object):
     CTRL = AttrDict()
     CTRL.SHOW_INTERVAL = 20
     CTRL.USE_VISDOM = False
+    CTRL.PROFILE_ANALYSIS = False
 
     # for train and inference
     CTRL.BATCH_SIZE = 6
@@ -245,8 +246,11 @@ class CocoConfig(Config):
         elif self.CTRL.CONFIG_NAME == 'base_101':
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
             self.CTRL.BATCH_SIZE = 8
+            self.CTRL.PROFILE_ANALYSIS = False
+        
         elif self.CTRL.CONFIG_NAME == 'base_101_8gpu':
-            self.CTRL.BATCH_SIZE = 16
+            self.CTRL.BATCH_SIZE = 4
+            self.CTRL.PROFILE_ANALYSIS = True
         else:
             print('WARNING: unknown config name!!! use default setting.')
 

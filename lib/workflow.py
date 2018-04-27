@@ -167,24 +167,21 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     save_iter_base = math.floor(total_iter / config.TRAIN.SAVE_FREQ_WITHIN_EPOCH)
 
     for iter_ind in range(start_iter, total_iter+1):
-                
+        
         curr_iter_time_start = time.time()
         inputs = next(data_iterator)
-        
-        if iter_ind < 4700:
-            print('curr iter: ', iter_ind)
-            continue
-        else:
-            print('curr iter: ', iter_ind)
 
         images = Variable(inputs[0].cuda())
         # pad with zeros
         gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
 
-        if config.CTRL.DEBUG:
-            print('\nfetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
+        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
+            print('\ncurr_iter: ', iter_ind)
+            print('fetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
             t = time.time()
 
+        if iter_ind < 4700:
+            continue
         # Run object detection
         # [target_rpn_match, rpn_class_logits, target_rpn_bbox, rpn_pred_bbox,
         # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
@@ -195,7 +192,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # Compute losses
         # loss, detailed_loss = compute_loss(outputs)
 
-        if config.CTRL.DEBUG:
+        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
             print('forward time: {:.4f}'.format(time.time() - t))
             t = time.time()
 
@@ -205,7 +202,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             torch.nn.utils.clip_grad_norm(input_model.parameters(), config.TRAIN.MAX_GRAD_NORM)
         optimizer.step()
 
-        if config.CTRL.DEBUG:
+        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
             print('backward time: {:.4f}'.format(time.time() - t))
             t = time.time()
 
@@ -219,8 +216,8 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                       '\tloss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} '
                       '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}'.
                       format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'],
-                             days, hrs, iter_time,
                              iter_ind, total_iter,
+                             days, hrs, iter_time,
                              loss.data.cpu()[0],
                              detailed_loss[0].data.cpu()[0],
                              detailed_loss[1].data.cpu()[0],
