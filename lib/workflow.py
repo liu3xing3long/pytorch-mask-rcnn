@@ -167,8 +167,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     save_iter_base = math.floor(total_iter / config.TRAIN.SAVE_FREQ_WITHIN_EPOCH)
 
     for iter_ind in range(start_iter, total_iter+1):
-                
-        #print('curr_iter: ', iter_ind)
+
         curr_iter_time_start = time.time()
         inputs = next(data_iterator)
 

@@ -150,7 +150,7 @@ class Config(object):
     TRAIN.GAMMA = 0.1
     TRAIN.LR_POLICY = 'steps_with_decay'
     # in epoch
-    TRAIN.SCHEDULE = [10, 5, 5]
+    TRAIN.SCHEDULE = [6, 4, 3]
     TRAIN.LR_WARM_UP = True
 
     TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
@@ -247,11 +247,12 @@ class CocoConfig(Config):
         elif self.CTRL.CONFIG_NAME == 'base_101':
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
             self.CTRL.BATCH_SIZE = 8
-            self.CTRL.PROFILE_ANALYSIS = True
+            self.CTRL.PROFILE_ANALYSIS = False
 
         elif self.CTRL.CONFIG_NAME == 'base_101_8gpu':
+            self.MODEL.INIT_FILE_CHOICE = 'imagenet_pretrain'
             self.CTRL.BATCH_SIZE = 16
-            self.CTRL.PROFILE_ANALYSIS = True
+            self.CTRL.PROFILE_ANALYSIS = False
         else:
             print('WARNING: unknown config name!!! use default setting.')
 
