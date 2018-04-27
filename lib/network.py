@@ -184,6 +184,9 @@ class MaskRCNN(nn.Module):
         h, w = self.config.DATA.IMAGE_SHAPE[:2]
         scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False).cuda()
 
+        if self.config.CTRL.PROFILE_ANALYSIS:
+            print('\tpass feature extraction')
+
         if mode == 'inference':
             # Network Heads
             # Proposal classifier and BBox regressor heads
@@ -212,11 +215,15 @@ class MaskRCNN(nn.Module):
             # compute RPN Targets
             target_rpn_match, target_rpn_bbox = \
                 prepare_rpn_target(self.priors, gt_class_ids, gt_boxes, self.config)
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\tpass rpn_target generation')
 
             # _rois: N, TRAIN_ROIS_PER_IMAGE, 4; zero padded
             _rois, target_class_ids, target_deltas, target_mask = \
                 prepare_det_target(_proposals.detach(), gt_class_ids, gt_boxes/scale, gt_masks, self.config)
 
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\tpass pass det_target generation')
             if torch.sum(_rois).data[0] != 0:
                 # classifier
                 mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _rois)
@@ -236,6 +243,8 @@ class MaskRCNN(nn.Module):
                 mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
                 mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\tpass mask and cls generation')
             # compute loss directly
             rpn_class_loss = compute_rpn_class_loss(target_rpn_match, RPN_PRED_CLS_LOGITS)
             rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, RPN_PRED_BBOX)
@@ -245,6 +254,8 @@ class MaskRCNN(nn.Module):
 
             outputs = torch.stack((rpn_class_loss, rpn_bbox_loss,
                                    mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss), dim=1)
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\tpass loss compute!')
             return outputs
 
             # return [target_rpn_match, RPN_PRED_CLS_LOGITS,
