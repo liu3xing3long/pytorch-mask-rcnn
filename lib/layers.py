@@ -334,7 +334,7 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
         neg_ind = torch.nonzero(neg_roi_bool)[:, 0]
         r = 1.0 / config.ROIS.ROI_POSITIVE_RATIO
         neg_cnt = int(r * pos_cnt - pos_cnt)
-        rand_idx = torch.randperm(neg_ind.size(0))
+        rand_idx = torch.randperm(neg_ind.size(0)).cuda()
         rand_idx = rand_idx[:neg_cnt]
         if config.MISC.GPU_COUNT:
             rand_idx = rand_idx.cuda()
@@ -511,8 +511,9 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         print('\t\t\t[sample_id {}, im {}] enter pos reduction ...'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
         # Reset the extra ones to neutral
-        # _ids = pos_ids[Variable(torch.randperm(pos_ids.size(0)).cuda())[:extra]]
-        _ids = pos_ids[:extra]
+        _tmp = torch.randperm(pos_ids.size(0)).cuda()
+        _ids = pos_ids[_tmp[:extra]]
+        # _ids = pos_ids[:extra]
         target_rpn_match[_ids] = 0
         if config.CTRL.PROFILE_ANALYSIS:
             print('\t\t\t[sample_id {}, im {}] set extra anchors of positive to neutral '
@@ -524,8 +525,10 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
                                torch.sum((target_rpn_match == 1).long()).data[0])
     if extra > 0:
         # Reset the extra ones to neutral
-        # _ids = neg_ids[Variable(torch.randperm(neg_ids.size(0)).cuda())[:extra]] # TODO
-        _ids = neg_ids[:extra]
+        # _ids = neg_ids[Variable(torch.randperm(neg_ids.size(0)).cuda())[:extra]]
+        # _ids = neg_ids[:extra]
+        _tmp = torch.randperm(neg_ids.size(0)).cuda()
+        _ids = neg_ids[_tmp[:extra]]
         target_rpn_match[_ids] = 0
 
     assert (torch.sum((target_rpn_match == 1).long()) +
