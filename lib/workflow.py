@@ -436,9 +436,8 @@ def _mold_inputs(model, image_ids, dataset):
         molded_image = molded_image.astype(np.float32) - model.config.DATA.MEAN_PIXEL
 
         # Build image_meta
-        image_meta = compose_image_meta(
-            0, image.shape, window,
-            np.zeros([model.config.DATASET.NUM_CLASSES], dtype=np.int32), 0)
+        image_meta = compose_image_meta(0, image.shape, window,
+                                        np.zeros([model.config.DATASET.NUM_CLASSES], dtype=np.int32), 0)
         # Append
         molded_images.append(molded_image)
         windows.append(window)

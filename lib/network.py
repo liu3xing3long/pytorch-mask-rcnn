@@ -184,7 +184,7 @@ class MaskRCNN(nn.Module):
         h, w = self.config.DATA.IMAGE_SHAPE[:2]
         scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False).cuda()
 
-        if self.config.CTRL.PROFILE_ANALYSIS:
+        if self.config.CTRL.PROFILE_ANALYSIS and mode == 'train':
             curr_gpu_id = torch.cuda.current_device()
             curr_coco_im_id = input[-1][:, -1]
             print('\t[gpu {:d}] curr_coco_im_ids: {}'.format(curr_gpu_id, curr_coco_im_id.data.cpu().numpy()))
