@@ -511,7 +511,8 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         print('\t\t\t[sample_id {}, im {}] enter pos reduction ...'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
         # Reset the extra ones to neutral
-        _tmp = torch.randperm(pos_ids.size(0)).cuda()
+        _tmp = torch.from_numpy(np.random.permutation(pos_ids.size(0))).cuda()
+        # _tmp = torch.randperm(pos_ids.size(0)).cuda()
         _ids = pos_ids[_tmp[:extra]]
         # _ids = pos_ids[:extra]
         target_rpn_match[_ids] = 0
@@ -527,7 +528,8 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         # Reset the extra ones to neutral
         # _ids = neg_ids[Variable(torch.randperm(neg_ids.size(0)).cuda())[:extra]]
         # _ids = neg_ids[:extra]
-        _tmp = torch.randperm(neg_ids.size(0)).cuda()
+        # _tmp = torch.randperm(neg_ids.size(0)).cuda()
+        _tmp = torch.from_numpy(np.random.permutation(neg_ids.size(0))).cuda()
         _ids = neg_ids[_tmp[:extra]]
         target_rpn_match[_ids] = 0
 
