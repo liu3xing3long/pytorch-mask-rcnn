@@ -128,7 +128,7 @@ def train_model(input_model, train_generator, valset, lr, layers, coco_api=None)
         # save model
         model_file = os.path.join(model.config.MISC.RESULT_FOLDER,
                                   'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(ep, iter_per_epoch))
-        print_log('saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
+        print_log('Epoch ends, saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
         torch.save({
             'state_dict':   model.state_dict(),
             'epoch':        ep,
