@@ -42,7 +42,7 @@ class Config(object):
     # The strides of each layer of the FPN Pyramid. These values
     # are based on a Resnet101 backbone.
     MODEL.BACKBONE_STRIDES = [4, 8, 16, 32, 64]
-    # Path to pretrained imagenet model # TODO: loading is buggy
+    # Path to pretrained imagenet model
     MODEL.PRETRAIN_IMAGENET_MODEL = os.path.join('datasets/pretrain_model', "resnet50_imagenet.pth")
     # Path to pretrained weights file
     MODEL.PRETRAIN_COCO_MODEL = os.path.join('datasets/pretrain_model', 'mask_rcnn_coco.pth')
@@ -151,7 +151,7 @@ class Config(object):
     TRAIN.LR_POLICY = 'steps_with_decay'
     # in epoch
     TRAIN.SCHEDULE = [6, 4, 3]
-    TRAIN.LR_WARM_UP = True
+    TRAIN.LR_WARM_UP = False
 
     TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
 
