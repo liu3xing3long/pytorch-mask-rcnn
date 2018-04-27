@@ -250,8 +250,8 @@ class CocoConfig(Config):
             self.CTRL.PROFILE_ANALYSIS = False
 
         elif self.CTRL.CONFIG_NAME == 'base_102':
-            self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
-            self.CTRL.BATCH_SIZE = 16
+            self.MODEL.INIT_FILE_CHOICE = 'imagenet_pretrain'
+            self.CTRL.BATCH_SIZE = 8
             self.CTRL.PROFILE_ANALYSIS = False
         else:
             print('WARNING: unknown config name!!! use default setting.')
