@@ -181,8 +181,6 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             print('fetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
             t = time.time()
 
-        if iter_ind < 4700:
-            continue
         # Run object detection
         # [target_rpn_match, rpn_class_logits, target_rpn_bbox, rpn_pred_bbox,
         # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
