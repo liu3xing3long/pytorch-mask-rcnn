@@ -136,6 +136,7 @@ class MaskRCNN(nn.Module):
         """forward function of the Mask-RCNN network"""
         molded_images = input[0]
         sample_per_gpu = molded_images.size(0)  # aka, actual batch size
+        curr_coco_im_id = []
 
         # set model state
         if mode == 'inference':
@@ -185,9 +186,8 @@ class MaskRCNN(nn.Module):
 
         if self.config.CTRL.PROFILE_ANALYSIS:
             curr_gpu_id = torch.cuda.current_device()
-            curr_coco_im_id = input[-1][:, -1].data.cpu().numpy()
-            self.config.temp_id = curr_coco_im_id
-            print('\t[gpu {:d}] curr_coco_im_ids: {}'.format(curr_gpu_id, curr_coco_im_id))
+            curr_coco_im_id = input[-1][:, -1]
+            print('\t[gpu {:d}] curr_coco_im_ids: {}'.format(curr_gpu_id, curr_coco_im_id.data.cpu().numpy()))
             print('\t[gpu {:d}] pass feature extraction'.format(curr_gpu_id))
 
         if mode == 'inference':
@@ -217,7 +217,7 @@ class MaskRCNN(nn.Module):
 
             # compute RPN Targets
             target_rpn_match, target_rpn_bbox = \
-                prepare_rpn_target(self.priors, gt_class_ids, gt_boxes, self.config)
+                prepare_rpn_target(self.priors, gt_class_ids, gt_boxes, self.config, curr_coco_im_id)
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass rpn_target generation'.format(curr_gpu_id))
 
