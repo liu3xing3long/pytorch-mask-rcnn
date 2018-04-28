@@ -3,6 +3,6 @@ TRAIN:
   CLIP_GRAD: False
   END2END: False    # turn on set_trainable option
 CTRL:
-  BATCH_SIZE: 32
+  BATCH_SIZE: 40
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
