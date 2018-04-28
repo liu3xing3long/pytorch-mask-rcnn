@@ -1,8 +1,5 @@
-import math
-import numpy as np
-import os
 import datetime
-from tools.utils import print_log
+from tools.utils import *
 from tools.collections import AttrDict
 
 
@@ -11,31 +8,6 @@ class Config(object):
     sub-class that inherits from this one and override properties
     that need to be changed.
     """
-    # NUMBER OF GPUs to use. For CPU use 0
-    # GPU_COUNT = 1
-
-    # (deprecated)
-    # Number of images to train with on each GPU. A 12GB GPU can typically
-    # handle 2 images of 1024x1024px.
-    # Adjust based on your GPU memory and image sizes. Use the highest
-    # number that your GPU can handle for best performance.
-    # IMAGES_PER_GPU = 1
-
-    # (deprecated)
-    # Number of training steps per epoch
-    # This doesn't need to match the size of the training set. Tensorboard
-    # updates are saved at the end of each epoch, so setting this to a
-    # smaller number means getting more frequent TensorBoard updates.
-    # Validation stats are also calculated at each epoch end and they
-    # might take a while, so don't set this too small to avoid spending
-    # a lot of time on validation stats.
-    # STEPS_PER_EPOCH = 1000
-
-    # (deprecated)
-    # Number of validation steps to run at the end of every training epoch.
-    # A bigger number improves accuracy of validation stats, but slows
-    # down the training.
-    # VALIDATION_STEPS = 50
 
     # ==================================
     MODEL = AttrDict()
@@ -141,24 +113,27 @@ class Config(object):
     TRAIN = AttrDict()
     # Learning rate and momentum
     # The Mask RCNN paper uses lr=0.02, but on TensorFlow it causes
-    # weights to explode. Likely due to differences in optimzer
-    # implementation.
-    TRAIN.LEARNING_RATE = 0.01
-    TRAIN.LEARNING_MOMENTUM = 0.9
+    # weights to explode. Likely due to differences in optimzer implementation.
+    TRAIN.OPTIM_METHOD = 'sgd'
+    TRAIN.INIT_LR = 0.01
+    TRAIN.MOMENTUM = 0.9
     # Weight decay regularization
     TRAIN.WEIGHT_DECAY = 0.0001
     TRAIN.GAMMA = 0.1
     TRAIN.LR_POLICY = 'steps_with_decay'
+    TRAIN.END2END = False
     # in epoch
     TRAIN.SCHEDULE = [6, 4, 3]
     TRAIN.LR_WARM_UP = False
-
-    TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
+    TRAIN.LR_WP_ITER = 500
+    TRAIN.LR_WP_FACTOR = 1. / 3.
 
     TRAIN.CLIP_GRAD = True
     TRAIN.MAX_GRAD_NORM = 5.0
 
+    # evaluate mAP after each stage
     TRAIN.DO_VALIDATION = True
+    TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
     # (deprecated)
     # Use RPN ROIs or externally generated ROIs for training
     # Keep this True for most situations. Set to False if you want to train
@@ -178,16 +153,32 @@ class Config(object):
     # ==============================
     MISC = AttrDict()
 
+    def display(self, log_file):
+        """Display *final* configuration values."""
+        now = datetime.datetime.now()
+        print_log('\nStart timestamp: {:%Y%m%dT%H%M}'.format(now), file=log_file, init=True)
+        print_log("Configurations:", file=log_file)
+        for a in dir(self):
+            if not a.startswith("__") and not callable(getattr(self, a)):
+                value = getattr(self, a)
+                if isinstance(value, AttrDict):
+                    print_log("{}:".format(a), log_file)
+                    for _, key in enumerate(value):
+                        print_log("\t{:30}\t\t{}".format(key, value[key]), log_file)
+                else:
+                    print_log("{}\t{}".format(a, value), log_file)
+        print_log("\n", log_file)
+
     def _set_value(self):
-        """Set values of computed attributes."""
+        """Set values of computed attributes. Override all previous settings."""
 
         if self.CTRL.DEBUG:
             self.CTRL.SHOW_INTERVAL = 1
             self.DATA.IMAGE_MIN_DIM = 320
             self.DATA.IMAGE_MAX_DIM = 512
-            self.CTRL.PROFILE_ANALYSIS = True
+            self.CTRL.PROFILE_ANALYSIS = False
 
-        # set folder
+        # set result folder, 'results/base_101/train (or inference)/'
         self.MISC.RESULT_FOLDER = os.path.join(
             'results', self.CTRL.CONFIG_NAME.lower(), self.CTRL.PHASE)
 
@@ -205,27 +196,10 @@ class Config(object):
               int(math.ceil(self.DATA.IMAGE_SHAPE[1] / stride))]
              for stride in self.MODEL.BACKBONE_STRIDES])
 
-    def display(self, log_file):
-        """Display Configuration values."""
-        now = datetime.datetime.now()
-        print_log('\nStart timestamp: {:%Y%m%dT%H%M}'.format(now), file=log_file, init=True)
-        print_log("Configurations:", file=log_file)
-        for a in dir(self):
-            if not a.startswith("__") and not callable(getattr(self, a)):
-                value = getattr(self, a)
-                if isinstance(value, AttrDict):
-                    print_log("{}:".format(a), log_file)
-                    for _, key in enumerate(value):
-                        print_log("\t{:30}\t\t{}".format(key, value[key]), log_file)
-                else:
-                    print_log("{}\t{}".format(a, value), log_file)
-        print_log("\n", log_file)
-
 
 class CocoConfig(Config):
     """Configuration for training on MS COCO.
-    Derives from the base Config class and overrides values specific
-    to the COCO dataset.
+    Derives from the base Config class and overrides values specific to the COCO dataset.
     """
 
     def __init__(self, args):
@@ -238,22 +212,37 @@ class CocoConfig(Config):
         self.MISC.DEVICE_ID = [int(x) for x in args.device_id.split(',')]
         self.MISC.GPU_COUNT = len(self.MISC.DEVICE_ID)
 
-        # ================ (CUSTOMIZED CONFIG) ======================
-        if self.CTRL.CONFIG_NAME == 'all_new':
-            self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
-            self.DATA.IMAGE_MIN_DIM = 256
-            self.DATA.IMAGE_MAX_DIM = 320
-
-        elif self.CTRL.CONFIG_NAME == 'base_101':
+        # ================ (CUSTOMIZED CONFIG) =========================
+        if args.config_name == 'base_101':
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
             self.CTRL.BATCH_SIZE = 16
             self.CTRL.PROFILE_ANALYSIS = False
 
-        elif self.CTRL.CONFIG_NAME == 'base_102':
+        elif args.config_name == 'base_102':
             self.MODEL.INIT_FILE_CHOICE = 'imagenet_pretrain'
-            self.CTRL.BATCH_SIZE = 16
+            self.CTRL.BATCH_SIZE = 4
             self.CTRL.PROFILE_ANALYSIS = False
+            self.TEST.SAVE_IM = False
+
+        elif args.config_name is None:
+            if args.config_file is None:
+                print('WARNING: No config file and config name! use default setting.'
+                      'set config_name=default')
+                self.CTRL.CONFIG_NAME = 'default'
+            else:
+                print('no config name but luckily you got config file ...')
         else:
             print('WARNING: unknown config name!!! use default setting.')
+        # ================ (CUSTOMIZED CONFIG END) ======================
+
+        # Optional
+        if args.config_file is not None:
+            print('Find .yaml file; use yaml name as CONFIG_NAME')
+            self.CTRL.CONFIG_NAME = os.path.basename(args.config_file).replace('.yaml', '')
+            merge_cfg_from_file(args.config_file, self)
+
+        if len(args.opts) != 0:
+            print('Update configuration from terminal inputs ...')
+            merge_cfg_from_list(args.opts, self)
 
         self._set_value()

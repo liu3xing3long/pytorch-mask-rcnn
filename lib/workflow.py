@@ -1,11 +1,10 @@
 import os
-import torch.optim as optim
 from tools import visualize
 import time
 from lib.layers import *
 from datasets.pycocotools import mask as maskUtils
 from datasets.pycocotools.cocoeval import COCOeval
-from tools.utils import print_log, compute_left_time
+from tools.utils import print_log, compute_left_time, adjust_lr
 import torch.nn as nn
 import math
 import matplotlib.pyplot as plt
@@ -43,28 +42,24 @@ CLASS_NAMES = ['BG', 'person', 'bicycle', 'car', 'motorcycle', 'airplane',
 _TEMP = {'heads': 1, '4+': 2, 'all': 3}
 
 
-def train_model(input_model, train_generator, valset, lr, layers, coco_api=None):
+def train_model(input_model, train_generator, valset, optimizer, layers, coco_api=None):
     """
     Args:
         input_model:        nn.DataParallel
-        train_generator:
-        valset:
-        lr:
-            The learning rate to train with
-        total_ep_curr_call:
-            Number of training epochs. Note that previous training epochs
-            are considered to be done alreay, so this actually determines
-            the epochs to train in total rather than in this particaular call.
+        train_generator:    Dataloader
+        valset:             Dataset
+        lr:                 The learning rate to train with
         layers:
-            Allows selecting wich layers to train. It can be:
-                - A regular expression to match layer names to train
-                - One of these predefined values:
-                heads: The RPN, classifier and mask heads of the network
-                all: All the layers
-                3+: Train Resnet stage 3 and up
-                4+: Train Resnet stage 4 and up
-                5+: Train Resnet stage 5 and up
-        coco_api
+                            (only valid when END2END=False)
+                            Allows selecting wich layers to train. It can be:
+                                - A regular expression to match layer names to train
+                                - One of these predefined values:
+                                heads: The RPN, classifier and mask heads of the network
+                                all: All the layers
+                                3+: Train Resnet stage 3 and up
+                                4+: Train Resnet stage 4 and up
+                                5+: Train Resnet stage 5 and up
+        coco_api            validation api
     """
 
     stage_name = layers.upper()
@@ -78,6 +73,7 @@ def train_model(input_model, train_generator, valset, lr, layers, coco_api=None)
     iter_per_epoch = math.floor(num_train_im/model.config.CTRL.BATCH_SIZE)
     total_ep_till_now = sum(model.config.TRAIN.SCHEDULE[:_TEMP[layers]])
 
+    # check details
     if (num_train_im % model.config.CTRL.BATCH_SIZE) % model.config.MISC.GPU_COUNT != 0:
         print_log('WARNING [TRAIN]: last mini-batch in an epoch is not divisible by gpu number.\n'
                   'total train im: {:d}, batch size: {:d}, gpu num {:d}\n'
@@ -89,25 +85,17 @@ def train_model(input_model, train_generator, valset, lr, layers, coco_api=None)
         print_log('skip {:s} stage ...'.format(stage_name.upper()), model.config.MISC.LOG_FILE)
         return None
 
-    if layers in LAYER_REGEX.keys():
-        layers = LAYER_REGEX[layers]
-
-    model.set_trainable(layers)
-
-    # Optimizer object, add L2 Regularization
-    # Skip gamma and beta weights of batch normalization layers.
-    trainables_wo_bn = [param for name, param in input_model.named_parameters()
-                        if param.requires_grad and 'bn' not in name]
-    trainables_only_bn = [param for name, param in input_model.named_parameters()
-                          if param.requires_grad and 'bn' in name]
-    optimizer = optim.SGD([
-        {'params': trainables_wo_bn, 'weight_decay': model.config.TRAIN.WEIGHT_DECAY},
-        {'params': trainables_only_bn}], lr=lr, momentum=model.config.TRAIN.LEARNING_MOMENTUM)
-
     print_log('\n[Current stage: {:s}] start training at epoch {:d}, iter {:d}. \n'
-              'Total epoch in this stage: {:d}, LR={:.4f}'.format(
-                stage_name, model.epoch, model.iter, total_ep_till_now, lr), model.config.MISC.LOG_FILE)
+              'Total ep:och in this stage: {:d}.'.format(stage_name, model.epoch, model.iter,
+                                                        model.config.TRAIN.SCHEDULE[_TEMP[layers]-1]),
+              model.config.MISC.LOG_FILE)
 
+    if not model.config.TRAIN.END2END:
+        if layers in LAYER_REGEX.keys():
+            layers = LAYER_REGEX[layers]
+        model.set_trainable(layers)
+
+    # EPOCH LOOP
     for ep in range(model.epoch, total_ep_till_now+1):
 
         epoch_str = "[Ep {:03d}/{}]".format(ep, total_ep_till_now)
@@ -120,7 +108,7 @@ def train_model(input_model, train_generator, valset, lr, layers, coco_api=None)
         # Validation (deprecated)
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
-        # Statistics
+        # TODO: visualize the loss with resume concerned
         model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
         visualize.plot_loss(model.loss_history, model.val_loss_history,
@@ -159,24 +147,29 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # single-gpu
         model = input_model
 
-    loss_sum = 0
     config = model.config
-    data_iterator = iter(data_loader)
-    start_iter, total_iter = args['start_iter'], args['total_iter']
+
+    loss_sum = 0
+    start_iter, total_iter, curr_ep = args['start_iter'], args['total_iter'], args['epoch']
     actual_total_iter = total_iter - start_iter + 1
     save_iter_base = math.floor(total_iter / config.TRAIN.SAVE_FREQ_WITHIN_EPOCH)
 
+    # create iterator
+    data_iterator = iter(data_loader)
+
+    # ITERATION LOOP
     for iter_ind in range(start_iter, total_iter+1):
         
         curr_iter_time_start = time.time()
-        inputs = next(data_iterator)
+        lr = adjust_lr(optimizer, curr_ep, iter_ind, config.TRAIN)   # return lr to show in console
 
+        inputs = next(data_iterator)
         images = Variable(inputs[0].cuda())
         image_metas = Variable(inputs[-1].cuda())
         # pad with zeros
         gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
 
-        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
+        if config.CTRL.PROFILE_ANALYSIS:
             print('\ncurr_iter: ', iter_ind)
             print('fetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
             t = time.time()
@@ -192,7 +185,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # Compute losses
         # loss, detailed_loss = compute_loss(outputs)
 
-        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
+        if config.CTRL.PROFILE_ANALYSIS:
             print('forward time: {:.4f}'.format(time.time() - t))
             t = time.time()
 
@@ -202,21 +195,21 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             torch.nn.utils.clip_grad_norm(input_model.parameters(), config.TRAIN.MAX_GRAD_NORM)
         optimizer.step()
 
-        if config.CTRL.DEBUG or config.CTRL.PROFILE_ANALYSIS:
+        if config.CTRL.PROFILE_ANALYSIS:
             print('backward time: {:.4f}'.format(time.time() - t))
             t = time.time()
 
         # Progress
         if iter_ind % config.CTRL.SHOW_INTERVAL == 0 or iter_ind == args['start_iter']:
             iter_time = time.time() - curr_iter_time_start
-            days, hrs = compute_left_time(iter_time, args['epoch'],
+            days, hrs = compute_left_time(iter_time, curr_ep,
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
-            print_log('[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:02.2f} hrs] (iter_t: {:.2f})'
-                      '\tloss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} '
+            print_log('[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:2.1f} hrs] (iter_t: {:.2f})'
+                      '\tlr: {:.6f} | loss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} '
                       '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}'.
                       format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'],
                              iter_ind, total_iter,
-                             days, hrs, iter_time,
+                             days, hrs, iter_time, lr,
                              loss.data.cpu()[0],
                              detailed_loss[0].data.cpu()[0],
                              detailed_loss[1].data.cpu()[0],
@@ -230,11 +223,11 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # save model
         if iter_ind % save_iter_base == 0:
             model_file = os.path.join(config.MISC.RESULT_FOLDER,
-                                      'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(args['epoch'], iter_ind))
+                                      'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(curr_ep, iter_ind))
             print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
             torch.save({
                 'state_dict':   model.state_dict(),
-                'epoch':        args['epoch'],  # or model.epoch
+                'epoch':        curr_ep,        # or model.epoch
                 'iter':         iter_ind,       # or model.iter
             }, model_file)
 
@@ -296,8 +289,10 @@ def test_model(input_model, valset, coco_api,
         image_ids = image_ids[:limit]
 
     num_test_im = len(image_ids)
+    actual_test_bs = model.config.CTRL.BATCH_SIZE * 2
+
     print("Running COCO evaluation on {} images.".format(num_test_im))
-    assert (num_test_im % model.config.CTRL.BATCH_SIZE) % model.config.MISC.GPU_COUNT == 0, \
+    assert (num_test_im % actual_test_bs) % model.config.MISC.GPU_COUNT == 0, \
         '[INFERENCE] last mini-batch in an epoch is not divisible by gpu number.'
     # Get corresponding COCO image IDs.
     coco_image_ids = [dataset.image_info[ind]["id"] for ind in image_ids]
@@ -306,12 +301,14 @@ def test_model(input_model, valset, coco_api,
     t_start = time.time()
 
     results, cnt = [], 0
-    total_iter = math.ceil(num_test_im / model.config.CTRL.BATCH_SIZE)
+    total_iter = math.ceil(num_test_im / actual_test_bs)
+    show_test_progress_base = math.floor(total_iter / (model.config.CTRL.SHOW_INTERVAL/2))
+    # note that GPU efficiency is low when SAVE_IM=True
 
     for iter_ind in range(total_iter):
 
-        curr_start_id = iter_ind*model.config.CTRL.BATCH_SIZE
-        curr_end_id = min(curr_start_id + model.config.CTRL.BATCH_SIZE, num_test_im)
+        curr_start_id = iter_ind*actual_test_bs
+        curr_end_id = min(curr_start_id + actual_test_bs, num_test_im)
         curr_image_ids = image_ids[curr_start_id:curr_end_id]
 
         # Run detection
@@ -328,7 +325,6 @@ def test_model(input_model, valset, coco_api,
 
         # Process detections
         for i, image in enumerate(images):
-
             curr_coco_id = coco_image_ids[curr_image_ids[i]]
 
             final_rois, final_class_ids, final_scores, final_masks = _unmold_detections(
@@ -346,7 +342,6 @@ def test_model(input_model, valset, coco_api,
                     "segmentation": maskUtils.encode(np.asfortranarray(final_masks[:, :, det_id]))
                 }
                 results.append(curr_result)
-
             # visualize result if necessary
             if model.config.TEST.SAVE_IM:
                 plt.close()
@@ -354,13 +349,13 @@ def test_model(input_model, valset, coco_api,
                     image, final_rois, final_masks, final_class_ids, CLASS_NAMES, final_scores)
 
                 im_file = os.path.join(save_im_folder, 'coco_im_id_{:d}.png'.format(curr_coco_id))
-                plt.savefig(im_file)
+                plt.savefig(im_file, bbox_inches='tight')
 
         t_prediction += (time.time() - t_pred_start)
         cnt += len(curr_image_ids)
 
         # show progress
-        if iter_ind % (model.config.CTRL.SHOW_INTERVAL*10) == 0 or cnt == len(image_ids):
+        if iter_ind % show_test_progress_base == 0 or cnt == len(image_ids):
             print_log('[{:s}][{:s}] evaluation progress \t{:4d} images /{:4d} total ...'.
                       format(model.config.CTRL.CONFIG_NAME, model_file_name, cnt, len(image_ids)),
                       log_file, additional_file=train_log_file)

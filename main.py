@@ -2,11 +2,10 @@ import argparse
 import lib.network as network
 from lib.config import CocoConfig
 from lib.workflow import *
-from tools.utils import update_config_and_load_model
+from tools.utils import update_config_and_load_model, set_optimizer
+from datasets.dataset_coco import get_data
 
 if __name__ == '__main__':
-    # weird: if put ahead; import error occurs
-    from datasets.dataset_coco import get_data
 
     parser = argparse.ArgumentParser(description='Mask R-CNN')
 
@@ -17,19 +16,29 @@ if __name__ == '__main__':
 
     parser.add_argument('--config_name',
                         required=False,
+                        default=None)
                         # default='all_new')
                         # default='hyli_default_old')
                         # default='fuck')
-                        default='base_102')
+                        # default='base_102')
+
+    parser.add_argument('--config_file',
+                        # default=None)
+                        default='configs/base_103.yaml')
 
     # debug mode: set train_data to val_data for faster data loading.
     # show loss step by step; smaller input image size
     # do validation right after a few steps and visualize predictions
     parser.add_argument('--debug',
-                        default=0, type=int)  # no bool type here please
+                        default=1, type=int)  # no bool type here please
 
     parser.add_argument('--device_id',
                         default='0,1', type=str)
+
+    parser.add_argument('opts',
+                        help='See lib/config.py for all options',
+                        default=None,
+                        nargs=argparse.REMAINDER)
 
     args = parser.parse_args()
     print('\nSTART::: phase is [{:s}]'.format(args.phase.upper()))
@@ -60,29 +69,32 @@ if __name__ == '__main__':
     # Train or inference
     if args.phase == 'train':
 
+        # set optimizer
+        optimizer = set_optimizer(model, config.TRAIN)
+
         # Training - Stage 1
         print("\nTraining network heads")
         train_model(model, train_data, val_data,
-                    lr=config.TRAIN.LEARNING_RATE,
+                    optimizer=optimizer,
                     layers='heads', coco_api=val_api)
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
         print("\nFinetune Resnet stage 4 and up")
         train_model(model, train_data, val_data,
-                    lr=config.TRAIN.LEARNING_RATE*config.TRAIN.GAMMA,
+                    optimizer=optimizer,
                     layers='4+', coco_api=val_api)
 
         # Training - Stage 3
         # Fine tune all layers
         print("\nFine tune all layers")
         train_model(model, train_data, val_data,
-                    lr=config.LEARNING_RATE*config.TRAIN.GAMMA**2,
+                    optimizer=optimizer,
                     layers='all', coco_api=val_api)
 
     elif args.phase == 'inference':
 
-        test_model(model, val_data, val_api)
+        test_model(model, val_data, val_api, during_train=False)
     else:
         print("'{}' is not recognized. "
               "Use 'train' or 'evaluate'".format(args.phase))

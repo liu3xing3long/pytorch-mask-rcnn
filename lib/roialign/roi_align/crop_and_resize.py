@@ -1,7 +1,6 @@
-import torch
-import torch.nn as nn
 from torch.autograd import Function
 from ._ext import crop_and_resize as _backend
+import torch
 
 
 # From Mask R-CNN paper: "We sample four regular locations, so
