@@ -24,7 +24,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--config_file',
                         # default=None)
-                        default='configs/base_103.yaml')
+                        default='configs/base_105.yaml')
 
     # debug mode: set train_data to val_data for faster data loading.
     # show loss step by step; smaller input image size

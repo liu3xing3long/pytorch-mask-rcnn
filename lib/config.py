@@ -131,6 +131,9 @@ class Config(object):
     TRAIN.CLIP_GRAD = True
     TRAIN.MAX_GRAD_NORM = 5.0
 
+    # let bn learn and also apply the same weight decay when setting up optimizer
+    TRAIN.BN_LEARN = False
+
     # evaluate mAP after each stage
     TRAIN.DO_VALIDATION = True
     TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10

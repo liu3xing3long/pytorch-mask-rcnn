@@ -383,19 +383,22 @@ def update_config_and_load_model(config, network, train_generator=None):
 def set_optimizer(net, opt):
 
     if opt.OPTIM_METHOD == 'sgd':
-        # optimizer = optim.SGD(net.parameters(), lr=opt.INIT_LR,
-        #                       momentum=opt.MOMENTUM, weight_decay=opt.WEIGHT_DECAY)
 
-        # Optimizer object, add L2 Regularization
-        # Skip gamma and beta weights of batch normalization layers.
-        trainables_wo_bn = [param for name, param in net.named_parameters()
-                            if param.requires_grad and 'bn' not in name]
-        trainables_only_bn = [param for name, param in net.named_parameters()
-                              if param.requires_grad and 'bn' in name]
-        optimizer = optim.SGD([
-            {'params': trainables_wo_bn, 'weight_decay': opt.WEIGHT_DECAY},
-            {'params': trainables_only_bn}
-        ], lr=opt.INIT_LR, momentum=opt.MOMENTUM)
+        if opt.BN_LEARN:
+            parameter_list = [param for name, param in net.named_parameters() if param.requires_grad]
+            optimizer = optim.SGD(parameter_list, lr=opt.INIT_LR,   # TODO: direct net.parameters() fail; seek to it.
+                                  momentum=opt.MOMENTUM, weight_decay=opt.WEIGHT_DECAY)
+        else:
+            # Optimizer object, add L2 Regularization
+            # Skip gamma and beta weights of batch normalization layers.
+            trainables_wo_bn = [param for name, param in net.named_parameters()
+                                if param.requires_grad and 'bn' not in name]
+            trainables_only_bn = [param for name, param in net.named_parameters()
+                                  if param.requires_grad and 'bn' in name]
+            optimizer = optim.SGD([
+                {'params': trainables_wo_bn, 'weight_decay': opt.WEIGHT_DECAY},
+                {'params': trainables_only_bn}
+            ], lr=opt.INIT_LR, momentum=opt.MOMENTUM)
 
     elif opt.OPTIM_METHOD == 'adam':
         optimizer = optim.Adam(net.parameters(), lr=opt.INIT_LR,

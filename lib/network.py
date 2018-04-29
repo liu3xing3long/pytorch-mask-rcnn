@@ -148,13 +148,13 @@ class MaskRCNN(nn.Module):
         elif mode == 'train':
             proposal_count = self.config.RPN.POST_NMS_ROIS_TRAINING
             self.train()
-            # Set batchnorm always in eval mode during training
-            # TODO: let bn learn
-            def set_bn_eval(m):
-                classname = m.__class__.__name__
-                if classname.find('BatchNorm') != -1:
-                    m.eval()
-            self.apply(set_bn_eval)
+            if not self.config.TRAIN.BN_LEARN:
+                # Set BN layer always in eval mode during training
+                def set_bn_eval(m):
+                    classname = m.__class__.__name__
+                    if classname.find('BatchNorm') != -1:
+                        m.eval()
+                self.apply(set_bn_eval)
         else:
             raise Exception('unknown phase')
 
