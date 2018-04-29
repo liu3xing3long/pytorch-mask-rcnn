@@ -86,7 +86,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         return None
 
     print_log('\n[Current stage: {:s}] start training at epoch {:d}, iter {:d}. \n'
-              'Total ep:och in this stage: {:d}.'.format(stage_name, model.epoch, model.iter,
+              'Total epoch in this stage: {:d}.'.format(stage_name, model.epoch, model.iter,
                                                         model.config.TRAIN.SCHEDULE[_TEMP[layers]-1]),
               model.config.MISC.LOG_FILE)
 

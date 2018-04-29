@@ -1,16 +1,8 @@
-from torch.autograd import Variable
-import torch.optim as optim
 import torch
 import os
-import math
-from tools.collections import AttrDict
-import yaml
-import copy
-from past.builtins import basestring
-import numpy as np
-from ast import literal_eval
 
-base_name = '../results/base_101/train'
+# in terminal, execute python this_file_name.py, the following path is right; however, in MacPycharm, it sees tools folder as root
+base_name = 'results/base_101/train'
 file_name = 'mask_rcnn_ep_0006_iter_003660.pth'
 # old file
 model_path = os.path.join(base_name, file_name)

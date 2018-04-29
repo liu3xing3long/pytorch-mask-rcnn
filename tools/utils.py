@@ -283,6 +283,7 @@ def update_config_and_load_model(config, network, train_generator=None):
             del config.MODEL['PRETRAIN_IMAGENET_MODEL']
         else:
             model_path = _find_last(config)[1]
+            print(model_path)
             if model_path is not None:
                 if choice.lower() in ['coco_pretrain', 'imagenet_pretrain']:
                     print('WARNING: find existing model... ignore pretrain model')
