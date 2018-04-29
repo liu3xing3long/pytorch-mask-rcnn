@@ -132,6 +132,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         print_log('\nDo validation at end of current stage [{:s}] (model ep {:d} iter {:d}) ...'.
                   format(stage_name.upper(), total_ep_till_now, iter_per_epoch), model.config.MISC.LOG_FILE)
         test_model(input_model, valset, coco_api, during_train=True, epoch=ep, iter=iter_per_epoch)
+        model.epoch += 1
 
 
 def train_epoch_new(input_model, data_loader, optimizer, **args):
