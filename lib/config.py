@@ -215,17 +215,20 @@ class CocoConfig(Config):
         self.MISC.DEVICE_ID = [int(x) for x in args.device_id.split(',')]
         self.MISC.GPU_COUNT = len(self.MISC.DEVICE_ID)
 
+        _ignore_yaml_or_list = False
         # ================ (CUSTOMIZED CONFIG) =========================
         if args.config_name == 'base_101':
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
             self.CTRL.BATCH_SIZE = 16
             self.CTRL.PROFILE_ANALYSIS = False
+            _ignore_yaml_or_list = True
 
         elif args.config_name == 'base_102':
             self.MODEL.INIT_FILE_CHOICE = 'imagenet_pretrain'
             self.CTRL.BATCH_SIZE = 4
             self.CTRL.PROFILE_ANALYSIS = False
             self.TEST.SAVE_IM = False
+            _ignore_yaml_or_list = True
 
         elif args.config_name is None:
             if args.config_file is None:
@@ -239,12 +242,12 @@ class CocoConfig(Config):
         # ================ (CUSTOMIZED CONFIG END) ======================
 
         # Optional
-        if args.config_file is not None:
+        if args.config_file is not None and not _ignore_yaml_or_list:
             print('Find .yaml file; use yaml name as CONFIG_NAME')
             self.CTRL.CONFIG_NAME = os.path.basename(args.config_file).replace('.yaml', '')
             merge_cfg_from_file(args.config_file, self)
 
-        if len(args.opts) != 0:
+        if len(args.opts) != 0 and not _ignore_yaml_or_list:
             print('Update configuration from terminal inputs ...')
             merge_cfg_from_list(args.opts, self)
 
