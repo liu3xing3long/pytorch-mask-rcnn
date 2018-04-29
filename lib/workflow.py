@@ -177,14 +177,13 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # Run object detection
         # [target_rpn_match, rpn_class_logits, target_rpn_bbox, rpn_pred_bbox,
         # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
-        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks,
-                               image_metas], mode='train')  # shape: gpu_num x 5
+        # the loss shape: gpu_num x 5
+        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], mode='train')
         detailed_loss = torch.mean(outputs, dim=0)
         loss = torch.sum(detailed_loss)
 
-        # Compute losses
+        # Compute losses (moved to forward)
         # loss, detailed_loss = compute_loss(outputs)
-
         if config.CTRL.PROFILE_ANALYSIS:
             print('forward time: {:.4f}'.format(time.time() - t))
             t = time.time()

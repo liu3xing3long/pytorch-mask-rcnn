@@ -78,5 +78,9 @@ with the default configuration and backbone initialized with pretrained
 #### Annoying warning
 ``~/anaconda3/lib/python3.6/site-packages/scipy/ndimage/interpolation.py:616``
 
+Also install the `future` package via conda:
+
+``conda install -c anaconda future``
+
 
 

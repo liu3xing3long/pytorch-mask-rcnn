@@ -149,6 +149,7 @@ class MaskRCNN(nn.Module):
             proposal_count = self.config.RPN.POST_NMS_ROIS_TRAINING
             self.train()
             # Set batchnorm always in eval mode during training
+            # TODO: let bn learn
             def set_bn_eval(m):
                 classname = m.__class__.__name__
                 if classname.find('BatchNorm') != -1:
