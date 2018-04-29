@@ -1,6 +1,6 @@
+import torch
 from torch.autograd import Variable
 import torch.optim as optim
-import torch
 import os
 import math
 from tools.collections import AttrDict
