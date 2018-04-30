@@ -1,5 +1,5 @@
 import argparse
-import lib.network as network
+import lib.model as network
 from lib.config import CocoConfig
 from lib.workflow import *
 from tools.utils import update_config_and_load_model, set_optimizer
@@ -16,15 +16,15 @@ if __name__ == '__main__':
 
     parser.add_argument('--config_name',
                         required=False,
-                        default=None)
+                        # default=None)
                         # default='all_new')
                         # default='hyli_default_old')
-                        # default='fuck')
-                        # default='base_102')
+                        default='fuck')
+                        # default='base_101')
 
     parser.add_argument('--config_file',
-                        # default=None)
-                        default='configs/base_105.yaml')
+                        default=None)
+                        # default='configs/base_105.yaml')
 
     # debug mode: set train_data to val_data for faster data loading.
     # show loss step by step; smaller input image size
