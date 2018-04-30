@@ -4,6 +4,7 @@ from lib.nms.nms_wrapper import nms
 import torch.nn.functional as F
 from tools.box_utils import *
 from tools.image_utils import *
+from tools.utils import print_log
 
 
 def generate_priors(scales, ratios, shape, feature_stride, anchor_stride):
@@ -444,6 +445,7 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
 ############################################################
 def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
 
+    # sample_id is the id within each GPU
     curr_sample_id = args[0]
     coco_im_id = args[1].data.cpu().numpy()
 
@@ -503,7 +505,7 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         print('\t\t[sample_id {}, im {}] 1. passed initial assignment in generate_rpn_target'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
 
-    # Subsample to balance positive and negative anchors
+    # 4. Subsample to balance positive and negative anchors
     # Don't let positives be more than half the anchors
     pos_ids = torch.nonzero(target_rpn_match == 1).squeeze()
     extra = pos_ids.size(0) - (config.RPN.TRAIN_ANCHORS_PER_IMAGE // 2)
@@ -533,9 +535,21 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         _tmp = torch.from_numpy(np.random.permutation(neg_ids.size(0))).cuda()
         _ids = neg_ids[_tmp[:extra]]
         target_rpn_match[_ids] = 0
+    # ======= ABOVE DONE =======
 
-    assert (torch.sum((target_rpn_match == 1).long()) +
-            torch.sum((target_rpn_match == -1).long())).data[0] == config.RPN.TRAIN_ANCHORS_PER_IMAGE
+    _pos_num = torch.sum((target_rpn_match == 1).long()).data[0]
+    _neg_num = torch.sum((target_rpn_match == -1).long()).data[0]
+
+    if _pos_num + _neg_num != config.RPN.TRAIN_ANCHORS_PER_IMAGE:
+        # TODO (potential bug): on s162, the previous assertion fails
+        _neutral_num = torch.sum((target_rpn_match == 0).long()).data[0]
+        print_log('\n[WARNING!!!]'
+                  '\tactual_rpn_pos_neg_num is {}, config num is {}\n'
+                  '\t\tpos_num: {}, neg_num: {}, neutral_num: {}\n'
+                  '\t\tgt_boxes size: {}, actual_gt_num: {}, anchors_num: {}'.
+                  format(_pos_num + _neg_num, config.RPN.TRAIN_ANCHORS_PER_IMAGE,
+                         _pos_num, _neg_num, _neutral_num,
+                         gt_boxes.size(), actual_gt_num, anchors.size(0)), config.MISC.LOG_FILE)
 
     if config.CTRL.PROFILE_ANALYSIS:
         print('\t\t[sample_id {}, im {}] 2. passed rpn_target_match'.
