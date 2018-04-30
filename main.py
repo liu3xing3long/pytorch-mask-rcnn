@@ -53,7 +53,7 @@ if __name__ == '__main__':
     # Get data
     train_data, val_data, val_api = get_data(config)
 
-    # Select weights file to load
+    # Select weights file to load (MUST be put at the end)
     # update start epoch and iter if resume
     config, model = update_config_and_load_model(config, model, train_data)
 
