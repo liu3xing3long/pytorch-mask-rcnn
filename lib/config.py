@@ -11,14 +11,12 @@ class Config(object):
 
     # ==================================
     MODEL = AttrDict()
-    # The strides of each layer of the FPN Pyramid. These values
-    # are based on a Resnet101 backbone.
-    MODEL.BACKBONE_STRIDES = [4, 8, 16, 32, 64]
     # Path to pretrained imagenet model
     MODEL.PRETRAIN_IMAGENET_MODEL = os.path.join('datasets/pretrain_model', "resnet50_imagenet.pth")
     # Path to pretrained weights file
     MODEL.PRETRAIN_COCO_MODEL = os.path.join('datasets/pretrain_model', 'mask_rcnn_coco.pth')
     MODEL.INIT_FILE_CHOICE = 'last'  # or file (xxx.pth)
+    MODEL.BACKBONE = 'resnet101'  # todo: other structures (ssd, etc.)
 
     # ==================================
     DATASET = AttrDict()
@@ -38,7 +36,7 @@ class Config(object):
 
     # Anchor stride
     # If 1 then anchors are created for each cell in the backbone feature map.
-    # If 2, then anchors are created for every other cell, and so on.
+    # If 2, then anchors are created for every other cell, and so on (stride=2,3,4...).
     RPN.ANCHOR_STRIDE = 1
 
     # Non-max suppression threshold to filter RPN proposals.
@@ -48,7 +46,8 @@ class Config(object):
     # How many anchors per image to use for RPN training
     RPN.TRAIN_ANCHORS_PER_IMAGE = 256
 
-    # ROIs kept after non-maximum suppression (training and inference)
+    # ROIs kept after non-maximum suppression for RPN part
+    RPN.PRE_NMS_LIMIT = 6000
     RPN.POST_NMS_ROIS_TRAINING = 2000
     RPN.POST_NMS_ROIS_INFERENCE = 1000
 
@@ -62,8 +61,8 @@ class Config(object):
     MRCNN.USE_MINI_MASK = True
     MRCNN.MINI_MASK_SHAPE = (56, 56)  # (height, width) of the mini-mask
     # Pooled ROIs
-    MRCNN.POOL_SIZE = 7
-    MRCNN.MASK_POOL_SIZE = 14
+    MRCNN.POOL_SIZE = 7         # cls/bbox stream
+    MRCNN.MASK_POOL_SIZE = 14   # mask stream
     MRCNN.MASK_SHAPE = [28, 28]
 
     # ==================================
@@ -97,6 +96,8 @@ class Config(object):
 
     # Percent of positive ROIs used to train classifier/mask heads
     ROIS.ROI_POSITIVE_RATIO = 0.33
+
+    ROIS.METHOD = 'roi_align'  # todo: regular roi_pooling
 
     # ==================================
     TEST = AttrDict()
@@ -148,7 +149,7 @@ class Config(object):
     CTRL = AttrDict()
     CTRL.SHOW_INTERVAL = 20
     CTRL.USE_VISDOM = False
-    CTRL.PROFILE_ANALYSIS = False
+    CTRL.PROFILE_ANALYSIS = False  # show time for some pass
 
     # for train and inference
     CTRL.BATCH_SIZE = 6
@@ -184,11 +185,16 @@ class Config(object):
         # set result folder, 'results/base_101/train (or inference)/'
         self.MISC.RESULT_FOLDER = os.path.join(
             'results', self.CTRL.CONFIG_NAME.lower(), self.CTRL.PHASE)
-
         if not os.path.exists(self.MISC.RESULT_FOLDER):
             os.makedirs(self.MISC.RESULT_FOLDER)
 
         # MUST be left at the end
+        # The strides of each layer of the FPN Pyramid.
+        if self.MODEL.BACKBONE == 'resnet101':
+            self.MODEL.BACKBONE_STRIDES = [4, 8, 16, 32, 64]
+        else:
+            raise Exception('unknown backbone structure')
+
         # Input image size
         self.DATA.IMAGE_SHAPE = np.array(
             [self.DATA.IMAGE_MAX_DIM, self.DATA.IMAGE_MAX_DIM, 3])

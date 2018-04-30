@@ -108,7 +108,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         # Validation (deprecated)
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
-        # TODO: visualize the loss with resume concerned
+        # TODO (mid): visualize the loss with resume concerned; include visdom
         model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
         visualize.plot_loss(model.loss_history, model.val_loss_history,
@@ -289,7 +289,7 @@ def test_model(input_model, valset, coco_api,
         image_ids = image_ids[:limit]
 
     num_test_im = len(image_ids)
-    actual_test_bs = model.config.CTRL.BATCH_SIZE * 2
+    actual_test_bs = model.config.CTRL.BATCH_SIZE * 2  # bs for test could be larger TODO (low): merge info into log
 
     print("Running COCO evaluation on {} images.".format(num_test_im))
     assert (num_test_im % actual_test_bs) % model.config.MISC.GPU_COUNT == 0, \
@@ -321,7 +321,7 @@ def test_model(input_model, valset, coco_api,
 
         # Convert to numpy
         detections = detections.data.cpu().numpy()
-        mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
+        mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).contiguous().data.cpu().numpy()
 
         # Process detections
         for i, image in enumerate(images):
