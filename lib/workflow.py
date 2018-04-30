@@ -108,7 +108,8 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         # Validation (deprecated)
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
-        # TODO: visualize the loss with resume concerned
+        # TODO (mid): visualize the loss with resume concerned
+        # TODO (mid): visdom
         model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
         visualize.plot_loss(model.loss_history, model.val_loss_history,
@@ -321,7 +322,7 @@ def test_model(input_model, valset, coco_api,
 
         # Convert to numpy
         detections = detections.data.cpu().numpy()
-        mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
+        mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).contiguous().data.cpu().numpy()
 
         # Process detections
         for i, image in enumerate(images):

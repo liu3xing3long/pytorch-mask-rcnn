@@ -214,14 +214,15 @@ class RPN(nn.Module):
         rpn_probs: [batch, W, W, 2] Anchor classifier probabilities.
         rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))] Deltas to be applied to anchors.
     """
-    def __init__(self, anchors_per_location, anchor_stride, depth):
+    # TODO (low): check if RPN is very shallow with original paper;
+    # TODO (mid): or change conv_shared to separate ones across scales
+    def __init__(self, anchors_per_location, anchor_stride, input_ch):
         super(RPN, self).__init__()
-        self.anchors_per_location = anchors_per_location
         self.anchor_stride = anchor_stride
-        self.depth = depth
+        self.input_ch = input_ch
 
         self.padding = SamePad2d(kernel_size=3, stride=self.anchor_stride)
-        self.conv_shared = nn.Conv2d(self.depth, 512, kernel_size=3, stride=self.anchor_stride)
+        self.conv_shared = nn.Conv2d(self.input_ch, 512, kernel_size=3, stride=self.anchor_stride)
         self.relu = nn.ReLU(inplace=True)
         self.conv_class = nn.Conv2d(512, 2 * anchors_per_location, kernel_size=1, stride=1)
         self.softmax = nn.Softmax(dim=2)

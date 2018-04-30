@@ -12,8 +12,7 @@ def generate_priors(scales, ratios, shape, feature_stride, anchor_stride):
     EXECUTE ONLY ONCE.
     scales: 1D array of anchor sizes in pixels. Example: [32, 64, 128]
     ratios: 1D array of anchor ratios of width/height. Example: [0.5, 1, 2]
-    shape: [height, width] spatial shape of the feature map over which
-            to generate anchors.
+    shape: [height, width] spatial shape of the feature map over which to generate anchors.
     feature_stride: Stride of the feature map relative to the image in pixels.
     anchor_stride: Stride of anchors on the feature map. For example, if the
         value is 2 then generate anchors for every other feature map pixel.
@@ -55,8 +54,8 @@ def generate_pyramid_priors(scales, ratios, feature_shapes, feature_strides, anc
 
     Returns:
     anchors: [N, (y1, x1, y2, x2)]. All generated anchors in one array. Sorted
-        with the same order of the given scales. So, anchors of scale[0] come
-        first, then anchors of scale[1], and so on.
+        with the same order of the given scales. So, anchors of scale[0] come first,
+        then anchors of scale[1], and so on.
     """
     # Anchors
     # [anchor_count, (y1, x1, y2, x2)]
@@ -74,16 +73,14 @@ def proposal_layer(inputs, proposal_count, nms_threshold, priors, config=None):
     to the second stage. Filtering is done based on anchor scores and
     non-max suppression to remove overlaps. It also applies bounding
     box refinement details to anchors.
-
     Args:
         inputs
-            [0] rpn_probs: [batch, anchors, (bg prob, fg prob)]
-            [1] rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
-        proposal_count
-        nms_threshold
-        priors
-        config
-
+            [0] rpn_probs:  [batch, anchors, (bg prob, fg prob)]
+            [1] rpn_bbox:   [batch, anchors, (dy, dx, log(dh), log(dw))]
+        proposal_count:     maximum output
+        nms_threshold:      for proposal
+        priors:             anchors
+        config:             configuration
     Returns:
         Proposals in normalized coordinates [batch, rois, (y1, x1, y2, x2)]
     """
@@ -116,7 +113,8 @@ def proposal_layer(inputs, proposal_count, nms_threshold, priors, config=None):
 
     # Apply deltas to anchors to get refined anchors.
     # [batch, N, (y1, x1, y2, x2)]
-    boxes = apply_box_deltas(anchors_trim, deltas_trim)       # TODO: nan or inf in initial iter
+    # TODO (mid): nan or inf in initial iter
+    boxes = apply_box_deltas(anchors_trim, deltas_trim)
 
     # Clip to image boundaries. [batch, N, (y1, x1, y2, x2)]
     height, width = config.DATA.IMAGE_SHAPE[:2]

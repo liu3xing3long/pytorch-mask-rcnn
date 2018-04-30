@@ -66,10 +66,10 @@ class MaskRCNN(nn.Module):
                                     config.RPN.ANCHOR_STRIDE)).float()
 
         # RPN
-        self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, 256)
+        self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, input_ch=256)
         # FPN Classifier
-        self.classifier = Classifier(256, config.MRCNN.POOL_SIZE,
-                                     config.DATA.IMAGE_SHAPE, config.DATASET.NUM_CLASSES)
+        self.classifier = Classifier(depth=256, pool_size=config.MRCNN.POOL_SIZE,
+                                     image_shape=config.DATA.IMAGE_SHAPE, num_classes=config.DATASET.NUM_CLASSES)
         # FPN Mask
         self.mask = Mask(256, config.MRCNN.MASK_POOL_SIZE, config.DATA.IMAGE_SHAPE, config.DATASET.NUM_CLASSES)
 
@@ -143,10 +143,10 @@ class MaskRCNN(nn.Module):
 
         # set model state
         if mode == 'inference':
-            proposal_count = self.config.RPN.POST_NMS_ROIS_INFERENCE
+            _proposal_cnt = self.config.RPN.POST_NMS_ROIS_INFERENCE
             self.eval()
         elif mode == 'train':
-            proposal_count = self.config.RPN.POST_NMS_ROIS_TRAINING
+            _proposal_cnt = self.config.RPN.POST_NMS_ROIS_TRAINING
             self.train()
             if not self.config.TRAIN.BN_LEARN:
                 # Set BN layer always in eval mode during training
@@ -170,7 +170,7 @@ class MaskRCNN(nn.Module):
         for p in _rpn_feature_maps:
             layer_outputs.append(self.rpn(p))
 
-        # Concatenate layer outputs
+        # Concatenate rpn layer outputs
         # Convert from list of lists of level outputs to list of lists
         # of outputs across levels.
         # e.g. [[a1, b1, c1], [a2, b2, c2]] => [[a1, a2], [b1, b2], [c1, c2]]
@@ -179,9 +179,9 @@ class MaskRCNN(nn.Module):
         RPN_PRED_CLS_LOGITS, _rpn_class_score, RPN_PRED_BBOX = outputs
 
         # Generate proposals
-        # Proposals are [batch, N, (y1, x1, y2, x2)] in normalized coordinates and zero padded.
+        # Proposals are [batch, N (say 2000), (y1, x1, y2, x2)] in normalized coordinates and zero padded.
         _proposals = proposal_layer([_rpn_class_score, RPN_PRED_BBOX],
-                                    proposal_count=proposal_count,
+                                    proposal_count=_proposal_cnt,
                                     nms_threshold=self.config.RPN.NMS_THRESHOLD,
                                     priors=self.priors, config=self.config)
         # Normalize coordinates
@@ -224,7 +224,7 @@ class MaskRCNN(nn.Module):
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass rpn_target generation'.format(curr_gpu_id))
 
-            # _rois: N, TRAIN_ROIS_PER_IMAGE, 4; zero padded
+            # _rois: N, TRAIN_ROIS_PER_IMAGE (say 200), 4; zero padded
             _rois, target_class_ids, target_deltas, target_mask = \
                 prepare_det_target(_proposals.detach(), gt_class_ids, gt_boxes/scale, gt_masks, self.config)
 
@@ -251,6 +251,7 @@ class MaskRCNN(nn.Module):
 
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass mask and cls generation'.format(curr_gpu_id))
+
             # compute loss directly
             rpn_class_loss = compute_rpn_class_loss(target_rpn_match, RPN_PRED_CLS_LOGITS)
             rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, RPN_PRED_BBOX)

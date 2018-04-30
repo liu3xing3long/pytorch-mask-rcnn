@@ -16,7 +16,7 @@ class Config(object):
     # Path to pretrained weights file
     MODEL.PRETRAIN_COCO_MODEL = os.path.join('datasets/pretrain_model', 'mask_rcnn_coco.pth')
     MODEL.INIT_FILE_CHOICE = 'last'  # or file (xxx.pth)
-    MODEL.BACKBONE = 'resnet101'
+    MODEL.BACKBONE = 'resnet101'  # todo: other structures (ssd, etc.)
 
     # ==================================
     DATASET = AttrDict()
@@ -96,6 +96,8 @@ class Config(object):
     # Percent of positive ROIs used to train classifier/mask heads
     ROIS.ROI_POSITIVE_RATIO = 0.33
 
+    ROIS.METHOD = 'roi_align'  # todo: regular roi_pooling
+
     # ==================================
     TEST = AttrDict()
     # Max number of final detections
@@ -146,7 +148,7 @@ class Config(object):
     CTRL = AttrDict()
     CTRL.SHOW_INTERVAL = 20
     CTRL.USE_VISDOM = False
-    CTRL.PROFILE_ANALYSIS = False
+    CTRL.PROFILE_ANALYSIS = False  # show time for some pass
 
     # for train and inference
     CTRL.BATCH_SIZE = 6
