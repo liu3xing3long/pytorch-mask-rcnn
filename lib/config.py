@@ -150,7 +150,7 @@ class Config(object):
     CTRL.USE_VISDOM = False
     CTRL.PROFILE_ANALYSIS = False
 
-    # for train and inference
+    # for train and inference TODO: split test and train
     CTRL.BATCH_SIZE = 6
 
     # ==============================
