@@ -359,7 +359,7 @@ def update_config_and_load_model(config, network, train_generator=None):
                                             'train_log_start_ep_{:04d}_iter_{:06d}.txt'.
                                             format(network.start_epoch, network.start_iter))
         if config.CTRL.DEBUG or config.TRAIN.DO_VALIDATION:
-            # set SAVE_IM=True
+            # set SAVE_IM=True when debug or do_evaluation during train
             config.TEST.SAVE_IM = True
     else:
         model_name = os.path.basename(model_path).replace('.pth', '')   # mask_rcnn_ep_0053_iter_001234

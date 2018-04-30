@@ -10,17 +10,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Mask R-CNN')
 
     parser.add_argument('--phase',
-                        default='train',
-                        # default='inference',
+                        # default='train',
+                        default='inference',
                         help='train or inference')
 
     parser.add_argument('--config_name',
                         required=False,
-                        default=None)
+                        # default=None)
                         # default='all_new')
                         # default='hyli_default_old')
                         # default='fuck')
-                        # default='base_102')
+                        default='base_101')
 
     parser.add_argument('--config_file',
                         # default=None)
@@ -30,7 +30,7 @@ if __name__ == '__main__':
     # show loss step by step; smaller input image size
     # do validation right after a few steps and visualize predictions
     parser.add_argument('--debug',
-                        default=1, type=int)  # no bool type here please
+                        default=0, type=int)  # no bool type here please
 
     parser.add_argument('--device_id',
                         default='0,1', type=str)

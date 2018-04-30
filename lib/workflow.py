@@ -288,7 +288,7 @@ def test_model(input_model, valset, coco_api,
         image_ids = image_ids[:limit]
 
     num_test_im = len(image_ids)
-    actual_test_bs = model.config.CTRL.BATCH_SIZE * 2
+    actual_test_bs = model.config.CTRL.BATCH_SIZE * 2  # bs for test could be larger
 
     print("Running COCO evaluation on {} images.".format(num_test_im))
     assert (num_test_im % actual_test_bs) % model.config.MISC.GPU_COUNT == 0, \
