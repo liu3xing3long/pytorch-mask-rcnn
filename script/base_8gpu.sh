@@ -26,7 +26,7 @@ echo $DEVICE_ID
 CUDA_VISIBLE_DEVICES=$DEVICE_ID python main.py \
     --device_id=$DEVICE_ID \
     --phase=train \
-    --config_name=None \   # ignore config_name in 'main.py'
+    --config_name=None \
     --debug=0 \
     --config_file=$config_file
 
