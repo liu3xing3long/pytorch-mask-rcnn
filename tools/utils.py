@@ -338,7 +338,7 @@ def update_config_and_load_model(config, network, train_generator=None):
             network.start_epoch = checkpoints['epoch']
             network.start_iter = checkpoints['iter']
             num_train_im = train_generator.dataset.dataset.num_images
-            iter_per_epoch = math.floor(num_train_im/config.CTRL.BATCH_SIZE)
+            iter_per_epoch = math.floor(num_train_im/config.TRAIN.BATCH_SIZE)
             if network.start_iter % iter_per_epoch == 0:
                 network.start_iter = 1
                 network.start_epoch += 1
