@@ -1,338 +1,273 @@
-import math
+import re
+from lib.workflow import *
+from lib.sub_module import *
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from lib.layers import pyramid_roi_align
+from torch.autograd import Variable
 
 
-class SamePad2d(nn.Module):
-    """Mimic tensorflow's 'SAME' padding."""
-    def __init__(self, kernel_size, stride):
-        super(SamePad2d, self).__init__()
-        self.kernel_size = torch.nn.modules.utils._pair(kernel_size)
-        self.stride = torch.nn.modules.utils._pair(stride)
+class MaskRCNN(nn.Module):
+    def __init__(self, config):
+        """
+            config: A Sub-class of the Config class
+            model_dir: Directory to save training results and trained weights
+        """
+        super(MaskRCNN, self).__init__()
+        self.config = config
+        self.loss_history = []
+        self.val_loss_history = []
 
-    def forward(self, input):
-        in_width = input.size()[2]
-        in_height = input.size()[3]
-        out_width = math.ceil(float(in_width) / float(self.stride[0]))
-        out_height = math.ceil(float(in_height) / float(self.stride[1]))
-        pad_along_width = ((out_width - 1) * self.stride[0] +
-                           self.kernel_size[0] - in_width)
-        pad_along_height = ((out_height - 1) * self.stride[1] +
-                            self.kernel_size[1] - in_height)
-        pad_left = math.floor(pad_along_width / 2)
-        pad_top = math.floor(pad_along_height / 2)
-        pad_right = pad_along_width - pad_left
-        pad_bottom = pad_along_height - pad_top
-        return F.pad(input, (pad_left, pad_right, pad_top, pad_bottom), 'constant', 0)
+        self._build(config=config)
+        self._initialize_weights()
+        # self._set_log_dir()
+        # self._epoch = 0
+        # self._iter = 0
 
-    def __repr__(self):
-        return self.__class__.__name__
+    @property
+    def epoch(self):
+        return self._epoch
 
+    @epoch.setter
+    def epoch(self, value):
+        self._epoch = value
 
-############################################################
-#  Resnet Graph
-############################################################
-class Bottleneck(nn.Module):
-    expansion = 4
+    @property
+    def iter(self):
+        return self._iter
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
-        super(Bottleneck, self).__init__()
-        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, stride=stride)
-        self.bn1 = nn.BatchNorm2d(planes, eps=0.001, momentum=0.01)
-        self.padding2 = SamePad2d(kernel_size=3, stride=1)
-        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3)
-        self.bn2 = nn.BatchNorm2d(planes, eps=0.001, momentum=0.01)
-        self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1)
-        self.bn3 = nn.BatchNorm2d(planes * 4, eps=0.001, momentum=0.01)
-        self.relu = nn.ReLU(inplace=True)
-        self.downsample = downsample
-        self.stride = stride
+    @iter.setter
+    def iter(self, value):
+        self._iter = value
 
-    def forward(self, x):
-        residual = x
+    def _build(self, config):
+        """Build Mask R-CNN architecture: fpn, rpn, classifier, mask"""
 
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
+        # Image size must be dividable by 2 multiple times
+        h, w = config.DATA.IMAGE_SHAPE[:2]
+        if h / 2**6 != int(h / 2**6) or w / 2**6 != int(w / 2**6):
+            raise Exception("Image size must be dividable by 2 at least 6 times "
+                            "to avoid fractions when downscaling and upscaling."
+                            "For example, use 256, 320, 384, 448, 512, ... etc. ")
 
-        out = self.padding2(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        out = self.relu(out)
+        # Build the shared convolutional layers.
+        # Bottom-up Layers
+        # Returns a list of the last layers of each stage, 5 in total.
+        # Don't create the head (stage 5), so we pick the 4th item in the list.
+        resnet = ResNet(config.MODEL.BACKBONE, stage5=True)
+        C1, C2, C3, C4, C5 = resnet.stages()
 
-        out = self.conv3(out)
-        out = self.bn3(out)
+        # Top-down Layers
+        self.fpn = FPN(C1, C2, C3, C4, C5, out_channels=256)
 
-        if self.downsample is not None:
-            residual = self.downsample(x)
+        # Generate Anchors (Tensor; do not assign cuda() here)
+        self.priors = torch.from_numpy(
+            generate_pyramid_priors(config.RPN.ANCHOR_SCALES, config.RPN.ANCHOR_RATIOS,
+                                    config.MODEL.BACKBONE_SHAPES, config.MODEL.BACKBONE_STRIDES,
+                                    config.RPN.ANCHOR_STRIDE)).float()
 
-        out += residual
-        out = self.relu(out)
+        # RPN
+        self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, input_ch=256)
+        # FPN Classifier
+        self.classifier = Classifier(depth=256, pool_size=config.MRCNN.POOL_SIZE,
+                                     image_shape=config.DATA.IMAGE_SHAPE, num_classes=config.DATASET.NUM_CLASSES)
+        # FPN Mask
+        self.mask = Mask(256, config.MRCNN.MASK_POOL_SIZE, config.DATA.IMAGE_SHAPE, config.DATASET.NUM_CLASSES)
 
-        return out
+        if not config.TRAIN.BN_LEARN:
+            # Fix batch norm layers
+            def set_bn_fix(m):
+                classname = m.__class__.__name__
+                if classname.find('BatchNorm') != -1:
+                    for p in m.parameters():
+                        p.requires_grad = False
+            self.apply(set_bn_fix)
 
+    def _initialize_weights(self):
 
-class ResNet(nn.Module):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                # n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                # m.weight.data.normal_(0, math.sqrt(2. / n))
+                nn.init.xavier_uniform(m.weight)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                m.weight.data.normal_(0, 0.01)
+                m.bias.data.zero_()
 
-    def __init__(self, architecture, stage5=False):
-        super(ResNet, self).__init__()
-        assert architecture in ["resnet50", "resnet101"]
-        self.inplanes = 64
-        self.layers = [3, 4, {"resnet50": 6, "resnet101": 23}[architecture], 3]
-        self.block = Bottleneck
-        self.stage5 = stage5
+    def set_trainable(self, layer_regex):
+        """called in 'workflow.py'
+        Sets model layers as trainable if their names match the given regular expression.
+        """
+        for param in self.named_parameters():
+            layer_name = param[0]
+            trainable = bool(re.fullmatch(layer_regex, layer_name))
+            if not trainable:
+                param[1].requires_grad = False
 
-        self.C1 = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3),
-            nn.BatchNorm2d(64, eps=0.001, momentum=0.01),
-            nn.ReLU(inplace=True),
-            SamePad2d(kernel_size=3, stride=2),
-            nn.MaxPool2d(kernel_size=3, stride=2),
-        )
-        self.C2 = self.make_layer(self.block, 64, self.layers[0])
-        self.C3 = self.make_layer(self.block, 128, self.layers[1], stride=2)
-        self.C4 = self.make_layer(self.block, 256, self.layers[2], stride=2)
-        if self.stage5:
-            self.C5 = self.make_layer(self.block, 512, self.layers[3], stride=2)
+    @staticmethod
+    def adjust_input_gt(*args):
+        """zero-padding different number of GTs for each image within the batch"""
+        gt_cls_ids = args[0]
+        gt_boxes = args[1]
+        gt_masks = args[2]
+        gt_num = [x.shape[0] for x in gt_cls_ids]
+        max_gt_num = max(gt_num)
+        bs = len(gt_cls_ids)
+        mask_shape = gt_masks[0].shape[1]
+
+        GT_CLS_IDS = torch.zeros(bs, max_gt_num)
+        GT_BOXES = torch.zeros(bs, max_gt_num, 4)
+        GT_MASKS = torch.zeros(bs, max_gt_num, mask_shape, mask_shape)
+        for i in range(bs):
+            GT_CLS_IDS[i, :gt_num[i]] = torch.from_numpy(gt_cls_ids[i])
+            GT_BOXES[i, :gt_num[i], :] = torch.from_numpy(gt_boxes[i]).float()
+            GT_MASKS[i, :gt_num[i], :, :] = torch.from_numpy(gt_masks[i]).float()
+
+        GT_CLS_IDS = Variable(GT_CLS_IDS.cuda(), requires_grad=False)
+        GT_BOXES = Variable(GT_BOXES.cuda(), requires_grad=False)
+        GT_MASKS = Variable(GT_MASKS.cuda(), requires_grad=False)
+
+        return GT_CLS_IDS, GT_BOXES, GT_MASKS, gt_num
+
+    def forward(self, input, mode):
+        """forward function of the Mask-RCNN network"""
+        molded_images = input[0]
+        sample_per_gpu = molded_images.size(0)  # aka, actual batch size
+        # for debug only
+        curr_gpu_id = torch.cuda.current_device()
+        curr_coco_im_id = input[-1][:, -1]
+
+        # set model state
+        if mode == 'inference':
+            _proposal_cnt = self.config.RPN.POST_NMS_ROIS_INFERENCE
+            self.eval()
+        elif mode == 'train':
+            _proposal_cnt = self.config.RPN.POST_NMS_ROIS_TRAINING
+            self.train()
+            if not self.config.TRAIN.BN_LEARN:
+                # Set BN layer always in eval mode during training
+                def set_bn_eval(m):
+                    classname = m.__class__.__name__
+                    if classname.find('BatchNorm') != -1:
+                        m.eval()
+                self.apply(set_bn_eval)
         else:
-            self.C5 = None
+            raise Exception('unknown phase')
 
-    def forward(self, x):
-        x = self.C1(x)
-        x = self.C2(x)
-        x = self.C3(x)
-        x = self.C4(x)
-        x = self.C5(x)
-        return x
+        # Feature extraction
+        [p2_out, p3_out, p4_out, p5_out, p6_out] = self.fpn(molded_images)
 
-    def stages(self):
-        return [self.C1, self.C2, self.C3, self.C4, self.C5]
+        # Note that P6 is used in RPN, but not in the classifier heads.
+        _rpn_feature_maps = [p2_out, p3_out, p4_out, p5_out, p6_out]
+        _mrcnn_feature_maps = [p2_out, p3_out, p4_out, p5_out]
 
-    def make_layer(self, block, planes, blocks, stride=1):
-        downsample = None
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = nn.Sequential(
-                nn.Conv2d(self.inplanes, planes * block.expansion,
-                          kernel_size=1, stride=stride),
-                nn.BatchNorm2d(planes * block.expansion, eps=0.001, momentum=0.01),
-            )
-        layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
-        self.inplanes = planes * block.expansion
-        for i in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
+        # Loop through pyramid layers
+        layer_outputs = []  # list of lists
+        for p in _rpn_feature_maps:
+            layer_outputs.append(self.rpn(p))
 
-        return nn.Sequential(*layers)
+        # Concatenate rpn layer outputs
+        # Convert from list of lists of level outputs to list of lists
+        # of outputs across levels.
+        # e.g. [[a1, b1, c1], [a2, b2, c2]] => [[a1, a2], [b1, b2], [c1, c2]]
+        outputs = list(zip(*layer_outputs))
+        outputs = [torch.cat(list(o), dim=1) for o in outputs]
+        RPN_PRED_CLS_LOGITS, _rpn_class_score, RPN_PRED_BBOX = outputs
 
+        # Generate proposals
+        # Proposals are [batch, N (say 2000), (y1, x1, y2, x2)] in normalized coordinates and zero padded.
+        _proposals = proposal_layer([_rpn_class_score, RPN_PRED_BBOX],
+                                    proposal_count=_proposal_cnt,
+                                    nms_threshold=self.config.RPN.NMS_THRESHOLD,
+                                    priors=self.priors, config=self.config)
+        # Normalize coordinates
+        h, w = self.config.DATA.IMAGE_SHAPE[:2]
+        scale = Variable(torch.from_numpy(np.array([h, w, h, w])).float(), requires_grad=False).cuda()
 
-############################################################
-#  FPN Graph
-############################################################
-# not used
-# class TopDownLayer(nn.Module):
-#
-#     def __init__(self, in_channels, out_channels):
-#         super(TopDownLayer, self).__init__()
-#         self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1)
-#         self.padding2 = SamePad2d(kernel_size=3, stride=1)
-#         self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1)
-#
-#     def forward(self, x, y):
-#         y = F.upsample(y, scale_factor=2)
-#         x = self.conv1(x)
-#         return self.conv2(self.padding2(x+y))
+        if self.config.CTRL.PROFILE_ANALYSIS and mode == 'train':
 
-class FPN(nn.Module):
-    def __init__(self, C1, C2, C3, C4, C5, out_channels):
-        super(FPN, self).__init__()
-        self.out_channels = out_channels
-        self.C1 = C1
-        self.C2 = C2
-        self.C3 = C3
-        self.C4 = C4
-        self.C5 = C5
-        self.P6 = nn.MaxPool2d(kernel_size=1, stride=2)
-        self.P5_conv1 = nn.Conv2d(2048, self.out_channels, kernel_size=1, stride=1)
-        self.P5_conv2 = nn.Sequential(
-            SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
-        )
-        self.P4_conv1 = nn.Conv2d(1024, self.out_channels, kernel_size=1, stride=1)
-        self.P4_conv2 = nn.Sequential(
-            SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
-        )
-        self.P3_conv1 = nn.Conv2d(512, self.out_channels, kernel_size=1, stride=1)
-        self.P3_conv2 = nn.Sequential(
-            SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
-        )
-        self.P2_conv1 = nn.Conv2d(256, self.out_channels, kernel_size=1, stride=1)
-        self.P2_conv2 = nn.Sequential(
-            SamePad2d(kernel_size=3, stride=1),
-            nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
-        )
+            print('\t[gpu {:d}] curr_coco_im_ids: {}'.format(curr_gpu_id, curr_coco_im_id.data.cpu().numpy()))
+            print('\t[gpu {:d}] pass feature extraction'.format(curr_gpu_id))
 
-    def forward(self, x):
-        x = self.C1(x)
-        x = self.C2(x)
-        c2_out = x
-        x = self.C3(x)
-        c3_out = x
-        x = self.C4(x)
-        c4_out = x
-        x = self.C5(x)
-        p5_out = self.P5_conv1(x)
-        p4_out = self.P4_conv1(c4_out) + F.upsample(p5_out, scale_factor=2)
-        p3_out = self.P3_conv1(c3_out) + F.upsample(p4_out, scale_factor=2)
-        p2_out = self.P2_conv1(c2_out) + F.upsample(p3_out, scale_factor=2)
+        if mode == 'inference':
+            # Network Heads
+            # Proposal classifier and BBox regressor heads
+            _, mrcnn_class, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _proposals)
 
-        p5_out = self.P5_conv2(p5_out)
-        p4_out = self.P4_conv2(p4_out)
-        p3_out = self.P3_conv2(p3_out)
-        p2_out = self.P2_conv2(p2_out)
+            # Detections
+            image_metas = input[1]  # (3, 90), Variable
+            # output is [batch, num_detections (say 100), (y1, x1, y2, x2, class_id, score)] in image coordinates
+            detections = detection_layer(_proposals, mrcnn_class, mrcnn_bbox, image_metas, self.config)
 
-        # P6 is used for the 5th anchor scale in RPN. Generated by
-        # subsampling from P5 with stride of 2.
-        p6_out = self.P6(p5_out)
+            # Convert boxes to normalized coordinates
+            normalize_boxes = detections[:, :, :4] / scale
+            # Create masks for detections
+            mrcnn_mask = self.mask(_mrcnn_feature_maps, normalize_boxes)
 
-        return [p2_out, p3_out, p4_out, p5_out, p6_out]
+            # shape: batch, num_detections, 81, 28, 28
+            mrcnn_mask = mrcnn_mask.view(sample_per_gpu, -1,
+                                         mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
 
+            return [detections, mrcnn_mask]
 
-############################################################
-#  Region Proposal Network
-############################################################
-class RPN(nn.Module):
-    """Builds the model of Region Proposal Network.
-    anchors_per_location: number of anchors per pixel in the feature map
-    anchor_stride: Controls the density of anchors. Typically 1 (anchors for
-                   every pixel in the feature map), or 2 (every other pixel).
-    Returns:
-        rpn_logits: [batch, H, W, 2] Anchor classifier logits (before softmax)
-        rpn_probs: [batch, W, W, 2] Anchor classifier probabilities.
-        rpn_bbox: [batch, H, W, (dy, dx, log(dh), log(dw))] Deltas to be applied to anchors.
-    """
-    # TODO (low): check if RPN is very shallow with original paper;
-    # TODO (mid): or change conv_shared to separate ones across scales
-    def __init__(self, anchors_per_location, anchor_stride, input_ch):
-        super(RPN, self).__init__()
-        self.anchor_stride = anchor_stride
-        self.input_ch = input_ch
+        elif mode == 'train':
 
-        self.padding = SamePad2d(kernel_size=3, stride=self.anchor_stride)
-        self.conv_shared = nn.Conv2d(self.input_ch, 512, kernel_size=3, stride=self.anchor_stride)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv_class = nn.Conv2d(512, 2 * anchors_per_location, kernel_size=1, stride=1)
-        self.softmax = nn.Softmax(dim=2)
-        self.conv_bbox = nn.Conv2d(512, 4 * anchors_per_location, kernel_size=1, stride=1)
+            gt_class_ids, gt_boxes, gt_masks = input[1], input[2], input[3]
 
-    def forward(self, x):
-        # Shared convolutional base of the RPN
-        x = self.relu(self.conv_shared(self.padding(x)))
+            # compute RPN Targets
+            target_rpn_match, target_rpn_bbox = \
+                prepare_rpn_target(self.priors, gt_class_ids, gt_boxes, self.config, curr_coco_im_id)
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\t[gpu {:d}] pass rpn_target generation'.format(curr_gpu_id))
 
-        # Anchor Score. [batch, anchors per location * 2, height, width].
-        rpn_class_logits = self.conv_class(x)
+            # _rois: bs, TRAIN_ROIS_PER_IMAGE (say 200), 4; zero padded
+            _rois, target_class_ids, target_deltas, target_mask = \
+                prepare_det_target(_proposals.detach(), gt_class_ids, gt_boxes/scale, gt_masks, self.config)
 
-        # Reshape to [batch, 2, anchors]
-        rpn_class_logits = rpn_class_logits.permute(0, 2, 3, 1)
-        rpn_class_logits = rpn_class_logits.contiguous()
-        rpn_class_logits = rpn_class_logits.view(x.size()[0], -1, 2)
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\t[gpu {:d}] pass pass det_target generation'.format(curr_gpu_id))
+            if torch.sum(_rois).data[0] != 0:
+                # classifier
+                mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _rois)
+                # mask
+                mrcnn_mask = self.mask(_mrcnn_feature_maps, _rois)
+                # reshape output
+                mrcnn_class_logits = mrcnn_cls_logits.view(sample_per_gpu, -1, mrcnn_cls_logits.size(1))
+                mrcnn_bbox = mrcnn_bbox.view(sample_per_gpu, -1, mrcnn_bbox.size(1), mrcnn_bbox.size(2))
+                mrcnn_mask = mrcnn_mask.view(sample_per_gpu, -1,
+                                             mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
+            else:
+                # if **ALL** samples within the batch has empty "_rois", skip the heads and output zero predictions.
+                # this is really rare case. otherwise, pass the heads even some samples don't have _rois.
+                num_rois, mask_sz, num_cls = self.config.ROIS.TRAIN_ROIS_PER_IMAGE, \
+                                             self.config.MRCNN.MASK_SHAPE[0], self.config.DATASET.NUM_CLASSES
+                mrcnn_class_logits = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls).cuda())
+                mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
+                mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
-        # Softmax on last dimension of BG/FG.
-        rpn_probs = self.softmax(rpn_class_logits)
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\t[gpu {:d}] pass mask and cls generation'.format(curr_gpu_id))
 
-        # Bounding box refinement. [batch, H, W, anchors per location, depth]
-        # where depth is [x, y, log(w), log(h)]
-        rpn_bbox = self.conv_bbox(x)
+            # compute loss directly
+            rpn_class_loss = compute_rpn_class_loss(target_rpn_match, RPN_PRED_CLS_LOGITS)
+            rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, RPN_PRED_BBOX)
+            mrcnn_class_loss = compute_mrcnn_class_loss(target_class_ids, mrcnn_class_logits)
+            mrcnn_bbox_loss = compute_mrcnn_bbox_loss(target_deltas, target_class_ids, mrcnn_bbox)
+            mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
 
-        # Reshape to [batch, 4, anchors]
-        rpn_bbox = rpn_bbox.permute(0, 2, 3, 1)
-        rpn_bbox = rpn_bbox.contiguous()
-        rpn_bbox = rpn_bbox.view(x.size()[0], -1, 4)
+            outputs = torch.stack((rpn_class_loss, rpn_bbox_loss,
+                                   mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss), dim=1)
+            if self.config.CTRL.PROFILE_ANALYSIS:
+                print('\t[gpu {:d}] pass loss compute!'.format(curr_gpu_id))
+            return outputs
 
-        return [rpn_class_logits, rpn_probs, rpn_bbox]
+            # return [target_rpn_match, RPN_PRED_CLS_LOGITS,
+            #         target_rpn_bbox, RPN_PRED_BBOX,
+            #         target_class_ids, mrcnn_class_logits,
+            #         target_deltas, mrcnn_bbox,
+            #         target_mask, mrcnn_mask]
 
-
-############################################################
-#  Feature Pyramid Network Heads
-############################################################
-class Classifier(nn.Module):
-    def __init__(self, depth, pool_size, image_shape, num_classes):
-        super(Classifier, self).__init__()
-        self.depth = depth
-        self.pool_size = pool_size
-        self.image_shape = image_shape
-        self.num_classes = num_classes
-        self.conv1 = nn.Conv2d(self.depth, 1024, kernel_size=self.pool_size, stride=1)
-        self.bn1 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
-        self.conv2 = nn.Conv2d(1024, 1024, kernel_size=1, stride=1)
-        self.bn2 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
-        self.relu = nn.ReLU(inplace=True)
-
-        self.linear_class = nn.Linear(1024, num_classes)
-        self.softmax = nn.Softmax(dim=1)
-
-        self.linear_bbox = nn.Linear(1024, num_classes * 4)
-
-    def forward(self, x, rois):
-        x = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-
-        x = x.view(-1, 1024)
-        mrcnn_class_logits = self.linear_class(x)
-        mrcnn_probs = self.softmax(mrcnn_class_logits)
-
-        mrcnn_bbox = self.linear_bbox(x)
-        mrcnn_bbox = mrcnn_bbox.view(mrcnn_bbox.size()[0], -1, 4)
-
-        return [mrcnn_class_logits, mrcnn_probs, mrcnn_bbox]
-
-
-class Mask(nn.Module):
-    def __init__(self, depth, pool_size, image_shape, num_classes):
-        super(Mask, self).__init__()
-        self.depth = depth
-        self.pool_size = pool_size
-        self.image_shape = image_shape
-        self.num_classes = num_classes
-        self.padding = SamePad2d(kernel_size=3, stride=1)
-        self.conv1 = nn.Conv2d(self.depth, 256, kernel_size=3, stride=1)
-        self.bn1 = nn.BatchNorm2d(256, eps=0.001)
-        self.conv2 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
-        self.bn2 = nn.BatchNorm2d(256, eps=0.001)
-        self.conv3 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
-        self.bn3 = nn.BatchNorm2d(256, eps=0.001)
-        self.conv4 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
-        self.bn4 = nn.BatchNorm2d(256, eps=0.001)
-        self.deconv = nn.ConvTranspose2d(256, 256, kernel_size=2, stride=2)
-        self.conv5 = nn.Conv2d(256, num_classes, kernel_size=1, stride=1)
-        self.sigmoid = nn.Sigmoid()
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, x, rois):
-        x = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)   # 3000 (3x1000), 256, 7, 7
-        x = self.conv1(self.padding(x))
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.conv2(self.padding(x))
-        x = self.bn2(x)
-        x = self.relu(x)
-        x = self.conv3(self.padding(x))
-        x = self.bn3(x)
-        x = self.relu(x)
-        x = self.conv4(self.padding(x))
-        x = self.bn4(x)
-        x = self.relu(x)
-        x = self.deconv(x)
-        x = self.relu(x)
-        x = self.conv5(x)
-        x = self.sigmoid(x)
-        # output is 28 x 28; matches the mask_shape
-        return x
