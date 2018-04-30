@@ -52,12 +52,11 @@ class MaskRCNN(nn.Module):
         # Build the shared convolutional layers.
         # Bottom-up Layers
         # Returns a list of the last layers of each stage, 5 in total.
-        # Don't create the thead (stage 5), so we pick the 4th item in the list.
-        resnet = ResNet("resnet101", stage5=True)
+        # Don't create the head (stage 5), so we pick the 4th item in the list.
+        resnet = ResNet(config.MODEL.BACKBONE, stage5=True)
         C1, C2, C3, C4, C5 = resnet.stages()
 
         # Top-down Layers
-        # TODO (low): add assert to verify feature map sizes match what is in config
         self.fpn = FPN(C1, C2, C3, C4, C5, out_channels=256)
 
         # Generate Anchors (Tensor; do not assign cuda() here)
@@ -74,13 +73,14 @@ class MaskRCNN(nn.Module):
         # FPN Mask
         self.mask = Mask(256, config.MRCNN.MASK_POOL_SIZE, config.DATA.IMAGE_SHAPE, config.DATASET.NUM_CLASSES)
 
-        # Fix batch norm layers
-        def set_bn_fix(m):
-            classname = m.__class__.__name__
-            if classname.find('BatchNorm') != -1:
-                for p in m.parameters():
-                    p.requires_grad = False
-        self.apply(set_bn_fix)
+        if not config.TRAIN.BN_LEARN:
+            # Fix batch norm layers
+            def set_bn_fix(m):
+                classname = m.__class__.__name__
+                if classname.find('BatchNorm') != -1:
+                    for p in m.parameters():
+                        p.requires_grad = False
+            self.apply(set_bn_fix)
 
     def _initialize_weights(self):
 

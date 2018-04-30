@@ -391,7 +391,7 @@ def set_optimizer(net, opt):
                                   momentum=opt.MOMENTUM, weight_decay=opt.WEIGHT_DECAY)
         else:
             # Optimizer object, add L2 Regularization
-            # Skip gamma and beta weights of batch normalization layers.
+            # Skip regularization of gamma and beta weights in batch normalization layers.
             trainables_wo_bn = [param for name, param in net.named_parameters()
                                 if param.requires_grad and 'bn' not in name]
             trainables_only_bn = [param for name, param in net.named_parameters()

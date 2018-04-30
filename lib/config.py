@@ -11,14 +11,12 @@ class Config(object):
 
     # ==================================
     MODEL = AttrDict()
-    # The strides of each layer of the FPN Pyramid. These values
-    # are based on a Resnet101 backbone.
-    MODEL.BACKBONE_STRIDES = [4, 8, 16, 32, 64]
     # Path to pretrained imagenet model
     MODEL.PRETRAIN_IMAGENET_MODEL = os.path.join('datasets/pretrain_model', "resnet50_imagenet.pth")
     # Path to pretrained weights file
     MODEL.PRETRAIN_COCO_MODEL = os.path.join('datasets/pretrain_model', 'mask_rcnn_coco.pth')
     MODEL.INIT_FILE_CHOICE = 'last'  # or file (xxx.pth)
+    MODEL.BACKBONE = 'resnet101'
 
     # ==================================
     DATASET = AttrDict()
@@ -38,7 +36,7 @@ class Config(object):
 
     # Anchor stride
     # If 1 then anchors are created for each cell in the backbone feature map.
-    # If 2, then anchors are created for every other cell, and so on.
+    # If 2, then anchors are created for every other cell, and so on (stride=2,3,4...).
     RPN.ANCHOR_STRIDE = 1
 
     # Non-max suppression threshold to filter RPN proposals.
@@ -184,11 +182,16 @@ class Config(object):
         # set result folder, 'results/base_101/train (or inference)/'
         self.MISC.RESULT_FOLDER = os.path.join(
             'results', self.CTRL.CONFIG_NAME.lower(), self.CTRL.PHASE)
-
         if not os.path.exists(self.MISC.RESULT_FOLDER):
             os.makedirs(self.MISC.RESULT_FOLDER)
 
         # MUST be left at the end
+        # The strides of each layer of the FPN Pyramid.
+        if self.MODEL.BACKBONE == 'resnet101':
+            self.MODEL.BACKBONE_STRIDES = [4, 8, 16, 32, 64]
+        else:
+            raise Exception('unknown backbone structure')
+
         # Input image size
         self.DATA.IMAGE_SHAPE = np.array(
             [self.DATA.IMAGE_MAX_DIM, self.DATA.IMAGE_MAX_DIM, 3])
