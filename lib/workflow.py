@@ -108,8 +108,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         # Validation (deprecated)
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
-        # TODO (mid): visualize the loss with resume concerned
-        # TODO (mid): visdom
+        # TODO (mid): visualize the loss with resume concerned; include visdom
         model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
         visualize.plot_loss(model.loss_history, model.val_loss_history,

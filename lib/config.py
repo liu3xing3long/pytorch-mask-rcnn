@@ -46,7 +46,8 @@ class Config(object):
     # How many anchors per image to use for RPN training
     RPN.TRAIN_ANCHORS_PER_IMAGE = 256
 
-    # ROIs kept after non-maximum suppression (training and inference)
+    # ROIs kept after non-maximum suppression for RPN part
+    RPN.PRE_NMS_LIMIT = 6000
     RPN.POST_NMS_ROIS_TRAINING = 2000
     RPN.POST_NMS_ROIS_INFERENCE = 1000
 
@@ -60,8 +61,8 @@ class Config(object):
     MRCNN.USE_MINI_MASK = True
     MRCNN.MINI_MASK_SHAPE = (56, 56)  # (height, width) of the mini-mask
     # Pooled ROIs
-    MRCNN.POOL_SIZE = 7
-    MRCNN.MASK_POOL_SIZE = 14
+    MRCNN.POOL_SIZE = 7         # cls/bbox stream
+    MRCNN.MASK_POOL_SIZE = 14   # mask stream
     MRCNN.MASK_SHAPE = [28, 28]
 
     # ==================================

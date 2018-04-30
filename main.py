@@ -1,5 +1,5 @@
 import argparse
-import lib.network as network
+import lib.model as network
 from lib.config import CocoConfig
 from lib.workflow import *
 from tools.utils import update_config_and_load_model, set_optimizer

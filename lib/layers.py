@@ -99,7 +99,7 @@ def proposal_layer(inputs, proposal_count, nms_threshold, priors, config=None):
 
     # Improve performance by trimming to top anchors by score
     # and doing the rest on the smaller subset.
-    pre_nms_limit = min(6000, prior_num)
+    pre_nms_limit = min(config.RPN.PRE_NMS_LIMIT, prior_num)
     scores, order = scores.sort(descending=True)
     scores = scores[:, :pre_nms_limit]
     order = order[:, :pre_nms_limit]
@@ -198,7 +198,7 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
         # level_boxes = level_boxes.detach()
 
         # Crop and Resize
-        box_ind = index[:, 0].int()
+        box_ind = index[:, 0].int()   # indicates which sample (along the batch dim) the box comes from
         curr_feature_maps = feature_maps[i]
         pooled_features = CropAndResizeFunction(pool_size, pool_size)(curr_feature_maps, level_boxes, box_ind)
         pooled.append(pooled_features)
@@ -216,7 +216,7 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
     pooled_out = Variable(torch.zeros(
         boxes.size(0), boxes.size(1), pooled.size(1), pooled.size(2), pooled.size(3)).cuda())
     pooled_out[box_to_level[:, 0], box_to_level[:, 1], :, :, :] = pooled
-    # 3, 1000, 256, 7, 7 -> 3000, 256, 7, 7
+    # 3, 1000, 256, 7 (or 14), 7 -> 3000, 256, 7, 7
     pooled_out = pooled_out.view(-1, pooled_out.size(2), pooled_out.size(3), pooled_out.size(4))
 
     return pooled_out
@@ -231,7 +231,6 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
     # gt_class_ids: size MAX_GT_NUM
 
     if torch.nonzero(gt_class_ids < 0).size():
-
         # Handle COCO crowds
         # A crowd box in COCO is a bounding box around several instances. Exclude
         # them from training. A crowd box is given a negative class ID.
@@ -390,7 +389,6 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     """Sub-samples proposals and generates target box refinement, class_ids and masks.
         Note that proposal class IDs, gt_boxes, and gt_masks are zero padded.
         Equally, returned rois and targets are zero padded.
-
     Args:
         proposals:          [batch, N, (y1, x1, y2, x2)] in normalized coordinates.
                                 Might be zero padded if there are not enough proposals.
@@ -603,7 +601,7 @@ def prepare_rpn_target(anchors, gt_class_ids, gt_boxes, config, curr_coco_im_id=
 
 
 ############################################################
-#  Detection Layer (for evaluation)
+#  Detection Layer (Inference)
 ############################################################
 def conduct_nms(class_ids, refined_rois, class_scores, keep, config):
     """per SAMPLE operation; no batch size dim!
