@@ -5,6 +5,6 @@ CUDA_VISIBLE_DEVICES=$DEVICE_ID python main.py \
     --device_id=$DEVICE_ID \
     --phase=train \
     --debug=0 \
-    --config_file=configs/base_105.yaml  # change config file here
+    --config_file=configs/base_103.yaml  # change config file here
 
 
