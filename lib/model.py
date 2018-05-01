@@ -19,9 +19,6 @@ class MaskRCNN(nn.Module):
 
         self._build(config=config)
         self._initialize_weights()
-        # self._set_log_dir()
-        # self._epoch = 0
-        # self._iter = 0
 
     @property
     def epoch(self):
@@ -55,7 +52,6 @@ class MaskRCNN(nn.Module):
         # Don't create the head (stage 5), so we pick the 4th item in the list.
         resnet = ResNet(config.MODEL.BACKBONE, stage5=True)
         C1, C2, C3, C4, C5 = resnet.stages()
-
         # Top-down Layers
         self.fpn = FPN(C1, C2, C3, C4, C5, out_channels=256)
 
@@ -64,14 +60,15 @@ class MaskRCNN(nn.Module):
             generate_pyramid_priors(config.RPN.ANCHOR_SCALES, config.RPN.ANCHOR_RATIOS,
                                     config.MODEL.BACKBONE_SHAPES, config.MODEL.BACKBONE_STRIDES,
                                     config.RPN.ANCHOR_STRIDE)).float()
+        # RoI
+        self.dev_roi = Dev(config)
 
         # RPN
         self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, input_ch=256)
         # FPN Classifier
-        self.classifier = Classifier(depth=256, pool_size=config.MRCNN.POOL_SIZE,
-                                     image_shape=config.DATA.IMAGE_SHAPE, num_classes=config.DATASET.NUM_CLASSES)
+        self.classifier = Classifier(depth=256, num_classes=config.DATASET.NUM_CLASSES)
         # FPN Mask
-        self.mask = Mask(256, config.MRCNN.MASK_POOL_SIZE, config.DATA.IMAGE_SHAPE, config.DATASET.NUM_CLASSES)
+        self.mask = Mask(depth=256, num_classes=config.DATASET.NUM_CLASSES)
 
         if not config.TRAIN.BN_LEARN:
             # Fix batch norm layers
@@ -227,14 +224,17 @@ class MaskRCNN(nn.Module):
             # _rois: bs, TRAIN_ROIS_PER_IMAGE (say 200), 4; zero padded
             _rois, target_class_ids, target_deltas, target_mask = \
                 prepare_det_target(_proposals.detach(), gt_class_ids, gt_boxes/scale, gt_masks, self.config)
-
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass pass det_target generation'.format(curr_gpu_id))
+
             if torch.sum(_rois).data[0] != 0:
+                # RoIs: 3000 (3x1000), 256, 7, 7
+                _pooled_cls, _pooled_mask = self.dev_roi(_mrcnn_feature_maps, _rois)
                 # classifier
-                mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _rois)
+                mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_pooled_cls)
                 # mask
-                mrcnn_mask = self.mask(_mrcnn_feature_maps, _rois)
+                mrcnn_mask = self.mask(_pooled_mask)
+
                 # reshape output
                 mrcnn_class_logits = mrcnn_cls_logits.view(sample_per_gpu, -1, mrcnn_cls_logits.size(1))
                 mrcnn_bbox = mrcnn_bbox.view(sample_per_gpu, -1, mrcnn_bbox.size(1), mrcnn_bbox.size(2))

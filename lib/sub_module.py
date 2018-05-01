@@ -256,14 +256,42 @@ class RPN(nn.Module):
 
 
 ############################################################
+#  DEV
+############################################################
+class Dev(nn.Module):
+    def __init__(self, config):
+        super(Dev, self).__init__()
+        self.use_dev = config.DEV.SWITCH
+        self.pool_size = config.MRCNN.POOL_SIZE
+        self.mask_pool_size = config.MRCNN.MASK_POOL_SIZE
+        self.image_shape = config.DATA.IMAGE_SHAPE
+        if self.use_dev:
+            self.upsample = nn.Sequential(*[
+                nn.ConvTranspose2d(256, 256, kernel_size=2, stride=2),
+                nn.BatchNorm2d(256),
+                nn.ReLU(inplace=True)
+            ])
+
+    def forward(self, x, rois):
+        if not self.use_dev:
+            # in 'layers.py'
+            out_cls = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)
+            out_mask = pyramid_roi_align([rois] + x, self.mask_pool_size, self.image_shape)
+        else:
+            # your idea here
+            pass
+        return out_cls, out_mask
+
+
+############################################################
 #  Feature Pyramid Network Heads
 ############################################################
 class Classifier(nn.Module):
-    def __init__(self, depth, pool_size, image_shape, num_classes):
+    def __init__(self, depth, num_classes):
         super(Classifier, self).__init__()
         self.depth = depth
-        self.pool_size = pool_size
-        self.image_shape = image_shape
+        # self.pool_size = pool_size
+        # self.image_shape = image_shape
         self.num_classes = num_classes
         self.conv1 = nn.Conv2d(self.depth, 1024, kernel_size=self.pool_size, stride=1)
         self.bn1 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
@@ -276,8 +304,7 @@ class Classifier(nn.Module):
 
         self.linear_bbox = nn.Linear(1024, num_classes * 4)
 
-    def forward(self, x, rois):
-        x = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)
+    def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
@@ -296,11 +323,9 @@ class Classifier(nn.Module):
 
 
 class Mask(nn.Module):
-    def __init__(self, depth, pool_size, image_shape, num_classes):
+    def __init__(self, depth, num_classes):
         super(Mask, self).__init__()
         self.depth = depth
-        self.pool_size = pool_size
-        self.image_shape = image_shape
         self.num_classes = num_classes
         self.padding = SamePad2d(kernel_size=3, stride=1)
         self.conv1 = nn.Conv2d(self.depth, 256, kernel_size=3, stride=1)
@@ -316,8 +341,7 @@ class Mask(nn.Module):
         self.sigmoid = nn.Sigmoid()
         self.relu = nn.ReLU(inplace=True)
 
-    def forward(self, x, rois):
-        x = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)   # 3000 (3x1000), 256, 7, 7
+    def forward(self, x):
         x = self.conv1(self.padding(x))
         x = self.bn1(x)
         x = self.relu(x)

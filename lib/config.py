@@ -237,7 +237,12 @@ class CocoConfig(Config):
 
         _ignore_yaml_or_list = False
         # ================ (CUSTOMIZED CONFIG) =========================
-        if args.config_name == 'base_101':
+        if args.config_name == 'fuck':
+            # debug mode on local pc
+            self.DEV.SWITCH = True
+            _ignore_yaml_or_list = True
+
+        elif args.config_name == 'base_101':
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
             self.TRAIN.BATCH_SIZE = 16
             self.CTRL.PROFILE_ANALYSIS = False
@@ -245,11 +250,7 @@ class CocoConfig(Config):
 
         elif args.config_name == 'base_102':
             self.MODEL.INIT_FILE_CHOICE = 'imagenet_pretrain'
-<<<<<<< HEAD
-            self.TRAIN.BATCH_SIZE = 4
-=======
             self.CTRL.BATCH_SIZE = 16
->>>>>>> ee69164ce5b03380a7dad63fc1ee8db1fe8fe7cd
             self.CTRL.PROFILE_ANALYSIS = False
             self.TEST.SAVE_IM = False
             _ignore_yaml_or_list = True
