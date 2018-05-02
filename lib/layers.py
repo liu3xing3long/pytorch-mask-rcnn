@@ -655,7 +655,7 @@ def conduct_nms(class_ids, refined_rois, class_scores, keep, config):
     return detections
 
 
-def detection_layer(rois, probs, deltas, image_meta, config):
+def detection_layer(rois, probs, deltas, windows, config):
     """Takes classified proposal boxes and their bounding box deltas and
     returns the final detection boxes.
 
@@ -664,7 +664,8 @@ def detection_layer(rois, probs, deltas, image_meta, config):
         rois:                   [bs, 1000 (just an example), 4 (y1, x1, y2, x2)], in normalized coordinates
         probs (mrcnn_class):    [bs*1000, 81]
         deltas (mrcnn_bbox):    [bs*1000, 81, 4], (dy, dx, log(dh), log(dw))
-        image_meta:             [bs, 89] Variable
+        windows:                [bs, 4] Variable, (y1, x1, y2, x2) in image coordinates;
+                                    The part of the image that contains the image excluding the padding.
     Returns:
         detections:             [batch, num_detections, (y1, x1, y2, x2, class_id, class_score)]
     """
@@ -672,9 +673,6 @@ def detection_layer(rois, probs, deltas, image_meta, config):
     box_num_per_sample = rois.size(1)
     detections = Variable(torch.zeros(bs, config.TEST.DET_MAX_INSTANCES, 6).cuda(), volatile=True)
 
-    # windows: (y1, x1, y2, x2) in image coordinates.
-    # The part of the image that contains the image excluding the padding.
-    _, _, windows, _, _ = parse_image_meta(image_meta)
     # Class IDs per ROI
     class_scores, class_ids = torch.max(probs, dim=1)
 

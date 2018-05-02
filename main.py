@@ -10,8 +10,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Mask R-CNN')
 
     parser.add_argument('--phase',
-                        default='train',
-                        # default='inference',
+                        # default='train',
+                        default='inference',
                         help='train or inference')
 
     parser.add_argument('--config_name',

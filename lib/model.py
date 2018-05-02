@@ -246,18 +246,19 @@ class MaskRCNN(nn.Module):
 
         if mode == 'inference':
 
-            _pooled_cls, _, _ = self.dev_roi(_mrcnn_feature_maps, _proposals, [])
+            _pooled_cls, _, _ = self.dev_roi(_mrcnn_feature_maps, _proposals)
 
             _, mrcnn_class, mrcnn_bbox = self.classifier(_pooled_cls)
             # Detections
-            image_metas = input[1]  # (3, 90), Variable
+            # input[1], image_metas, (3, 90), Variable
+            _, _, windows, _, _ = parse_image_meta(input[1])
             # output is [batch, num_detections (say 100), (y1, x1, y2, x2, class_id, score)] in image coordinates
-            detections = detection_layer(_proposals, mrcnn_class, mrcnn_bbox, image_metas, self.config)
+            detections = detection_layer(_proposals, mrcnn_class, mrcnn_bbox, windows, self.config)
 
             # Convert boxes to normalized coordinates
             normalize_boxes = detections[:, :, :4] / scale
             # Create masks for detections
-            _, _pooled_mask, _ = self.dev_roi(_mrcnn_feature_maps, normalize_boxes, [])
+            _, _pooled_mask, _ = self.dev_roi(_mrcnn_feature_maps, normalize_boxes)
             mrcnn_mask = self.mask(_pooled_mask)
 
             # shape: batch, num_detections, 81, 28, 28

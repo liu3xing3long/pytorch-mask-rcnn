@@ -324,6 +324,8 @@ class Dev(nn.Module):
             feat_out = None
         else:
             # Assign each ROI to a level in the pyramid based on the ROI area.
+            train_phase = False if roi_cls_gt is None else True
+
             y1, x1, y2, x2 = rois.chunk(4, dim=2)
             h, w = y2 - y1, x2 - x1
             image_area = Variable(torch.FloatTensor(
@@ -335,47 +337,48 @@ class Dev(nn.Module):
 
             pooled, mask, box_to_level = [], [], []
             big_feat, big_cnt, small_feat, small_cnt = [], [], [], []   # to generate feat_out
-
             # Loop through levels and apply ROI pooling to each. P2 to P5.
             # with 2 being the most coarse map
             for i, level in enumerate(range(2, 6)):
+
                 _use_upsample = True if level in [2, 3] else False
                 curr_feat_maps = x[i]
 
                 # ix: bs, num_roi
                 ix = roi_level == level
-
                 if not ix.any():
                     # there is no "small" boxes
-                    if _use_upsample:
+                    if _use_upsample and train_phase:
                         small_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
                         small_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
                         big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
                         big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
                     continue
 
-                big_ix = self._find_big_box(level, roi_level)
-                if not big_ix.any():
-                    if _use_upsample:
-                        # there is no "big" boxes; never mind, we use historic data
-                        big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
-                        big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
-                else:
-                    # this case only occurs when scale is 2 or 3
-                    big_index = torch.nonzero(big_ix)
-                    big_boxes = rois[big_index[:, 0].data, big_index[:, 1].data, :]
-                    big_box_gt = roi_cls_gt[big_index[:, 0].data, big_index[:, 1].data]
-                    # for big boxes, ROI-pool on original map
-                    big_box_ind = big_index[:, 0].int()
-                    # shape: say 20, 256, 14, 14
-                    big_feat_pooled = CropAndResizeFunction(
-                        self.feat_pool_size, self.feat_pool_size)(curr_feat_maps, big_boxes, big_box_ind)
-                    # shape: say 20, 1024
-                    big_output = self.feat_extract(big_feat_pooled)
-                    # shape: always 1024 x 81 (cls_num)
-                    _b_feat, _b_cnt = self._assign_feat2cls([big_box_gt, big_output])
-                    big_feat.append(_b_feat)
-                    big_cnt.append(_b_cnt)
+                if train_phase:
+                    big_ix = self._find_big_box(level, roi_level)
+                    if not big_ix.any():
+                        if _use_upsample:
+                            # there is no "big" boxes; never mind, we use historic data
+                            big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
+                            big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
+                    else:
+                        # process big-small-supervise (small part)
+                        # this case only occurs when scale is 2 or 3
+                        big_index = torch.nonzero(big_ix)
+                        big_boxes = rois[big_index[:, 0].data, big_index[:, 1].data, :]
+                        big_box_gt = roi_cls_gt[big_index[:, 0].data, big_index[:, 1].data]
+                        # for big boxes, ROI-pool on original map
+                        big_box_ind = big_index[:, 0].int()
+                        # shape: say 20, 256, 14, 14
+                        big_feat_pooled = CropAndResizeFunction(
+                            self.feat_pool_size, self.feat_pool_size)(curr_feat_maps, big_boxes, big_box_ind)
+                        # shape: say 20, 1024, 1, 1
+                        big_output = self.feat_extract(big_feat_pooled)
+                        # shape: always 1024 x 81 (cls_num)
+                        _b_feat, _b_cnt = self._assign_feat2cls([big_box_gt, big_output])
+                        big_feat.append(_b_feat)
+                        big_cnt.append(_b_cnt)
 
                 # "SMALL" boxes (or simply boxes on scale 4,5) exist
                 # index: say, 2670 (actual boxes found in this level) x 2
@@ -384,41 +387,45 @@ class Dev(nn.Module):
                 box_to_level.append(index.data)
                 # rois: [bs, num_roi, 4] -> small_boxes [index[0], 4]
                 small_boxes = rois[index[:, 0].data, index[:, 1].data, :]
-                small_box_gt = roi_cls_gt[index[:, 0].data, index[:, 1].data]
 
                 # scale up feature map of smaller boxes
                 box_ind = index[:, 0].int()
                 if _use_upsample:
                     small_boxes *= self.upsample_fac
-                    _feat_maps = self.upsample(curr_feat_maps)
+                    _feat_maps = self.upsample(curr_feat_maps)  # this is what we are trying to optimize
                 else:
                     _feat_maps = curr_feat_maps
 
                 # shape: say 473, 256, 7, 7
-                pooled_features = CropAndResizeFunction(self.pool_size,
-                                                        self.pool_size)(_feat_maps, small_boxes, box_ind)
+                pooled_features = CropAndResizeFunction(
+                    self.pool_size, self.pool_size)(_feat_maps, small_boxes, box_ind)
                 pooled.append(pooled_features)
 
                 # mask and feat features are shared with a RoI since the output size is the same
                 # (mask_pool_size=feat_pool_size)
                 # shape: say 473, 256, 14, 14
-                mask_and_feat = CropAndResizeFunction(self.mask_pool_size,
-                                                      self.mask_pool_size)(_feat_maps, small_boxes, box_ind)
+                mask_and_feat = CropAndResizeFunction(
+                    self.mask_pool_size, self.mask_pool_size)(_feat_maps, small_boxes, box_ind)
                 mask.append(mask_and_feat)
 
                 # for scale 4 and 5, we don't do meta-supervise
-                if _use_upsample:
-                    # process big-small-supervise
+                if _use_upsample and train_phase:
+                    # process big-small-supervise (small part)
+                    small_box_gt = roi_cls_gt[index[:, 0].data, index[:, 1].data]
                     small_output = self.feat_extract(mask_and_feat)
                     _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
                     small_feat.append(_s_feat)
                     small_cnt.append(_s_cnt)
+            # SCALE LOOP ENDS
 
-            feat_out = [torch.stack(big_feat).detach().unsqueeze(dim=0),
-                        torch.stack(big_cnt).unsqueeze(dim=0),
-                        torch.stack(small_feat).unsqueeze(dim=0),
-                        torch.stack(small_cnt).unsqueeze(dim=0)]
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
+            if train_phase:
+                feat_out = [torch.stack(big_feat).detach().unsqueeze(dim=0),
+                            torch.stack(big_cnt).unsqueeze(dim=0),
+                            torch.stack(small_feat).unsqueeze(dim=0),
+                            torch.stack(small_cnt).unsqueeze(dim=0)]
+            else:
+                feat_out = []
 
         return pooled_out, mask_out, feat_out
 
