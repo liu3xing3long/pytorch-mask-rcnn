@@ -222,7 +222,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                            '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}' + suffix
 
             print_log(progress_str.format(
-                progress_str, args['stage_name'], args['epoch_str'], iter_ind, total_iter,
+                config_name_str, args['stage_name'], args['epoch_str'], iter_ind, total_iter,
                 days, hrs, iter_time, lr,
                 loss.data.cpu()[0],
                 detailed_loss[0].data.cpu()[0], detailed_loss[1].data.cpu()[0],
