@@ -330,7 +330,6 @@ def update_config_and_load_model(config, network, train_generator=None):
         network.load_state_dict(checkpoints, strict=False)  # legacy reason
 
     # determine start_iter and epoch for resume
-    # set MODEL.INIT_MODEL
     # update network.start_epoch, network.start_iter
     if phase == 'train':
         try:
@@ -351,7 +350,17 @@ def update_config_and_load_model(config, network, train_generator=None):
         network.epoch = network.start_epoch
         network.iter = network.start_iter
 
-    # add new info to config
+        if config.DEV:
+            try:
+                # indicate this is a resumed model
+                network.buffer = torch.from_numpy(checkpoints['buffer'])
+                network.buffer_cnt = torch.from_numpy(checkpoints['iter'])
+            except KeyError:
+                # indicate this is a pretrain model; init buffer from scratch
+                network.buffer = torch.zeros(config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES)
+                network.buffer_cnt = torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES)
+
+    # # set MODEL.INIT_MODEL
     config.MODEL.INIT_MODEL = model_path
 
     # set MISC.LOG_FILE; (inference) MISC.DET_RESULT_FILE, MISC.SAVE_IMAGE_DIR

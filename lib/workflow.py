@@ -86,7 +86,8 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         return None
 
     print_log('\n[Current stage: {:s}] start training at epoch {:d}, iter {:d}. \n'
-              'Total epoch in this stage: {:d}.'.format(stage_name, model.epoch, model.iter,
+              'Total epoch in this stage: {:d}.'.format(
+        stage_name, model.epoch, model.iter,
                                                         model.config.TRAIN.SCHEDULE[_TEMP[layers]-1]),
               model.config.MISC.LOG_FILE)
 
@@ -105,8 +106,6 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
                                stage_name=stage_name, epoch_str=epoch_str,
                                epoch=ep, start_iter=model.iter, total_iter=iter_per_epoch,
                                valset=valset, coco_api=coco_api)
-        # Validation (deprecated)
-        # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
         # TODO (mid): visualize the loss with resume concerned; include visdom
         model.loss_history.append(loss)
@@ -117,10 +116,16 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         model_file = os.path.join(model.config.MISC.RESULT_FOLDER,
                                   'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(ep, iter_per_epoch))
         print_log('Epoch ends, saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
+        if model.config.DEV:
+            buffer, buffer_cnt = model.buffer.numpy(), model.buffer_cnt.numpy()
+        else:
+            buffer, buffer_cnt = [], []
         torch.save({
             'state_dict':   model.state_dict(),
             'epoch':        ep,
             'iter':         iter_per_epoch,
+            'buffer':       buffer,
+            'buffer_cnt':   buffer_cnt,
         }, model_file)
 
         # one epoch ends; update iterator
@@ -148,7 +153,6 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     else:
         # single-gpu
         model = input_model
-
     config = model.config
 
     loss_sum = 0
@@ -179,13 +183,17 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # Run object detection
         # [target_rpn_match, rpn_class_logits, target_rpn_bbox, rpn_pred_bbox,
         # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
-        # the loss shape: gpu_num x 5
-        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
-        detailed_loss = torch.mean(outputs, dim=0)
-        loss = torch.sum(detailed_loss)
+        # the loss shape: gpu_num x 5; big_box_feat: gpu_num x 1024 x 81
+        merged_loss, big_box_feat, big_box_cnt = input_model(
+            [images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
+        if config.DEV:
+            detailed_loss = torch.mean(merged_loss, dim=0)
+            model.update_buffer(big_box_feat, big_box_cnt)
+        else:
+            # exclude the last dim: meta-loss
+            detailed_loss = torch.mean(merged_loss[:, :-1], dim=0)
 
-        # Compute losses (moved to forward)
-        # loss, detailed_loss = compute_loss(outputs)
+        loss = torch.sum(detailed_loss)
         if config.CTRL.PROFILE_ANALYSIS:
             print('forward time: {:.4f}'.format(time.time() - t))
             t = time.time()
@@ -205,20 +213,21 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             iter_time = time.time() - curr_iter_time_start
             days, hrs = compute_left_time(iter_time, curr_ep,
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
-            print_log('[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:2.1f} hrs] (iter_t: {:.2f})'
-                      '\tlr: {:.6f} | loss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} '
-                      '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}'.
-                      format(config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'],
-                             iter_ind, total_iter,
-                             days, hrs, iter_time, lr,
-                             loss.data.cpu()[0],
-                             detailed_loss[0].data.cpu()[0],
-                             detailed_loss[1].data.cpu()[0],
-                             detailed_loss[2].data.cpu()[0],
-                             detailed_loss[3].data.cpu()[0],
-                             detailed_loss[4].data.cpu()[0]),
-                      config.MISC.LOG_FILE)
-        # Statistics
+            suffix = ' - meta_loss: {:.3f}' if config.DEV else '{:s}'
+            last_output = detailed_loss[-1].data.cpu()[0] if config.DEV else ''
+            progress_str = '[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:2.1f} hrs] (iter_t: {:.2f})' \
+                           '\tlr: {:.6f} | loss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} ' \
+                           '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}{:s}'.format(suffix)
+
+            print_log(progress_str.format(
+                config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'], iter_ind, total_iter,
+                days, hrs, iter_time, lr,
+                loss.data.cpu()[0],
+                detailed_loss[0].data.cpu()[0], detailed_loss[1].data.cpu()[0],
+                detailed_loss[2].data.cpu()[0], detailed_loss[3].data.cpu()[0],
+                detailed_loss[4].data.cpu()[0], last_output), config.MISC.LOG_FILE)
+
+        # Statistics (sort of useless)
         loss_sum += loss.data.cpu()[0]/actual_total_iter
 
         # save model
@@ -226,10 +235,16 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             model_file = os.path.join(config.MISC.RESULT_FOLDER,
                                       'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(curr_ep, iter_ind))
             print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
+            if config.DEV:
+                buffer, buffer_cnt = model.buffer.numpy(), model.buffer_cnt.numpy()
+            else:
+                buffer, buffer_cnt = [], []
             torch.save({
                 'state_dict':   model.state_dict(),
                 'epoch':        curr_ep,        # or model.epoch
                 'iter':         iter_ind,       # or model.iter
+                'buffer':       buffer,
+                'buffer_cnt':   buffer_cnt,
             }, model_file)
 
         # for debug; test the model
@@ -242,8 +257,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     return loss_sum
 
 
-def test_model(input_model, valset, coco_api,
-               limit=-1, image_ids=None, **args):
+def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
     """
         Test the trained model
         Args:
@@ -261,7 +275,7 @@ def test_model(input_model, valset, coco_api,
 
     # set up save and log folder for both train and inference
     if args['during_train']:
-        model_file_name = 'mask_rcnn_ep_{:04d}_iter_{:04d}.pth'.format(args['epoch'], args['iter'])
+        model_file_name = 'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(args['epoch'], args['iter'])
         mode = 'inference'
         _val_folder = model.config.MISC.RESULT_FOLDER.replace('train', 'inference')
         _model_name = model_file_name.replace('.pth', '')
@@ -306,6 +320,7 @@ def test_model(input_model, valset, coco_api,
     show_test_progress_base = math.floor(total_iter / (model.config.CTRL.SHOW_INTERVAL/2))
     # note that GPU efficiency is low when SAVE_IM=True
 
+    # TODO(low): if (det_res_file) exists, skip the following
     for iter_ind in range(total_iter):
 
         curr_start_id = iter_ind*test_bs
@@ -384,24 +399,24 @@ def test_model(input_model, valset, coco_api,
 
 
 # ======================
-def compute_loss(inputs):
-
-    target_rpn_match, rpn_class_logits, \
-    target_rpn_bbox, rpn_pred_bbox, \
-    target_class_ids, mrcnn_class_logits, \
-    target_deltas, mrcnn_bbox, \
-    target_mask, mrcnn_mask = \
-        inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], \
-        inputs[5], inputs[6], inputs[7], inputs[8], inputs[9]
-
-    rpn_class_loss = compute_rpn_class_loss(target_rpn_match, rpn_class_logits)
-    rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, rpn_pred_bbox)
-    mrcnn_class_loss = compute_mrcnn_class_loss(target_class_ids, mrcnn_class_logits)
-    mrcnn_bbox_loss = compute_mrcnn_bbox_loss(target_deltas, target_class_ids, mrcnn_bbox)
-    mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
-
-    outputs = [rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss]
-    return sum(outputs), outputs
+# def compute_loss(inputs):
+#
+#     target_rpn_match, rpn_class_logits, \
+#     target_rpn_bbox, rpn_pred_bbox, \
+#     target_class_ids, mrcnn_class_logits, \
+#     target_deltas, mrcnn_bbox, \
+#     target_mask, mrcnn_mask = \
+#         inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], \
+#         inputs[5], inputs[6], inputs[7], inputs[8], inputs[9]
+#
+#     rpn_class_loss = compute_rpn_class_loss(target_rpn_match, rpn_class_logits)
+#     rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, rpn_pred_bbox)
+#     mrcnn_class_loss = compute_mrcnn_class_loss(target_class_ids, mrcnn_class_logits)
+#     mrcnn_bbox_loss = compute_mrcnn_bbox_loss(target_deltas, target_class_ids, mrcnn_bbox)
+#     mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
+#
+#     outputs = [rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss]
+#     return sum(outputs), outputs
 
 
 def _mold_inputs(model, image_ids, dataset):

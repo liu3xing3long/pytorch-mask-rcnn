@@ -3,6 +3,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from lib.layers import pyramid_roi_align
+from lib.roialign.roi_align.crop_and_resize import CropAndResizeFunction
+import tools.utils as utils
+from torch.autograd import Variable
 
 
 class SamePad2d(nn.Module):
@@ -143,7 +146,6 @@ class ResNet(nn.Module):
 #         y = F.upsample(y, scale_factor=2)
 #         x = self.conv1(x)
 #         return self.conv2(self.padding2(x+y))
-
 class FPN(nn.Module):
     def __init__(self, C1, C2, C3, C4, C5, out_channels):
         super(FPN, self).__init__()
@@ -259,39 +261,172 @@ class RPN(nn.Module):
 #  DEV
 ############################################################
 class Dev(nn.Module):
-    def __init__(self, config):
+    def __init__(self, config, depth):
         super(Dev, self).__init__()
+        self.depth = depth
         self.use_dev = config.DEV.SWITCH
         self.pool_size = config.MRCNN.POOL_SIZE
         self.mask_pool_size = config.MRCNN.MASK_POOL_SIZE
         self.image_shape = config.DATA.IMAGE_SHAPE
+
         if self.use_dev:
-            self.upsample = nn.Sequential(*[
-                nn.ConvTranspose2d(256, 256, kernel_size=2, stride=2),
-                nn.BatchNorm2d(256),
-                nn.ReLU(inplace=True)
+
+            # TODO: for now it's the same size with mask_pool_size (14)
+            self.feat_pool_size = config.DEV.FEAT_BRANCH_POOL_SIZE
+            self.upsample_fac = config.DEV.UPSAMPLE_FAC
+            assert self.feat_pool_size % 2 == 0, 'pool size of feature branch has to be even'
+
+            # define upsample
+            if self.upsample_fac == 2.0:
+                self.upsample = nn.Sequential(*[
+                    nn.ConvTranspose2d(self.depth, self.depth, kernel_size=3, stride=2, padding=1, output_padding=1),
+                    nn.BatchNorm2d(self.depth),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1, padding=1),
+                    nn.BatchNorm2d(self.depth),
+                    nn.ReLU(inplace=True)
+                ])
+            else:
+                raise Exception('unsupported upsampling factor')
+
+            # define feature extractor to be compared
+            _ksize = int(self.feat_pool_size / 2)
+            self.feat_extract = nn.Sequential(*[
+                nn.Conv2d(self.depth, 512, kernel_size=3, padding=1, stride=2),   # halve the map
+                nn.BatchNorm2d(512),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(512, 1024, kernel_size=_ksize, stride=1),
+                nn.BatchNorm2d(1024),
+                nn.ReLU(inplace=True),
             ])
 
-    def forward(self, x, rois):
+    def _find_big_box(self, level, roi_level):
+        if level == 2:
+            big_ix = (roi_level == 4) + (roi_level == 5)
+        elif level == 3:
+            big_ix = (roi_level == 5)
+        else:
+            # TODO: think this in detail
+            # for now, higher scale 4, 5 do not apply the new rule
+            big_ix = (roi_level == -1)
+        return big_ix
+
+    def forward(self, x, rois, roi_cls_gt=None):
+        # x is a multi-scale List containing Variable
         if not self.use_dev:
             # in 'layers.py'
-            out_cls = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)
-            out_mask = pyramid_roi_align([rois] + x, self.mask_pool_size, self.image_shape)
+            pooled_out = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)
+            mask_out = pyramid_roi_align([rois] + x, self.mask_pool_size, self.image_shape)
+            feat_out = None
         else:
-            # your idea here
-            pass
-        return out_cls, out_mask
+            # Assign each ROI to a level in the pyramid based on the ROI area.
+            y1, x1, y2, x2 = rois.chunk(4, dim=2)
+            h, w = y2 - y1, x2 - x1
+            image_area = Variable(torch.FloatTensor(
+                [float(self.image_shape[0]*self.image_shape[1])]), requires_grad=False).cuda()
+            roi_level = 4 + utils.log2(torch.sqrt(h*w)/(224.0/torch.sqrt(image_area)))
+            roi_level = roi_level.round().int()
+            # in case batch size =1, we keep that dim
+            roi_level = roi_level.clamp(2, 5).squeeze(dim=-1)   # size: [bs, num_roi], say [3, 200]
+
+            pooled, mask, box_to_level = [], [], []
+            feat_out = []
+            # Loop through levels and apply ROI pooling to each. P2 to P5.
+            # with 2 being the most coarse map
+            for i, level in enumerate(range(2, 6)):
+
+                # ix: bs, num_roi
+                ix = roi_level == level
+                if not ix.any():
+                    # there is no "small" boxes
+                    continue
+
+                curr_feat_maps = x[i]
+                _use_upsample = True if level in [2, 3] else False
+
+                big_ix = self._find_big_box(level, roi_level)
+                if not big_ix.any():
+                    # there is no "big" boxes
+                    big_box_gt, big_output = [], []   # never mind; we use historic data
+                else:
+                    big_index = torch.nonzero(big_ix)
+                    big_boxes = rois[big_index[:, 0].data, big_index[:, 1].data, :]
+                    big_box_gt = roi_cls_gt[big_index[:, 0].data, big_index[:, 1].data]
+                    # for big boxes, ROI-pool on original map
+                    big_box_ind = big_index[:, 0].int()
+                    # shape: say 20, 256, 14, 14
+                    big_feat = CropAndResizeFunction(self.feat_pool_size,
+                                                     self.feat_pool_size)(curr_feat_maps, big_boxes, big_box_ind)
+                    # shape: say 20, 1024
+                    big_output = self.feat_extract(big_feat).squeeze()
+
+                # "SMALL" boxes (or simply boxes on scale 4,5) exist
+                # index: say, 2670 (actual boxes found in this level) x 2
+                index = torch.nonzero(ix)
+                # Keep track of which box is mapped to which level
+                box_to_level.append(index.data)
+                # rois: [bs, num_roi, 4] -> small_boxes [index[0], 4]
+                small_boxes = rois[index[:, 0].data, index[:, 1].data, :]
+                small_box_gt = roi_cls_gt[index[:, 0].data, index[:, 1].data]
+
+                # scale up feature map of smaller boxes
+                box_ind = index[:, 0].int()
+                if _use_upsample:
+                    small_boxes *= self.upsample_fac
+                    _feat_maps = self.upsample(curr_feat_maps)
+                else:
+                    _feat_maps = curr_feat_maps
+
+                # shape: say 473, 256, 7, 7
+                pooled_features = CropAndResizeFunction(self.pool_size,
+                                                        self.pool_size)(_feat_maps, small_boxes, box_ind)
+                pooled.append(pooled_features)
+
+                # mask and feat features are shared with a RoI since the output size is the same
+                # (mask_pool_size=feat_pool_size)
+                # shape: say 473, 256, 14, 14
+                mask_and_feat = CropAndResizeFunction(self.mask_pool_size,
+                                                      self.mask_pool_size)(_feat_maps, small_boxes, box_ind)
+                mask.append(mask_and_feat)
+
+                # for scale 4 and 5, we don't do meta-supervise
+                if _use_upsample:
+                    # process big-small-supervise
+                    small_output = self.feat_extract(mask_and_feat).squeeze()
+                    feat_out.append([big_box_gt, big_output, small_box_gt, small_output])
+
+            pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
+
+        return pooled_out, mask_out, feat_out
+
+    def _reshape_result(self, pooled, mask, box_to_level, rois_size):
+        pooled = torch.cat(pooled, dim=0)
+        mask = torch.cat(mask, dim=0)
+        box_to_level = torch.cat(box_to_level, dim=0)
+
+        # Rearrange pooled features to match the order of the original boxes
+        pooled_out = Variable(torch.zeros(
+            rois_size[0], rois_size[1], pooled.size(1), pooled.size(2), pooled.size(3)).cuda())
+        pooled_out[box_to_level[:, 0], box_to_level[:, 1], :, :, :] = pooled
+        # 3, 1000, 256, 7, 7 -> 3000, 256, 7, 7
+        pooled_out = pooled_out.view(-1, pooled_out.size(2), pooled_out.size(3), pooled_out.size(4))
+
+        mask_out = Variable(torch.zeros(
+            rois_size[0], rois_size[1], mask.size(1), mask.size(2), mask.size(3)).cuda())
+        mask_out[box_to_level[:, 0], box_to_level[:, 1], :, :, :] = mask
+        mask_out = mask_out.view(-1, mask_out.size(2), mask_out.size(3), mask_out.size(4))
+
+        return pooled_out, mask_out
 
 
 ############################################################
 #  Feature Pyramid Network Heads
 ############################################################
 class Classifier(nn.Module):
-    def __init__(self, depth, num_classes):
+    def __init__(self, depth, num_classes, pool_size):
         super(Classifier, self).__init__()
         self.depth = depth
-        # self.pool_size = pool_size
-        # self.image_shape = image_shape
+        self.pool_size = pool_size
         self.num_classes = num_classes
         self.conv1 = nn.Conv2d(self.depth, 1024, kernel_size=self.pool_size, stride=1)
         self.bn1 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
@@ -337,6 +472,7 @@ class Mask(nn.Module):
         self.conv4 = nn.Conv2d(256, 256, kernel_size=3, stride=1)
         self.bn4 = nn.BatchNorm2d(256, eps=0.001)
         self.deconv = nn.ConvTranspose2d(256, 256, kernel_size=2, stride=2)
+        # TODO(check here): no bn after deconv
         self.conv5 = nn.Conv2d(256, num_classes, kernel_size=1, stride=1)
         self.sigmoid = nn.Sigmoid()
         self.relu = nn.ReLU(inplace=True)

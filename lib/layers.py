@@ -210,9 +210,6 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
     box_to_level = torch.cat(box_to_level, dim=0)
 
     # Rearrange pooled features to match the order of the original boxes
-    # _, box_to_level = torch.sort(box_to_level)
-    # pooled = pooled[box_to_level, :, :]
-
     pooled_out = Variable(torch.zeros(
         boxes.size(0), boxes.size(1), pooled.size(1), pooled.size(2), pooled.size(3)).cuda())
     pooled_out[box_to_level[:, 0], box_to_level[:, 1], :, :, :] = pooled

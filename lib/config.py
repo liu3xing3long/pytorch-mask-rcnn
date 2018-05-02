@@ -148,6 +148,11 @@ class Config(object):
     # ==============================
     DEV = AttrDict()
     DEV.SWITCH = False
+    DEV.EFFECTIVE_AFER_ITER = 500  # set to <= 0 if trained from the very first iter
+    DEV.UPSAMPLE_FAC = 2.
+    DEV.LOSS_CHOICE = 'l2'   # TODO (high, urgent) 'ot', 'kl', etc.
+    DEV.BUFFER_SIZE = 1000  # set to <= 0 if use all historic data
+    DEV.FEAT_BRANCH_POOL_SIZE = 14
 
     # ==============================
     CTRL = AttrDict()
@@ -155,7 +160,7 @@ class Config(object):
     CTRL.PHASE = ''
     CTRL.DEBUG = None
 
-    CTRL.SHOW_INTERVAL = 20
+    CTRL.SHOW_INTERVAL = 50
     CTRL.USE_VISDOM = False
     CTRL.PROFILE_ANALYSIS = False  # show time for some pass
 
