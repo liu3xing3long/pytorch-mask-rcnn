@@ -228,6 +228,11 @@ class Config(object):
               int(math.ceil(self.DATA.IMAGE_SHAPE[1] / stride))]
              for stride in self.MODEL.BACKBONE_STRIDES])
 
+        # delete some config for brevity
+        if not self.TRAIN.LR_WARM_UP:
+            del self.TRAIN['LR_WP_ITER']
+            del self.TRAIN['LR_WP_FACTOR']
+
 
 class CocoConfig(Config):
     """Configuration for training on MS COCO.

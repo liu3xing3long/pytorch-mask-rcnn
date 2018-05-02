@@ -358,8 +358,9 @@ def update_config_and_load_model(config, network, train_generator=None):
                                             'train_log_start_ep_{:04d}_iter_{:06d}.txt'.
                                             format(network.start_epoch, network.start_iter))
         print_log('\nStart timestamp: {:%Y%m%dT%H%M}'.format(now), file=config.MISC.LOG_FILE, init=True)
-        if config.CTRL.DEBUG or config.TRAIN.DO_VALIDATION:
-            # set SAVE_IM=True when debug or do_evaluation during train
+        if config.CTRL.DEBUG:
+            # set SAVE_IM=True when debug
+            # update: we no longer save_im when TRAIN.DO_VALIDATION=True
             config.TEST.SAVE_IM = True
 
         # set up buffer for meta-loss
@@ -388,7 +389,7 @@ def update_config_and_load_model(config, network, train_generator=None):
                 network.buffer_cnt = Variable(
                     torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES).cuda(), requires_grad=False)
 
-    else:
+    elif phase == 'inference':
         model_name = os.path.basename(model_path).replace('.pth', '')   # mask_rcnn_ep_0053_iter_001234
         config.MISC.LOG_FILE = os.path.join(config.MISC.RESULT_FOLDER,
                                             'inference_from_{:s}.txt'.format(model_name))

@@ -13,16 +13,7 @@ else
     echo $config_file
 fi
 
-if [ -z "$2" ]
-  then
-    echo "No device id provided; use default ones."
-    DEVICE_ID=0,1,2,3,4,5,6,7
-else
-    DEVICE_ID=$2
-fi
-echo "device id:"
-echo $DEVICE_ID
-
+DEVICE_ID=0,1,2,3,4,5,6,7
 CUDA_VISIBLE_DEVICES=$DEVICE_ID python main.py \
     --device_id=$DEVICE_ID \
     --phase=train \
