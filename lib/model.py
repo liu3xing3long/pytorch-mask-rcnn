@@ -131,6 +131,7 @@ class MaskRCNN(nn.Module):
             self.buffer = feat_sum / (self.buffer_cnt + EPS)
             final_big_feat = self.buffer.squeeze()  # shape: 1024 x 81
         else:
+            # TODO (high): change Variable to Tensor to save mem
             _temp, _temp_cnt = self.buffer.clone(), self.buffer_cnt.clone()
             _temp[:-1] = self.buffer[1:]
             _temp[-1, :, :] = _big_feat
@@ -185,8 +186,11 @@ class MaskRCNN(nn.Module):
 
         return GT_CLS_IDS, GT_BOXES, GT_MASKS, gt_num
 
-    def forward(self, input, mode, skip_meta=False):
-        """forward function of the Mask-RCNN network"""
+    def forward(self, input, mode, do_meta=False):
+        """forward function of the Mask-RCNN network
+            do_meta (not used for now):
+                only affects the very few iterations during train under meta-loss case
+        """
         molded_images = input[0]
         sample_per_gpu = molded_images.size(0)  # aka, actual batch size
         # for debug only
