@@ -10,8 +10,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Mask R-CNN')
 
     parser.add_argument('--phase',
-                        # default='train',
-                        default='inference',
+                        default='train',
+                        # default='inference',
                         help='train or inference')
 
     parser.add_argument('--config_name',
@@ -20,7 +20,7 @@ if __name__ == '__main__':
                         # default='all_new')
                         # default='hyli_default_old')
                         default='fuck')
-                        # default='base_101')
+                        # default='base_101_quick')
 
     parser.add_argument('--config_file',
                         default=None)

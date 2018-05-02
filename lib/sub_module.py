@@ -299,6 +299,8 @@ class Dev(nn.Module):
                 nn.Conv2d(512, 1024, kernel_size=_ksize, stride=1),
                 nn.BatchNorm2d(1024),
                 nn.ReLU(inplace=True),
+                nn.Conv2d(1024, 1024, kernel_size=1, stride=1),
+                nn.Sigmoid()
             ])
 
     @staticmethod
@@ -370,6 +372,7 @@ class Dev(nn.Module):
                         self.feat_pool_size, self.feat_pool_size)(curr_feat_maps, big_boxes, big_box_ind)
                     # shape: say 20, 1024
                     big_output = self.feat_extract(big_feat_pooled)
+                    # shape: always 1024 x 81 (cls_num)
                     _b_feat, _b_cnt = self._assign_feat2cls([big_box_gt, big_output])
                     big_feat.append(_b_feat)
                     big_cnt.append(_b_cnt)
@@ -442,7 +445,7 @@ class Dev(nn.Module):
     def _assign_feat2cls(self, input):
         """
         input[List]
-                each entry: Variable; [20], [20, 1024], [473], [473, 1024] on scale 2
+                each entry: Variable; [20], [20, 1024, 1, 1], [473], [473, 1024] on scale 2
                             Variable; [9], [9, 1024], [56], [56, 1024] on scale 3
         """
         box_gt, input_feat = input[0], input[1]
@@ -457,6 +460,7 @@ class Dev(nn.Module):
             else:
                 _idx = torch.nonzero(box_gt == cls_ind).squeeze()
                 cnt[0, cls_ind] = _idx.size(0)
+                # left: 1024 x 81; right result: 1024 x 1 x 1; no need to squeeze the right result
                 feat[:, cls_ind] = torch.mean(input_feat[_idx, :], dim=0)
         return feat, cnt
 
