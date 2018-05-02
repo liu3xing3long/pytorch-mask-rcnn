@@ -20,7 +20,7 @@ if __name__ == '__main__':
                         # default='all_new')
                         # default='hyli_default_old')
                         default='fuck')
-                        # default='base_101')
+                        # default='base_101_quick')
 
     parser.add_argument('--config_file',
                         default=None)
