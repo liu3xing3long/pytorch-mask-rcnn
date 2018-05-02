@@ -68,9 +68,6 @@ class MaskRCNN(nn.Module):
             if self.config.DEV.LOSS_CHOICE == 'l2':
                 # self.dist = nn.PairwiseDistance(p=2)
                 self.criterion = nn.MSELoss()
-            # (deprecated below; initialized or loaded in 'utils.py')
-            # self.buffer = torch.zeros(config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES)
-            # self.buffer_cnt = torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES)
 
         # FPN Classifier
         self.classifier = \
@@ -121,23 +118,32 @@ class MaskRCNN(nn.Module):
                 big_cnt:    [gpu_num, scale_num, feat_dim(1), cls_num]
         """
         [big_feat, big_cnt, small_feat, small_cnt] = feat_input
-        # final_small_feat, 1024 x 81
+        # final_small_feat, 1024 x 81; final_small_cnt, 1 x 81
         final_small_feat, final_small_cnt = self._merge_feat_vec(small_feat, small_cnt)
         _big_feat, _big_cnt = self._merge_feat_vec(big_feat, big_cnt)
 
-        # update buffer
-        _temp, _temp_cnt = self.buffer.clone(), self.buffer_cnt.clone()
-        _temp[:-1] = self.buffer[1:]
-        _temp[-1, :, :] = _big_feat
-        _temp_cnt[:-1] = self.buffer_cnt[1:]
-        _temp_cnt[-1, :, :] = _big_cnt
-        self.buffer, self.buffer_cnt = _temp, _temp_cnt
+        # update buffer (buffer_size x 1024 x 81)
+        buffer_size = self.buffer.size(0)
+        if buffer_size == 1:
+            # use all historic data
+            feat_sum = self.buffer * self.buffer_cnt + _big_feat.unsqueeze(0) * _big_cnt.unsqueeze(0)
+            self.buffer_cnt += _big_cnt.unsqueeze(0)
+            self.buffer = feat_sum / (self.buffer_cnt + EPS)
+            final_big_feat = self.buffer.squeeze()  # shape: 1024 x 81
+        else:
+            _temp, _temp_cnt = self.buffer.clone(), self.buffer_cnt.clone()
+            _temp[:-1] = self.buffer[1:]
+            _temp[-1, :, :] = _big_feat
+            _temp_cnt[:-1] = self.buffer_cnt[1:]
+            _temp_cnt[-1, :, :] = _big_cnt
+            self.buffer, self.buffer_cnt = _temp, _temp_cnt
+            final_big_feat = \
+                torch.sum(self.buffer * self.buffer_cnt, dim=0) / (torch.sum(self.buffer_cnt, dim=0) + EPS)
 
         final_small_cnt.data[0][0] = 0
         _idx = torch.nonzero(final_small_cnt.squeeze()).squeeze().data
         if _idx.size():
             SMALL = final_small_feat[:, _idx].t()  # say 15 x 1024
-            final_big_feat = torch.sum(self.buffer * self.buffer_cnt, dim=0) / (torch.sum(self.buffer_cnt, dim=0) + EPS)
             BIG = final_big_feat[:, _idx].t()
             # compute meta-loss
             loss = self.criterion(SMALL, BIG)

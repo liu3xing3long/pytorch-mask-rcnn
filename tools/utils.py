@@ -348,7 +348,7 @@ def update_config_and_load_model(config, network, train_generator=None):
         network.epoch = network.start_epoch
         network.iter = network.start_iter
 
-    # # set MODEL.INIT_MODEL
+    # set MODEL.INIT_MODEL
     config.MODEL.INIT_MODEL = model_path
 
     now = datetime.datetime.now()

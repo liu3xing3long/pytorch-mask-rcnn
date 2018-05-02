@@ -151,7 +151,7 @@ class Config(object):
     DEV.UPSAMPLE_FAC = 2.
     DEV.LOSS_CHOICE = 'l2'   # TODO (high, urgent) 'ot', 'kl', etc.
     DEV.LOSS_FAC = 0.5
-    DEV.BUFFER_SIZE = 1000  # set to <= 0 if use all historic data
+    DEV.BUFFER_SIZE = 1000  # set to 1 if use all historic data
     DEV.FEAT_BRANCH_POOL_SIZE = 14
 
     # ==============================
@@ -159,6 +159,7 @@ class Config(object):
     CTRL.CONFIG_NAME = ''
     CTRL.PHASE = ''
     CTRL.DEBUG = None
+    CTRL.QUICK_VERIFY = False   # train on minival and test also on minival
 
     CTRL.SHOW_INTERVAL = 50
     CTRL.USE_VISDOM = False
@@ -197,7 +198,7 @@ class Config(object):
             self.DATA.IMAGE_MAX_DIM = 512
             self.CTRL.PROFILE_ANALYSIS = False
 
-        # set result folder, 'results/base_101/train (or inference)/'
+        # set MISC.RESULT_FOLDER, 'results/base_101/train (or inference)/'
         self.MISC.RESULT_FOLDER = os.path.join(
             'results', self.CTRL.CONFIG_NAME.lower(), self.CTRL.PHASE)
         if not os.path.exists(self.MISC.RESULT_FOLDER):
@@ -243,7 +244,8 @@ class CocoConfig(Config):
         if args.config_name == 'fuck':
             # debug mode on local pc
             self.DEV.SWITCH = True
-            self.DEV.BUFFER_SIZE = 1000
+            self.DEV.BUFFER_SIZE = 1
+            self.CTRL.QUICK_VERIFY = True
             _ignore_yaml_or_list = True
 
         elif args.config_name == 'base_101':

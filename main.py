@@ -30,7 +30,7 @@ if __name__ == '__main__':
     # show loss step by step; smaller input image size
     # do validation right after a few steps and visualize predictions
     parser.add_argument('--debug',
-                        default=1, type=int)  # no bool type here please
+                        default=0, type=int)  # no bool type here please
 
     parser.add_argument('--device_id',
                         default='0,1', type=str)

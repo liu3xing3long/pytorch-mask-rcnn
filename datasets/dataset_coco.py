@@ -454,7 +454,7 @@ def get_data(config):
     dset_val.dataset.prepare()
 
     # train data
-    if not config.CTRL.DEBUG and config.CTRL.PHASE == 'train':
+    if not config.CTRL.DEBUG and config.CTRL.PHASE == 'train' and not config.CTRL.QUICK_VERIFY:
         dset_train = COCODataset(config)
         print('TRAIN:: load train')
         dset_train.dataset.load_coco(DATASET.PATH, "train", year=DATASET.YEAR)
@@ -462,6 +462,7 @@ def get_data(config):
         dset_train.dataset.load_coco(DATASET.PATH, "valminusminival", year=DATASET.YEAR)
         dset_train.dataset.prepare()
     else:
+        # if QUICK_VERIFY=True, use this
         dset_train = dset_val
 
     train_generator = None if config.CTRL.PHASE == 'inference' else \

@@ -215,12 +215,14 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
             suffix = ' - meta_loss: {:.3f}' if config.DEV else '{:s}'
             last_output = meta_loss.data.cpu()[0] if config.DEV else ''
+            config_name_str = config.CTRL.CONFIG_NAME if not config.CTRL.QUICK_VERIFY \
+                            else config.CTRL.CONFIG_NAME + ', quick verify mode'
             progress_str = '[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:2.1f} hrs] (iter_t: {:.2f})' \
                            '\tlr: {:.6f} | loss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} ' \
                            '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}' + suffix
 
             print_log(progress_str.format(
-                config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'], iter_ind, total_iter,
+                progress_str, args['stage_name'], args['epoch_str'], iter_ind, total_iter,
                 days, hrs, iter_time, lr,
                 loss.data.cpu()[0],
                 detailed_loss[0].data.cpu()[0], detailed_loss[1].data.cpu()[0],
