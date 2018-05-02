@@ -363,7 +363,7 @@ class Dev(nn.Module):
                             big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
                             big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
                     else:
-                        # process big-small-supervise (small part)
+                        # process big-small-supervise (big part)
                         # this case only occurs when scale is 2 or 3
                         big_index = torch.nonzero(big_ix)
                         big_boxes = rois[big_index[:, 0].data, big_index[:, 1].data, :]

@@ -161,9 +161,20 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     # create iterator
     data_iterator = iter(data_loader)
 
+    if curr_ep == 1 and config.DEV.SWITCH:
+        do_meta_after_iter = math.floor(config.DEV.EFFECT_AFER_EP_PERCENT*total_iter)
+    else:
+        do_meta_after_iter = -1
+
     # ITERATION LOOP
     for iter_ind in range(start_iter, total_iter+1):
-        
+
+        if config.DEV.SWITCH:
+            if iter_ind > do_meta_after_iter:
+                do_meta = True
+        else:
+            do_meta = False
+
         curr_iter_time_start = time.time()
         lr = adjust_lr(optimizer, curr_ep, iter_ind, config.TRAIN)   # return lr to show in console
 
@@ -178,10 +189,10 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             print('fetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
             t = time.time()
 
-        # Run object detection
+        # FORWARD PASS
         # the loss shape: gpu_num x 5
         merged_loss, big_feat, big_cnt, small_feat, small_cnt = input_model(
-            [images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
+            [images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train', do_meta)
         detailed_loss = torch.mean(merged_loss, dim=0)
 
         # meta-loss
@@ -189,7 +200,12 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             # big_feat: gpu_num x scale_num x 1024 x 81
             # update the buffer also
             meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt])
-            meta_loss *= config.DEV.LOSS_FAC
+            if do_meta:
+                meta_loss *= config.DEV.LOSS_FAC
+            else:
+                # for the very first few iter, we don't compute meta-loss
+                # but rather accumulate the buffer pool
+                meta_loss = 0
         else:
             meta_loss = 0
 
@@ -333,7 +349,8 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
         # Mold inputs to format expected by the neural network
         molded_images, image_metas, windows, images = _mold_inputs(model, curr_image_ids, dataset)
 
-        # Run object detection; detections: 8,100,6; mrcnn_mask: 8,100,81,28,28
+        # FORWARD PASS
+        # detections: 8,100,6; mrcnn_mask: 8,100,81,28,28
         detections, mrcnn_mask = input_model([molded_images, image_metas], mode=mode)
 
         # Convert to numpy
