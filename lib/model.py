@@ -64,7 +64,7 @@ class MaskRCNN(nn.Module):
         self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, input_ch=256)
         # RoI
         self.dev_roi = Dev(config, depth=256)
-        if self.config.DEV:
+        if self.config.DEV.SWITCH:
             if self.config.DEV.LOSS_CHOICE == 'l2':
                 # self.dist = nn.PairwiseDistance(p=2)
                 self.criterion = nn.MSELoss()
@@ -245,10 +245,10 @@ class MaskRCNN(nn.Module):
             print('\t[gpu {:d}] pass feature extraction'.format(curr_gpu_id))
 
         if mode == 'inference':
-            # Network Heads
-            # Proposal classifier and BBox regressor heads
-            _, mrcnn_class, mrcnn_bbox = self.classifier(_mrcnn_feature_maps, _proposals)
 
+            _pooled_cls, _, _ = self.dev_roi(_mrcnn_feature_maps, _proposals, [])
+
+            _, mrcnn_class, mrcnn_bbox = self.classifier(_pooled_cls)
             # Detections
             image_metas = input[1]  # (3, 90), Variable
             # output is [batch, num_detections (say 100), (y1, x1, y2, x2, class_id, score)] in image coordinates
@@ -257,11 +257,12 @@ class MaskRCNN(nn.Module):
             # Convert boxes to normalized coordinates
             normalize_boxes = detections[:, :, :4] / scale
             # Create masks for detections
-            mrcnn_mask = self.mask(_mrcnn_feature_maps, normalize_boxes)
+            _, _pooled_mask, _ = self.dev_roi(_mrcnn_feature_maps, normalize_boxes, [])
+            mrcnn_mask = self.mask(_pooled_mask)
 
             # shape: batch, num_detections, 81, 28, 28
-            mrcnn_mask = mrcnn_mask.view(sample_per_gpu, -1,
-                                         mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
+            mrcnn_mask = mrcnn_mask.view(
+                sample_per_gpu, -1, mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
 
             return [detections, mrcnn_mask]
 
@@ -300,7 +301,8 @@ class MaskRCNN(nn.Module):
                 # _pooled_cls: 600 (bsx200), 256, 7, 7
                 _pooled_cls, _pooled_mask, _feat_out = \
                     self.dev_roi(_mrcnn_feature_maps, _rois, target_class_ids)
-                [big_feat, big_cnt, small_feat, small_cnt] = _feat_out
+                if self.config.DEV.SWITCH:
+                    [big_feat, big_cnt, small_feat, small_cnt] = _feat_out
 
                 # classifier
                 mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_pooled_cls)

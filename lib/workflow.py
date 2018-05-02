@@ -114,7 +114,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         model_file = os.path.join(model.config.MISC.RESULT_FOLDER,
                                   'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(ep, iter_per_epoch))
         print_log('Epoch ends, saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
-        if model.config.DEV:
+        if model.config.DEV.SWITCH:
             buffer, buffer_cnt = model.buffer.data.cpu().numpy(), model.buffer_cnt.data.cpu().numpy()
         else:
             buffer, buffer_cnt = [], []
@@ -185,7 +185,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         detailed_loss = torch.mean(merged_loss, dim=0)
 
         # meta-loss
-        if config.DEV:
+        if config.DEV.SWITCH:
             # big_feat: gpu_num x scale_num x 1024 x 81
             # update the buffer also
             meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt])
@@ -213,8 +213,8 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             iter_time = time.time() - curr_iter_time_start
             days, hrs = compute_left_time(iter_time, curr_ep,
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
-            suffix = ' - meta_loss: {:.3f}' if config.DEV else '{:s}'
-            last_output = meta_loss.data.cpu()[0] if config.DEV else ''
+            suffix = ' - meta_loss: {:.3f}' if config.DEV.SWITCH else '{:s}'
+            last_output = '' if not config.DEV.SWITCH else meta_loss.data.cpu()[0]
             config_name_str = config.CTRL.CONFIG_NAME if not config.CTRL.QUICK_VERIFY \
                             else config.CTRL.CONFIG_NAME + ', quick verify mode'
             progress_str = '[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:2.1f} hrs] (iter_t: {:.2f})' \
@@ -222,7 +222,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                            '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}' + suffix
 
             print_log(progress_str.format(
-                progress_str, args['stage_name'], args['epoch_str'], iter_ind, total_iter,
+                config_name_str, args['stage_name'], args['epoch_str'], iter_ind, total_iter,
                 days, hrs, iter_time, lr,
                 loss.data.cpu()[0],
                 detailed_loss[0].data.cpu()[0], detailed_loss[1].data.cpu()[0],
@@ -237,7 +237,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             model_file = os.path.join(config.MISC.RESULT_FOLDER,
                                       'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(curr_ep, iter_ind))
             print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
-            if config.DEV:
+            if config.DEV.SWITCH:
                 buffer, buffer_cnt = model.buffer.data.cpu().numpy(), model.buffer_cnt.data.cpu().numpy()
             else:
                 buffer, buffer_cnt = [], []
@@ -249,11 +249,11 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                 'buffer_cnt':   buffer_cnt,
             }, model_file)
         # for debug; test the model
-        # if config.CTRL.DEBUG and iter_ind == (start_iter+100):
-        #     print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
-        #               format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
-        #     test_model(input_model, args['valset'], args['coco_api'],
-        #                during_train=True, epoch=args['epoch'], iter=iter_ind)
+        if config.CTRL.DEBUG and iter_ind == (start_iter+100):
+            print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
+                      format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
+            test_model(input_model, args['valset'], args['coco_api'],
+                       during_train=True, epoch=args['epoch'], iter=iter_ind)
 
     return loss_sum
 

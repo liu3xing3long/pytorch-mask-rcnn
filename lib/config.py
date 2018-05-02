@@ -88,6 +88,7 @@ class Config(object):
     # Bounding box refinement standard deviation for RPN and final detections.
     DATA.BBOX_STD_DEV = np.array([0.1, 0.1, 0.2, 0.2])
     DATA.IMAGE_SHAPE = []
+    DATA.LOADER_WORKER_NUM = 8
 
     # ==================================
     ROIS = AttrDict()
@@ -198,6 +199,10 @@ class Config(object):
             self.DATA.IMAGE_MAX_DIM = 512
             self.CTRL.PROFILE_ANALYSIS = False
 
+        if self.CTRL.QUICK_VERIFY:
+            self.CTRL.SHOW_INTERVAL = 10
+            self.TRAIN.SAVE_FREQ_WITHIN_EPOCH = 2
+
         # set MISC.RESULT_FOLDER, 'results/base_101/train (or inference)/'
         self.MISC.RESULT_FOLDER = os.path.join(
             'results', self.CTRL.CONFIG_NAME.lower(), self.CTRL.PHASE)
@@ -239,27 +244,27 @@ class CocoConfig(Config):
         self.MISC.DEVICE_ID = [int(x) for x in args.device_id.split(',')]
         self.MISC.GPU_COUNT = len(self.MISC.DEVICE_ID)
 
-        _ignore_yaml_or_list = False
+        _ignore_yaml = False
         # ================ (CUSTOMIZED CONFIG) =========================
         if args.config_name == 'fuck':
             # debug mode on local pc
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1
             self.CTRL.QUICK_VERIFY = True
-            _ignore_yaml_or_list = True
+            _ignore_yaml = True
 
-        elif args.config_name == 'base_101':
+        elif args.config_name.startswith('base_101'):
             self.MODEL.INIT_FILE_CHOICE = 'coco_pretrain'
             self.TRAIN.BATCH_SIZE = 16
             self.CTRL.PROFILE_ANALYSIS = False
-            _ignore_yaml_or_list = True
+            _ignore_yaml = True
 
-        elif args.config_name == 'base_102':
+        elif args.config_name.startswith('base_102'):
             self.MODEL.INIT_FILE_CHOICE = 'imagenet_pretrain'
             self.CTRL.BATCH_SIZE = 16
             self.CTRL.PROFILE_ANALYSIS = False
             self.TEST.SAVE_IM = False
-            _ignore_yaml_or_list = True
+            _ignore_yaml = True
 
         elif args.config_name is None:
             if args.config_file is None:
@@ -272,13 +277,13 @@ class CocoConfig(Config):
             print('WARNING: unknown config name!!! use default setting.')
         # ================ (CUSTOMIZED CONFIG END) ======================
 
-        # Optional
-        if args.config_file is not None and not _ignore_yaml_or_list:
+        # Optional (override previous config)
+        if args.config_file is not None and not _ignore_yaml:
             print('Find .yaml file; use yaml name as CONFIG_NAME')
             self.CTRL.CONFIG_NAME = os.path.basename(args.config_file).replace('.yaml', '')
             merge_cfg_from_file(args.config_file, self)
 
-        if len(args.opts) != 0 and not _ignore_yaml_or_list:
+        if len(args.opts) != 0:
             print('Update configuration from terminal inputs ...')
             merge_cfg_from_list(args.opts, self)
 
