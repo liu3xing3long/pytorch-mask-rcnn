@@ -3,7 +3,7 @@ TRAIN:
   CLIP_GRAD: True
   END2END: False
   BATCH_SIZE: 8
-  DO_VALIDATION: False  # hasn't set up the test phase of meta-loss
+  DO_VALIDATION: True
 DATA:
   IMAGE_MIN_DIM: 800
   IMAGE_MAX_DIM: 1024
