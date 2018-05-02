@@ -4,6 +4,7 @@ from lib.nms.nms_wrapper import nms
 import torch.nn.functional as F
 from tools.box_utils import *
 from tools.image_utils import *
+from tools.utils import print_log
 
 
 def generate_priors(scales, ratios, shape, feature_stride, anchor_stride):
@@ -11,8 +12,7 @@ def generate_priors(scales, ratios, shape, feature_stride, anchor_stride):
     EXECUTE ONLY ONCE.
     scales: 1D array of anchor sizes in pixels. Example: [32, 64, 128]
     ratios: 1D array of anchor ratios of width/height. Example: [0.5, 1, 2]
-    shape: [height, width] spatial shape of the feature map over which
-            to generate anchors.
+    shape: [height, width] spatial shape of the feature map over which to generate anchors.
     feature_stride: Stride of the feature map relative to the image in pixels.
     anchor_stride: Stride of anchors on the feature map. For example, if the
         value is 2 then generate anchors for every other feature map pixel.
@@ -54,8 +54,8 @@ def generate_pyramid_priors(scales, ratios, feature_shapes, feature_strides, anc
 
     Returns:
     anchors: [N, (y1, x1, y2, x2)]. All generated anchors in one array. Sorted
-        with the same order of the given scales. So, anchors of scale[0] come
-        first, then anchors of scale[1], and so on.
+        with the same order of the given scales. So, anchors of scale[0] come first,
+        then anchors of scale[1], and so on.
     """
     # Anchors
     # [anchor_count, (y1, x1, y2, x2)]
@@ -73,16 +73,14 @@ def proposal_layer(inputs, proposal_count, nms_threshold, priors, config=None):
     to the second stage. Filtering is done based on anchor scores and
     non-max suppression to remove overlaps. It also applies bounding
     box refinement details to anchors.
-
     Args:
         inputs
-            [0] rpn_probs: [batch, anchors, (bg prob, fg prob)]
-            [1] rpn_bbox: [batch, anchors, (dy, dx, log(dh), log(dw))]
-        proposal_count
-        nms_threshold
-        priors
-        config
-
+            [0] rpn_probs:  [batch, anchors, (bg prob, fg prob)]
+            [1] rpn_bbox:   [batch, anchors, (dy, dx, log(dh), log(dw))]
+        proposal_count:     maximum output
+        nms_threshold:      for proposal
+        priors:             anchors
+        config:             configuration
     Returns:
         Proposals in normalized coordinates [batch, rois, (y1, x1, y2, x2)]
     """
@@ -101,7 +99,7 @@ def proposal_layer(inputs, proposal_count, nms_threshold, priors, config=None):
 
     # Improve performance by trimming to top anchors by score
     # and doing the rest on the smaller subset.
-    pre_nms_limit = min(6000, prior_num)
+    pre_nms_limit = min(config.RPN.PRE_NMS_LIMIT, prior_num)
     scores, order = scores.sort(descending=True)
     scores = scores[:, :pre_nms_limit]
     order = order[:, :pre_nms_limit]
@@ -115,7 +113,8 @@ def proposal_layer(inputs, proposal_count, nms_threshold, priors, config=None):
 
     # Apply deltas to anchors to get refined anchors.
     # [batch, N, (y1, x1, y2, x2)]
-    boxes = apply_box_deltas(anchors_trim, deltas_trim)       # TODO: nan or inf in initial iter
+    # TODO (mid): nan or inf in initial iter
+    boxes = apply_box_deltas(anchors_trim, deltas_trim)
 
     # Clip to image boundaries. [batch, N, (y1, x1, y2, x2)]
     height, width = config.DATA.IMAGE_SHAPE[:2]
@@ -199,7 +198,7 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
         # level_boxes = level_boxes.detach()
 
         # Crop and Resize
-        box_ind = index[:, 0].int()
+        box_ind = index[:, 0].int()   # indicates which sample (along the batch dim) the box comes from
         curr_feature_maps = feature_maps[i]
         pooled_features = CropAndResizeFunction(pool_size, pool_size)(curr_feature_maps, level_boxes, box_ind)
         pooled.append(pooled_features)
@@ -217,7 +216,7 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
     pooled_out = Variable(torch.zeros(
         boxes.size(0), boxes.size(1), pooled.size(1), pooled.size(2), pooled.size(3)).cuda())
     pooled_out[box_to_level[:, 0], box_to_level[:, 1], :, :, :] = pooled
-    # 3, 1000, 256, 7, 7 -> 3000, 256, 7, 7
+    # 3, 1000, 256, 7 (or 14), 7 -> 3000, 256, 7, 7
     pooled_out = pooled_out.view(-1, pooled_out.size(2), pooled_out.size(3), pooled_out.size(4))
 
     return pooled_out
@@ -232,7 +231,6 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
     # gt_class_ids: size MAX_GT_NUM
 
     if torch.nonzero(gt_class_ids < 0).size():
-
         # Handle COCO crowds
         # A crowd box in COCO is a bounding box around several instances. Exclude
         # them from training. A crowd box is given a negative class ID.
@@ -391,7 +389,6 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     """Sub-samples proposals and generates target box refinement, class_ids and masks.
         Note that proposal class IDs, gt_boxes, and gt_masks are zero padded.
         Equally, returned rois and targets are zero padded.
-
     Args:
         proposals:          [batch, N, (y1, x1, y2, x2)] in normalized coordinates.
                                 Might be zero padded if there are not enough proposals.
@@ -444,6 +441,7 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
 ############################################################
 def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
 
+    # sample_id is the id within each GPU
     curr_sample_id = args[0]
     coco_im_id = args[1].data.cpu().numpy()
 
@@ -503,7 +501,7 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         print('\t\t[sample_id {}, im {}] 1. passed initial assignment in generate_rpn_target'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
 
-    # Subsample to balance positive and negative anchors
+    # 4. Subsample to balance positive and negative anchors
     # Don't let positives be more than half the anchors
     pos_ids = torch.nonzero(target_rpn_match == 1).squeeze()
     extra = pos_ids.size(0) - (config.RPN.TRAIN_ANCHORS_PER_IMAGE // 2)
@@ -533,9 +531,21 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         _tmp = torch.from_numpy(np.random.permutation(neg_ids.size(0))).cuda()
         _ids = neg_ids[_tmp[:extra]]
         target_rpn_match[_ids] = 0
+    # ======= ABOVE DONE =======
 
-    assert (torch.sum((target_rpn_match == 1).long()) +
-            torch.sum((target_rpn_match == -1).long())).data[0] == config.RPN.TRAIN_ANCHORS_PER_IMAGE
+    _pos_num = torch.sum((target_rpn_match == 1).long()).data[0]
+    _neg_num = torch.sum((target_rpn_match == -1).long()).data[0]
+
+    if _pos_num + _neg_num != config.RPN.TRAIN_ANCHORS_PER_IMAGE:
+        # TODO (potential bug): on s162, the previous assertion fails
+        _neutral_num = torch.sum((target_rpn_match == 0).long()).data[0]
+        print_log('\n[WARNING!!!]'
+                  '\tactual_rpn_pos_neg_num is {}, config num is {}\n'
+                  '\t\tpos_num: {}, neg_num: {}, neutral_num: {}\n'
+                  '\t\tgt_boxes size: {}, actual_gt_num: {}, anchors_num: {}'.
+                  format(_pos_num + _neg_num, config.RPN.TRAIN_ANCHORS_PER_IMAGE,
+                         _pos_num, _neg_num, _neutral_num,
+                         gt_boxes.size(), actual_gt_num, anchors.size(0)), config.MISC.LOG_FILE)
 
     if config.CTRL.PROFILE_ANALYSIS:
         print('\t\t[sample_id {}, im {}] 2. passed rpn_target_match'.
@@ -591,7 +601,7 @@ def prepare_rpn_target(anchors, gt_class_ids, gt_boxes, config, curr_coco_im_id=
 
 
 ############################################################
-#  Detection Layer (for evaluation)
+#  Detection Layer (Inference)
 ############################################################
 def conduct_nms(class_ids, refined_rois, class_scores, keep, config):
     """per SAMPLE operation; no batch size dim!

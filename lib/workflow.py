@@ -70,16 +70,16 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         model = input_model
 
     num_train_im = train_generator.dataset.dataset.num_images
-    iter_per_epoch = math.floor(num_train_im/model.config.CTRL.BATCH_SIZE)
+    iter_per_epoch = math.floor(num_train_im/model.config.TRAIN.BATCH_SIZE)
     total_ep_till_now = sum(model.config.TRAIN.SCHEDULE[:_TEMP[layers]])
 
     # check details
-    if (num_train_im % model.config.CTRL.BATCH_SIZE) % model.config.MISC.GPU_COUNT != 0:
+    if (num_train_im % model.config.TRAIN.BATCH_SIZE) % model.config.MISC.GPU_COUNT != 0:
         print_log('WARNING [TRAIN]: last mini-batch in an epoch is not divisible by gpu number.\n'
                   'total train im: {:d}, batch size: {:d}, gpu num {:d}\n'
                   'last mini-batch size: {:d}\n'.format(
-                    num_train_im, model.config.CTRL.BATCH_SIZE, model.config.MISC.GPU_COUNT,
-                    (num_train_im % model.config.CTRL.BATCH_SIZE)), model.config.MISC.LOG_FILE)
+                    num_train_im, model.config.TRAIN.BATCH_SIZE, model.config.MISC.GPU_COUNT,
+                    (num_train_im % model.config.TRAIN.BATCH_SIZE)), model.config.MISC.LOG_FILE)
 
     if model.epoch > total_ep_till_now:
         print_log('skip {:s} stage ...'.format(stage_name.upper()), model.config.MISC.LOG_FILE)
@@ -108,7 +108,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         # Validation (deprecated)
         # val_loss = valid_epoch(val_generator, model.config.VALIDATION_STEPS)
 
-        # TODO: visualize the loss with resume concerned
+        # TODO (mid): visualize the loss with resume concerned; include visdom
         model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
         visualize.plot_loss(model.loss_history, model.val_loss_history,
@@ -128,11 +128,12 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         model.epoch = ep
 
     # Current stage ends; do validation if possible
+    model.epoch += 1
+    # TODO(low): delete redundant model files to save hard-drive space
     if model.config.TRAIN.DO_VALIDATION:
         print_log('\nDo validation at end of current stage [{:s}] (model ep {:d} iter {:d}) ...'.
                   format(stage_name.upper(), total_ep_till_now, iter_per_epoch), model.config.MISC.LOG_FILE)
         test_model(input_model, valset, coco_api, during_train=True, epoch=ep, iter=iter_per_epoch)
-        model.epoch += 1
 
 
 def train_epoch_new(input_model, data_loader, optimizer, **args):
@@ -179,7 +180,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # [target_rpn_match, rpn_class_logits, target_rpn_bbox, rpn_pred_bbox,
         # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
         # the loss shape: gpu_num x 5
-        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], mode='train')
+        outputs = input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
         detailed_loss = torch.mean(outputs, dim=0)
         loss = torch.sum(detailed_loss)
 
@@ -289,10 +290,10 @@ def test_model(input_model, valset, coco_api,
         image_ids = image_ids[:limit]
 
     num_test_im = len(image_ids)
-    actual_test_bs = model.config.CTRL.BATCH_SIZE * 2
+    test_bs = model.config.TEST.BATCH_SIZE
 
     print("Running COCO evaluation on {} images.".format(num_test_im))
-    assert (num_test_im % actual_test_bs) % model.config.MISC.GPU_COUNT == 0, \
+    assert (num_test_im % test_bs) % model.config.MISC.GPU_COUNT == 0, \
         '[INFERENCE] last mini-batch in an epoch is not divisible by gpu number.'
     # Get corresponding COCO image IDs.
     coco_image_ids = [dataset.image_info[ind]["id"] for ind in image_ids]
@@ -301,14 +302,14 @@ def test_model(input_model, valset, coco_api,
     t_start = time.time()
 
     results, cnt = [], 0
-    total_iter = math.ceil(num_test_im / actual_test_bs)
+    total_iter = math.ceil(num_test_im / test_bs)
     show_test_progress_base = math.floor(total_iter / (model.config.CTRL.SHOW_INTERVAL/2))
     # note that GPU efficiency is low when SAVE_IM=True
 
     for iter_ind in range(total_iter):
 
-        curr_start_id = iter_ind*actual_test_bs
-        curr_end_id = min(curr_start_id + actual_test_bs, num_test_im)
+        curr_start_id = iter_ind*test_bs
+        curr_end_id = min(curr_start_id + test_bs, num_test_im)
         curr_image_ids = image_ids[curr_start_id:curr_end_id]
 
         # Run detection
@@ -321,7 +322,7 @@ def test_model(input_model, valset, coco_api,
 
         # Convert to numpy
         detections = detections.data.cpu().numpy()
-        mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).data.cpu().numpy()
+        mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).contiguous().data.cpu().numpy()
 
         # Process detections
         for i, image in enumerate(images):

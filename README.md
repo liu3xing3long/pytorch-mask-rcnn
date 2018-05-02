@@ -1,5 +1,5 @@
 # Mask-RCNN
-### A PyTorch Implementation, adaption from a public [repository](https://github.com/multimodallearning/pytorch-mask-rcnn).
+### A PyTorch Implementation (multi-gpu), adaption from a public [repository](https://github.com/multimodallearning/pytorch-mask-rcnn).
 
 
 
@@ -53,12 +53,12 @@ To test your installation simply run the demo with
 
     python demo.py
 
-It works on CPU or GPU and the result should look like this:
+[comment]: <> (It works on CPU or GPU and the result should look like this:
 
-![](assets/park.png)
+![](assets/park.png))
 
 ## Training on COCO
-See the    `script` folder to get a sense of training/evaluation commands in terminal.
+See the `script` folder to get a sense of training/evaluation commands in terminal.
 
 The training schedule, learning rate, and other parameters can be set in the `class`
 object of `CocoConfig` in `lib/config.py`.

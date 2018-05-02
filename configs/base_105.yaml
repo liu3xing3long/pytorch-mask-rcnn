@@ -3,10 +3,9 @@ TRAIN:
   CLIP_GRAD: False
   END2END: True    # turn on set_trainable option
   BN_LEARN: True
+  BATCH_SIZE: 16
 DATA:
   IMAGE_MIN_DIM: 704
   IMAGE_MAX_DIM: 1024
-CTRL:
-  BATCH_SIZE: 16
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'

@@ -1,6 +1,6 @@
+import torch
 from torch.autograd import Variable
 import torch.optim as optim
-import torch
 import os
 import math
 from tools.collections import AttrDict
@@ -338,7 +338,7 @@ def update_config_and_load_model(config, network, train_generator=None):
             network.start_epoch = checkpoints['epoch']
             network.start_iter = checkpoints['iter']
             num_train_im = train_generator.dataset.dataset.num_images
-            iter_per_epoch = math.floor(num_train_im/config.CTRL.BATCH_SIZE)
+            iter_per_epoch = math.floor(num_train_im/config.TRAIN.BATCH_SIZE)
             if network.start_iter % iter_per_epoch == 0:
                 network.start_iter = 1
                 network.start_epoch += 1
@@ -360,7 +360,7 @@ def update_config_and_load_model(config, network, train_generator=None):
                                             'train_log_start_ep_{:04d}_iter_{:06d}.txt'.
                                             format(network.start_epoch, network.start_iter))
         if config.CTRL.DEBUG or config.TRAIN.DO_VALIDATION:
-            # set SAVE_IM=True
+            # set SAVE_IM=True when debug or do_evaluation during train
             config.TEST.SAVE_IM = True
     else:
         model_name = os.path.basename(model_path).replace('.pth', '')   # mask_rcnn_ep_0053_iter_001234
@@ -391,7 +391,7 @@ def set_optimizer(net, opt):
                                   momentum=opt.MOMENTUM, weight_decay=opt.WEIGHT_DECAY)
         else:
             # Optimizer object, add L2 Regularization
-            # Skip gamma and beta weights of batch normalization layers.
+            # Skip regularization of gamma and beta weights in batch normalization layers.
             trainables_wo_bn = [param for name, param in net.named_parameters()
                                 if param.requires_grad and 'bn' not in name]
             trainables_only_bn = [param for name, param in net.named_parameters()
