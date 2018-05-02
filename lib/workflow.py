@@ -165,8 +165,10 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
 
     if curr_ep == 1 and config.DEV.SWITCH:
         do_meta_after_iter = math.floor(config.DEV.EFFECT_AFER_EP_PERCENT*total_iter)
+        SHOW_META_LOSS = True
     else:
         do_meta_after_iter = -1
+        SHOW_META_LOSS = False
 
     # ITERATION LOOP
     for iter_ind in range(start_iter, total_iter+1):
@@ -174,6 +176,9 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         if config.DEV.SWITCH:
             if iter_ind > do_meta_after_iter:
                 do_meta = True
+                if SHOW_META_LOSS:
+                    print_log('\n** Do meta loss from ep {}, iter {} **\n'.format(curr_ep, iter_ind), config.MISC.LOG_FILE)
+                    SHOW_META_LOSS = False
             else:
                 do_meta = False
 

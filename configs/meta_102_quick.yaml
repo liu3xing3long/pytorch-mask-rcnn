@@ -10,7 +10,7 @@ DATA:
 DEV:
   SWITCH: True
   BUFFER_SIZE: 1  # use all history
-  EFFECT_AFER_EP_PERCENT: 0.8
+  EFFECT_AFER_EP_PERCENT: 0.8   # set to negative if use from beginning
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:
