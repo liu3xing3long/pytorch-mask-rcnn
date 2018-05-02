@@ -161,6 +161,9 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     # create iterator
     data_iterator = iter(data_loader)
 
+    if curr_ep == 1 and config.DEV.SWITCH:
+        do_meta_after_iter = math.floor(config.DEV.EFFECT_AFER_EP_PERCENT*total_iter)
+
     # ITERATION LOOP
     for iter_ind in range(start_iter, total_iter+1):
         

@@ -185,7 +185,7 @@ class MaskRCNN(nn.Module):
 
         return GT_CLS_IDS, GT_BOXES, GT_MASKS, gt_num
 
-    def forward(self, input, mode):
+    def forward(self, input, mode, skip_meta=False):
         """forward function of the Mask-RCNN network"""
         molded_images = input[0]
         sample_per_gpu = molded_images.size(0)  # aka, actual batch size
@@ -299,6 +299,7 @@ class MaskRCNN(nn.Module):
             # 3. mask and cls generation
             if torch.sum(_rois).data[0] != 0:
 
+                # COMPUTE META_OUTPUTS HERE
                 # _pooled_cls: 600 (bsx200), 256, 7, 7
                 _pooled_cls, _pooled_mask, _feat_out = \
                     self.dev_roi(_mrcnn_feature_maps, _rois, target_class_ids)
