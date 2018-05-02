@@ -61,7 +61,6 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
                                 5+: Train Resnet stage 5 and up
         coco_api            validation api
     """
-
     stage_name = layers.upper()
     if isinstance(input_model, nn.DataParallel):
         model = input_model.module
@@ -86,10 +85,9 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         return None
 
     print_log('\n[Current stage: {:s}] start training at epoch {:d}, iter {:d}. \n'
-              'Total epoch in this stage: {:d}.'.format(
-        stage_name, model.epoch, model.iter,
-                                                        model.config.TRAIN.SCHEDULE[_TEMP[layers]-1]),
-              model.config.MISC.LOG_FILE)
+              'Total epoch in this stage: {:d}.'.format(stage_name,
+                model.epoch, model.iter, model.config.TRAIN.SCHEDULE[_TEMP[layers]-1]),
+                model.config.MISC.LOG_FILE)
 
     if not model.config.TRAIN.END2END:
         if layers in LAYER_REGEX.keys():
@@ -117,7 +115,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
                                   'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(ep, iter_per_epoch))
         print_log('Epoch ends, saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
         if model.config.DEV:
-            buffer, buffer_cnt = model.buffer.numpy(), model.buffer_cnt.numpy()
+            buffer, buffer_cnt = model.buffer.data.cpu().numpy(), model.buffer_cnt.data.cpu().numpy()
         else:
             buffer, buffer_cnt = [], []
         torch.save({
@@ -181,19 +179,21 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             t = time.time()
 
         # Run object detection
-        # [target_rpn_match, rpn_class_logits, target_rpn_bbox, rpn_pred_bbox,
-        # target_class_ids, mrcnn_class_logits, target_deltas, mrcnn_bbox, target_mask, mrcnn_mask]
-        # the loss shape: gpu_num x 5; big_box_feat: gpu_num x 1024 x 81
-        merged_loss, big_box_feat, big_box_cnt = input_model(
+        # the loss shape: gpu_num x 5
+        merged_loss, big_feat, big_cnt, small_feat, small_cnt = input_model(
             [images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
-        if config.DEV:
-            detailed_loss = torch.mean(merged_loss, dim=0)
-            model.update_buffer(big_box_feat, big_box_cnt)
-        else:
-            # exclude the last dim: meta-loss
-            detailed_loss = torch.mean(merged_loss[:, :-1], dim=0)
+        detailed_loss = torch.mean(merged_loss, dim=0)
 
-        loss = torch.sum(detailed_loss)
+        # meta-loss
+        if config.DEV:
+            # big_feat: gpu_num x scale_num x 1024 x 81
+            # update the buffer also
+            meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt])
+            meta_loss *= config.DEV.LOSS_FAC
+        else:
+            meta_loss = 0
+
+        loss = torch.sum(detailed_loss) + meta_loss
         if config.CTRL.PROFILE_ANALYSIS:
             print('forward time: {:.4f}'.format(time.time() - t))
             t = time.time()
@@ -214,10 +214,10 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             days, hrs = compute_left_time(iter_time, curr_ep,
                                           sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
             suffix = ' - meta_loss: {:.3f}' if config.DEV else '{:s}'
-            last_output = detailed_loss[-1].data.cpu()[0] if config.DEV else ''
+            last_output = meta_loss.data.cpu()[0] if config.DEV else ''
             progress_str = '[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:2.1f} hrs] (iter_t: {:.2f})' \
                            '\tlr: {:.6f} | loss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} ' \
-                           '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}{:s}'.format(suffix)
+                           '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}' + suffix
 
             print_log(progress_str.format(
                 config.CTRL.CONFIG_NAME, args['stage_name'], args['epoch_str'], iter_ind, total_iter,
@@ -236,7 +236,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                                       'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(curr_ep, iter_ind))
             print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
             if config.DEV:
-                buffer, buffer_cnt = model.buffer.numpy(), model.buffer_cnt.numpy()
+                buffer, buffer_cnt = model.buffer.data.cpu().numpy(), model.buffer_cnt.data.cpu().numpy()
             else:
                 buffer, buffer_cnt = [], []
             torch.save({
@@ -246,7 +246,6 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                 'buffer':       buffer,
                 'buffer_cnt':   buffer_cnt,
             }, model_file)
-
         # for debug; test the model
         # if config.CTRL.DEBUG and iter_ind == (start_iter+100):
         #     print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.

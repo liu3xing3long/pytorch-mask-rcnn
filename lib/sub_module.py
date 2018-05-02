@@ -268,6 +268,7 @@ class Dev(nn.Module):
         self.pool_size = config.MRCNN.POOL_SIZE
         self.mask_pool_size = config.MRCNN.MASK_POOL_SIZE
         self.image_shape = config.DATA.IMAGE_SHAPE
+        self.num_classs = config.DATASET.NUM_CLASSES
 
         if self.use_dev:
 
@@ -300,7 +301,8 @@ class Dev(nn.Module):
                 nn.ReLU(inplace=True),
             ])
 
-    def _find_big_box(self, level, roi_level):
+    @staticmethod
+    def _find_big_box(level, roi_level):
         if level == 2:
             big_ix = (roi_level == 4) + (roi_level == 5)
         elif level == 3:
@@ -330,35 +332,47 @@ class Dev(nn.Module):
             roi_level = roi_level.clamp(2, 5).squeeze(dim=-1)   # size: [bs, num_roi], say [3, 200]
 
             pooled, mask, box_to_level = [], [], []
-            feat_out = []
+            big_feat, big_cnt, small_feat, small_cnt = [], [], [], []   # to generate feat_out
+
             # Loop through levels and apply ROI pooling to each. P2 to P5.
             # with 2 being the most coarse map
             for i, level in enumerate(range(2, 6)):
+                _use_upsample = True if level in [2, 3] else False
+                curr_feat_maps = x[i]
 
                 # ix: bs, num_roi
                 ix = roi_level == level
+
                 if not ix.any():
                     # there is no "small" boxes
+                    if _use_upsample:
+                        small_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
+                        small_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
+                        big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
+                        big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
                     continue
-
-                curr_feat_maps = x[i]
-                _use_upsample = True if level in [2, 3] else False
 
                 big_ix = self._find_big_box(level, roi_level)
                 if not big_ix.any():
-                    # there is no "big" boxes
-                    big_box_gt, big_output = [], []   # never mind; we use historic data
+                    if _use_upsample:
+                        # there is no "big" boxes; never mind, we use historic data
+                        big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
+                        big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
                 else:
+                    # this case only occurs when scale is 2 or 3
                     big_index = torch.nonzero(big_ix)
                     big_boxes = rois[big_index[:, 0].data, big_index[:, 1].data, :]
                     big_box_gt = roi_cls_gt[big_index[:, 0].data, big_index[:, 1].data]
                     # for big boxes, ROI-pool on original map
                     big_box_ind = big_index[:, 0].int()
                     # shape: say 20, 256, 14, 14
-                    big_feat = CropAndResizeFunction(self.feat_pool_size,
-                                                     self.feat_pool_size)(curr_feat_maps, big_boxes, big_box_ind)
+                    big_feat_pooled = CropAndResizeFunction(
+                        self.feat_pool_size, self.feat_pool_size)(curr_feat_maps, big_boxes, big_box_ind)
                     # shape: say 20, 1024
-                    big_output = self.feat_extract(big_feat).squeeze()
+                    big_output = self.feat_extract(big_feat_pooled)
+                    _b_feat, _b_cnt = self._assign_feat2cls([big_box_gt, big_output])
+                    big_feat.append(_b_feat)
+                    big_cnt.append(_b_cnt)
 
                 # "SMALL" boxes (or simply boxes on scale 4,5) exist
                 # index: say, 2670 (actual boxes found in this level) x 2
@@ -392,14 +406,21 @@ class Dev(nn.Module):
                 # for scale 4 and 5, we don't do meta-supervise
                 if _use_upsample:
                     # process big-small-supervise
-                    small_output = self.feat_extract(mask_and_feat).squeeze()
-                    feat_out.append([big_box_gt, big_output, small_box_gt, small_output])
+                    small_output = self.feat_extract(mask_and_feat)
+                    _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
+                    small_feat.append(_s_feat)
+                    small_cnt.append(_s_cnt)
 
+            feat_out = [torch.stack(big_feat).detach().unsqueeze(dim=0),
+                        torch.stack(big_cnt).unsqueeze(dim=0),
+                        torch.stack(small_feat).unsqueeze(dim=0),
+                        torch.stack(small_cnt).unsqueeze(dim=0)]
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
 
         return pooled_out, mask_out, feat_out
 
-    def _reshape_result(self, pooled, mask, box_to_level, rois_size):
+    @staticmethod
+    def _reshape_result(pooled, mask, box_to_level, rois_size):
         pooled = torch.cat(pooled, dim=0)
         mask = torch.cat(mask, dim=0)
         box_to_level = torch.cat(box_to_level, dim=0)
@@ -417,6 +438,27 @@ class Dev(nn.Module):
         mask_out = mask_out.view(-1, mask_out.size(2), mask_out.size(3), mask_out.size(4))
 
         return pooled_out, mask_out
+
+    def _assign_feat2cls(self, input):
+        """
+        input[List]
+                each entry: Variable; [20], [20, 1024], [473], [473, 1024] on scale 2
+                            Variable; [9], [9, 1024], [56], [56, 1024] on scale 3
+        """
+        box_gt, input_feat = input[0], input[1]
+        assert box_gt.size(0) == input_feat.size(0)
+
+        feat = Variable(torch.zeros(1024, self.num_classs).cuda())
+        cnt = Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False)
+
+        for cls_ind in utils.unique1d(box_gt).data:
+            if cls_ind == 0:
+                continue  # skip background
+            else:
+                _idx = torch.nonzero(box_gt == cls_ind).squeeze()
+                cnt[0, cls_ind] = _idx.size(0)
+                feat[:, cls_ind] = torch.mean(input_feat[_idx, :], dim=0)
+        return feat, cnt
 
 
 ############################################################

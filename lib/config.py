@@ -1,4 +1,3 @@
-import datetime
 from tools.utils import *
 from tools.collections import AttrDict
 
@@ -148,9 +147,10 @@ class Config(object):
     # ==============================
     DEV = AttrDict()
     DEV.SWITCH = False
-    DEV.EFFECTIVE_AFER_ITER = 500  # set to <= 0 if trained from the very first iter
+    DEV.EFFECTIVE_AFER_ITER = -1  # set to <= 0 if trained from the very first iter
     DEV.UPSAMPLE_FAC = 2.
     DEV.LOSS_CHOICE = 'l2'   # TODO (high, urgent) 'ot', 'kl', etc.
+    DEV.LOSS_FAC = 0.5
     DEV.BUFFER_SIZE = 1000  # set to <= 0 if use all historic data
     DEV.FEAT_BRANCH_POOL_SIZE = 14
 
@@ -176,8 +176,6 @@ class Config(object):
 
     def display(self, log_file):
         """Display *final* configuration values."""
-        now = datetime.datetime.now()
-        print_log('\nStart timestamp: {:%Y%m%dT%H%M}'.format(now), file=log_file, init=True)
         print_log("Configurations:", file=log_file)
         for a in dir(self):
             if not a.startswith("__") and not callable(getattr(self, a)):
@@ -245,6 +243,7 @@ class CocoConfig(Config):
         if args.config_name == 'fuck':
             # debug mode on local pc
             self.DEV.SWITCH = True
+            self.DEV.BUFFER_SIZE = 1000
             _ignore_yaml_or_list = True
 
         elif args.config_name == 'base_101':

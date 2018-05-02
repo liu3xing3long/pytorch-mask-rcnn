@@ -4,6 +4,7 @@ from lib.sub_module import *
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
+EPS = 10e-20
 
 
 class MaskRCNN(nn.Module):
@@ -63,10 +64,13 @@ class MaskRCNN(nn.Module):
         self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, input_ch=256)
         # RoI
         self.dev_roi = Dev(config, depth=256)
-        #(deprecated below; initialized or loaded in 'utils.py')
-        # if self.config.DEV:
-        #     self.buffer = torch.zeros(config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES)
-        #     self.buffer_cnt = torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES)
+        if self.config.DEV:
+            if self.config.DEV.LOSS_CHOICE == 'l2':
+                # self.dist = nn.PairwiseDistance(p=2)
+                self.criterion = nn.MSELoss()
+            # (deprecated below; initialized or loaded in 'utils.py')
+            # self.buffer = torch.zeros(config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES)
+            # self.buffer_cnt = torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES)
 
         # FPN Classifier
         self.classifier = \
@@ -109,20 +113,46 @@ class MaskRCNN(nn.Module):
             if not trainable:
                 param[1].requires_grad = False
 
-    def _meta_loss(self, feat_input):
+    def meta_loss(self, feat_input):
         """
         Compute the divergence between big objects and small ones
             Args:
-                feat_input[List]
-                    each entry is also [List] on difference scales
-                        each sub-entry: Variable; [20, 1024], [20], [473, 1024], [473]   on scale 2
-                                        Variable; [9, 1024], [9], [56, 1024], [56]   on scale 3
+                big_feat:   [gpu_num, scale_num, feat_dim(1024), cls_num]
+                big_cnt:    [gpu_num, scale_num, feat_dim(1), cls_num]
         """
-        scale_num = len(feat_input)
-        return loss, big_box_feat, big_box_cnt
+        [big_feat, big_cnt, small_feat, small_cnt] = feat_input
+        # final_small_feat, 1024 x 81
+        final_small_feat, final_small_cnt = self._merge_feat_vec(small_feat, small_cnt)
+        _big_feat, _big_cnt = self._merge_feat_vec(big_feat, big_cnt)
 
-    def update_buffer(self, big_box_feat, big_box_cnt):
-        return
+        # update buffer
+        _temp, _temp_cnt = self.buffer.clone(), self.buffer_cnt.clone()
+        _temp[:-1] = self.buffer[1:]
+        _temp[-1, :, :] = _big_feat
+        _temp_cnt[:-1] = self.buffer_cnt[1:]
+        _temp_cnt[-1, :, :] = _big_cnt
+        self.buffer, self.buffer_cnt = _temp, _temp_cnt
+
+        final_small_cnt.data[0][0] = 0
+        _idx = torch.nonzero(final_small_cnt.squeeze()).squeeze().data
+        if _idx.size():
+            SMALL = final_small_feat[:, _idx].t()  # say 15 x 1024
+            final_big_feat = torch.sum(self.buffer * self.buffer_cnt, dim=0) / (torch.sum(self.buffer_cnt, dim=0) + EPS)
+            BIG = final_big_feat[:, _idx].t()
+            # compute meta-loss
+            loss = self.criterion(SMALL, BIG)
+        else:
+            loss = 0
+        return loss
+
+    @staticmethod
+    def _merge_feat_vec(box_feat, box_cnt):
+
+        feat_avg_sum = box_feat * box_cnt
+        feat_avg_sum = torch.sum(torch.sum(feat_avg_sum, dim=0), dim=0)  # 1024 x 81
+        cnt_sum = torch.sum(torch.sum(box_cnt, dim=0), dim=0)  # 1 x 81
+        feat_avg_sum /= (cnt_sum + EPS)
+        return feat_avg_sum, cnt_sum
 
     @staticmethod
     def adjust_input_gt(*args):
@@ -232,16 +262,17 @@ class MaskRCNN(nn.Module):
         elif mode == 'train':
 
             gt_class_ids, gt_boxes, gt_masks = input[1], input[2], input[3]
-
             # 0. init outputs
             num_rois, mask_sz, num_cls = self.config.ROIS.TRAIN_ROIS_PER_IMAGE, \
-                                         self.config.MRCNN.MASK_SHAPE[0], self.config.DATASET.NUM_CLASSES
+                                            self.config.MRCNN.MASK_SHAPE[0], self.config.DATASET.NUM_CLASSES
             mrcnn_class_logits = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls).cuda())
             mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
             mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
-            meta_loss = Variable(torch.zeros(1).cuda())
-            big_box_feat = Variable(torch.zeros(1, 1024, self.config.DATASET.NUM_CLASSES).cuda())
-            big_box_cnt = Variable(torch.zeros(1, 1, self.config.DATASET.NUM_CLASSES).cuda())
+            # gpu_num, scale_num, feat_dim, cls_num
+            big_feat = Variable(torch.zeros(1, 2, 1024, self.config.DATASET.NUM_CLASSES).cuda())
+            big_cnt = Variable(torch.zeros(1, 2, 1, self.config.DATASET.NUM_CLASSES).cuda())
+            small_feat = Variable(torch.zeros(1, 2, 1024, self.config.DATASET.NUM_CLASSES).cuda())
+            small_cnt = Variable(torch.zeros(1, 2, 1, self.config.DATASET.NUM_CLASSES).cuda())
 
             # 1. compute RPN targets
             target_rpn_match, target_rpn_bbox = \
@@ -263,10 +294,7 @@ class MaskRCNN(nn.Module):
                 # _pooled_cls: 600 (bsx200), 256, 7, 7
                 _pooled_cls, _pooled_mask, _feat_out = \
                     self.dev_roi(_mrcnn_feature_maps, _rois, target_class_ids)
-
-                # meta-supervise
-                if self.config.DEV:
-                    meta_loss, big_box_feat, big_box_cnt = self._meta_loss(_feat_out)
+                [big_feat, big_cnt, small_feat, small_cnt] = _feat_out
 
                 # classifier
                 mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_pooled_cls)
@@ -292,10 +320,10 @@ class MaskRCNN(nn.Module):
             mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
 
             loss_merge = torch.stack(
-                (rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss, meta_loss), dim=1)
+                (rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss), dim=1)
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass loss compute!'.format(curr_gpu_id))
 
-            return loss_merge, big_box_feat, big_box_cnt  # must be Variables
+            return loss_merge, big_feat, big_cnt, small_feat, small_cnt  # must be Variables
 
 
