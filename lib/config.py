@@ -149,7 +149,7 @@ class Config(object):
     DEV = AttrDict()
     DEV.SWITCH = False
     DEV.INIT_BUFFER_WEIGHT = 'scratch'    # TODO (high, urgent) 'coco_pretrain'
-    DEV.EFFECT_AFER_EP_PERCENT = 0  # set to <= 0 if trained from the very first iter
+    DEV.EFFECT_AFER_EP_PERCENT = 0.  # set to <= 0 if trained from the very first iter
     DEV.UPSAMPLE_FAC = 2.
     DEV.LOSS_CHOICE = 'l2'   # TODO (high, urgent) 'ot', 'kl', etc.
     DEV.LOSS_FAC = 0.5

@@ -5,6 +5,8 @@ from lib.layers import *
 from datasets.pycocotools import mask as maskUtils
 from datasets.pycocotools.cocoeval import COCOeval
 from tools.utils import print_log, compute_left_time, adjust_lr
+from torch.autograd import Variable
+import torch
 import torch.nn as nn
 import math
 import matplotlib.pyplot as plt
@@ -172,8 +174,8 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         if config.DEV.SWITCH:
             if iter_ind > do_meta_after_iter:
                 do_meta = True
-        else:
-            do_meta = False
+            else:
+                do_meta = False
 
         curr_iter_time_start = time.time()
         lr = adjust_lr(optimizer, curr_ep, iter_ind, config.TRAIN)   # return lr to show in console
@@ -192,7 +194,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # FORWARD PASS
         # the loss shape: gpu_num x 5
         merged_loss, big_feat, big_cnt, small_feat, small_cnt = input_model(
-            [images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train', do_meta)
+            [images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
         detailed_loss = torch.mean(merged_loss, dim=0)
 
         # meta-loss
@@ -205,7 +207,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             else:
                 # for the very first few iter, we don't compute meta-loss
                 # but rather accumulate the buffer pool
-                meta_loss = 0
+                meta_loss = Variable(torch.zeros(1).cuda())
         else:
             meta_loss = 0
 
