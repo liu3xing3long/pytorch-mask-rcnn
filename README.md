@@ -41,7 +41,6 @@ repository and longcw's [RoiAlign](https://github.com/longcw/RoIAlign.pytorch).
 install the [Python COCO API](https://github.com/cocodataset/cocoapi) and
 create a symlink.
 
-        ln -s /path/to/coco/coco_eval/PythonAPI/pycocotools/ datasets/pycocotools
         ln -s /path/to/coco datasets/coco
 
 4. Download the pretrained models on COCO and ImageNet from
@@ -53,9 +52,8 @@ To test your installation simply run the demo with
 
     python demo.py
 
-[comment]: <> (It works on CPU or GPU and the result should look like this:
 
-![](assets/park.png))
+![](assets/park.png)
 
 ## Training on COCO
 See the `script` folder to get a sense of training/evaluation commands in terminal.

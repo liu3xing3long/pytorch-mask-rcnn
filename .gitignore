@@ -1,14 +1,13 @@
 .DS_Store
 *.png
+!assets
 *.swp
 *.txt*
 datasets/coco
 .idea/
-logs/
 *.pth
 *.so
 *.pyc
 *.o
-pycocotools
 *_ext*
 *.zip
