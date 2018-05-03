@@ -45,7 +45,6 @@ class MaskRCNN(nn.Module):
             raise Exception("Image size must be dividable by 2 at least 6 times "
                             "to avoid fractions when downscaling and upscaling."
                             "For example, use 256, 320, 384, 448, 512, ... etc. ")
-
         # Build the shared convolutional layers.
         # Bottom-up Layers
         # Returns a list of the last layers of each stage, 5 in total.
@@ -75,19 +74,19 @@ class MaskRCNN(nn.Module):
         # FPN Mask
         self.mask = Mask(depth=256, num_classes=config.DATASET.NUM_CLASSES)
 
-        if not config.TRAIN.BN_LEARN:
-            # Fix batch norm layers
-            def set_bn_fix(m):
-                classname = m.__class__.__name__
-                if classname.find('BatchNorm') != -1:
-                    for p in m.parameters():
-                        p.requires_grad = False
-            self.apply(set_bn_fix)
+        # if not config.TRAIN.BN_LEARN:
+        #     # Fix batch norm layers
+        #     def set_bn_fix(m):
+        #         classname = m.__class__.__name__
+        #         if classname.find('BatchNorm') != -1:
+        #             for p in m.parameters():
+        #                 p.requires_grad = False
+        #     self.apply(set_bn_fix)
 
     def _initialize_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
                 # n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 # m.weight.data.normal_(0, math.sqrt(2. / n))
                 nn.init.xavier_uniform(m.weight)
@@ -100,15 +99,28 @@ class MaskRCNN(nn.Module):
                 m.weight.data.normal_(0, 0.01)
                 m.bias.data.zero_()
 
-    def set_trainable(self, layer_regex):
+    def set_trainable(self, layer_regex, log_file):
         """called in 'workflow.py'
         Sets model layers as trainable if their names match the given regular expression.
         """
+        # fpn.P5_conv1.bias
+        # fpn.P5_conv2.1.weight
+        # fpn.P5_conv2.1.bias
+        # dev_roi.upsample.4.weight
+        # dev_roi.upsample.4.bias
+        # dev_roi.feat_extract.0.weight
+        # dev_roi.feat_extract.0.bias
+        # fpn.C5.0.bn3.weight
+        # fpn.C5.0.bn3.bias
+        # fpn.C5.0.downsample.0.weight
+        # fpn.C5.0.downsample.0.bias
         for param in self.named_parameters():
             layer_name = param[0]
             trainable = bool(re.fullmatch(layer_regex, layer_name))
             if not trainable:
                 param[1].requires_grad = False
+        for name, param in self.named_parameters():
+            print_log('\tlayer name: {}\t\treguires_grad: {}'.format(name, param.requires_grad), log_file)
 
     def meta_loss(self, feat_input):
         """
@@ -124,20 +136,19 @@ class MaskRCNN(nn.Module):
 
         # update buffer (buffer_size x 1024 x 81)
         buffer_size = self.buffer.size(0)
+        _big_feat_tensor, _big_cnt_tensor = _big_feat.data, _big_cnt.data
         if buffer_size == 1:
             # use all historic data
-            feat_sum = self.buffer * self.buffer_cnt + _big_feat.unsqueeze(0) * _big_cnt.unsqueeze(0)
-            self.buffer_cnt += _big_cnt.unsqueeze(0)
+            feat_sum = self.buffer * self.buffer_cnt + _big_feat_tensor.unsqueeze(0) * _big_cnt_tensor.unsqueeze(0)
+            self.buffer_cnt += _big_cnt_tensor.unsqueeze(0)
             self.buffer = feat_sum / (self.buffer_cnt + EPS)
             final_big_feat = self.buffer.squeeze()  # shape: 1024 x 81
         else:
-            # TODO (high): change Variable to Tensor to save mem
-            _temp, _temp_cnt = self.buffer.clone(), self.buffer_cnt.clone()
-            _temp[:-1] = self.buffer[1:]
-            _temp[-1, :, :] = _big_feat
-            _temp_cnt[:-1] = self.buffer_cnt[1:]
-            _temp_cnt[-1, :, :] = _big_cnt
-            self.buffer, self.buffer_cnt = _temp, _temp_cnt
+            # in-place opt. on Tensor
+            self.buffer[:-1] = self.buffer[1:]
+            self.buffer[-1, :, :] = _big_feat_tensor
+            self.buffer_cnt[:-1] = self.buffer_cnt[1:]
+            self.buffer_cnt[-1, :, :] = _big_cnt_tensor
             final_big_feat = \
                 torch.sum(self.buffer * self.buffer_cnt, dim=0) / (torch.sum(self.buffer_cnt, dim=0) + EPS)
 
@@ -145,7 +156,8 @@ class MaskRCNN(nn.Module):
         _idx = torch.nonzero(final_small_cnt.squeeze()).squeeze().data
         if _idx.size():
             SMALL = final_small_feat[:, _idx].t()  # say 15 x 1024
-            BIG = final_big_feat[:, _idx].t()
+            final_big_feat_var = Variable(final_big_feat)
+            BIG = final_big_feat_var[:, _idx].t()
             # compute meta-loss
             loss = self.criterion(SMALL, BIG)
         else:
