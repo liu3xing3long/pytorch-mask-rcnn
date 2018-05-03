@@ -352,6 +352,8 @@ def update_config_and_load_model(config, network, train_generator=None):
         except KeyError:
             # indicate this is a pretrain model
             network.start_epoch, network.start_iter = 1, 1
+        if config.TRAIN.FORCE_START_EPOCH:
+            network.start_epoch, network.start_iter = config.TRAIN.FORCE_START_EPOCH, 1
         # init counters
         network.epoch = network.start_epoch
         network.iter = network.start_iter
