@@ -100,6 +100,7 @@ class MaskRCNN(nn.Module):
             print_log('init buffer from scratch ...', log_file)
             self.buffer = torch.zeros(self.config.DEV.BUFFER_SIZE, 1024, self.config.DATASET.NUM_CLASSES).cuda()
             self.buffer_cnt = torch.zeros(self.config.DEV.BUFFER_SIZE, 1, self.config.DATASET.NUM_CLASSES).cuda()
+
         elif self.config.DEV.INIT_BUFFER_WEIGHT == 'coco_pretrain':
             print_log('init buffer from pretrain model ...', log_file)
             NotImplementedError()
@@ -124,6 +125,8 @@ class MaskRCNN(nn.Module):
             trainable = bool(re.fullmatch(layer_regex, layer_name))
             if not trainable:
                 param[1].requires_grad = False
+            else:
+                param[1].requires_grad = True
         for name, param in self.named_parameters():
             print_log('\tlayer name: {}\t\treguires_grad: {}'.format(name, param.requires_grad), log_file)
 
@@ -170,6 +173,9 @@ class MaskRCNN(nn.Module):
 
             elif self.config.DEV.LOSS_CHOICE == 'kl':
                 loss = F.kl_div(torch.log(SMALL), BIG)
+
+            elif self.config.DEV.LOSS_CHOICE == 'l1':
+                loss = F.l1_loss(SMALL, BIG)
 
             elif self.config.DEV.LOSS_CHOICE == 'ot':
                 NotImplementedError()

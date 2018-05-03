@@ -95,6 +95,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
                 model.epoch, model.iter, model.config.TRAIN.SCHEDULE[_TEMP[layers]-1]),
                 model.config.MISC.LOG_FILE)
 
+    # TODO(low): try all* case to fit the largest possible batch size in one gpu
     if not model.config.TRAIN.END2END:
         if layers in LAYER_REGEX.keys():
             regx = LAYER_REGEX[layers]
@@ -115,7 +116,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
                                epoch=ep, start_iter=model.iter, total_iter=iter_per_epoch,
                                valset=valset, coco_api=coco_api)
 
-        # TODO (mid): visualize the loss with resume concerned; include visdom
+        # TODO(mid): visualize the loss with resume concerned; include visdom
         model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
         visualize.plot_loss(model.loss_history, model.val_loss_history,
@@ -135,7 +136,6 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
             'buffer':       buffer,
             'buffer_cnt':   buffer_cnt,
         }, model_file)
-
         # one epoch ends; update iterator
         model.iter = 1
         model.epoch = ep
@@ -433,27 +433,6 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
               format(model.config.CTRL.CONFIG_NAME, model_file_name, coco_eval.stats[0]),
               log_file, additional_file=train_log_file)
     print_log('Done!', log_file, additional_file=train_log_file)
-
-
-# ======================
-# def compute_loss(inputs):
-#
-#     target_rpn_match, rpn_class_logits, \
-#     target_rpn_bbox, rpn_pred_bbox, \
-#     target_class_ids, mrcnn_class_logits, \
-#     target_deltas, mrcnn_bbox, \
-#     target_mask, mrcnn_mask = \
-#         inputs[0], inputs[1], inputs[2], inputs[3], inputs[4], \
-#         inputs[5], inputs[6], inputs[7], inputs[8], inputs[9]
-#
-#     rpn_class_loss = compute_rpn_class_loss(target_rpn_match, rpn_class_logits)
-#     rpn_bbox_loss = compute_rpn_bbox_loss(target_rpn_bbox, target_rpn_match, rpn_pred_bbox)
-#     mrcnn_class_loss = compute_mrcnn_class_loss(target_class_ids, mrcnn_class_logits)
-#     mrcnn_bbox_loss = compute_mrcnn_bbox_loss(target_deltas, target_class_ids, mrcnn_bbox)
-#     mrcnn_mask_loss = compute_mrcnn_mask_loss(target_mask, target_class_ids, mrcnn_mask)
-#
-#     outputs = [rpn_class_loss, rpn_bbox_loss, mrcnn_class_loss, mrcnn_bbox_loss, mrcnn_mask_loss]
-#     return sum(outputs), outputs
 
 
 def _mold_inputs(model, image_ids, dataset):

@@ -151,7 +151,7 @@ class Config(object):
     DEV.INIT_BUFFER_WEIGHT = 'scratch'    # TODO (high, urgent) 'coco_pretrain'
     DEV.EFFECT_AFER_EP_PERCENT = 0.  # set to <= 0 if trained from the very first iter
     DEV.UPSAMPLE_FAC = 2.
-    DEV.LOSS_CHOICE = 'l2'   # TODO (high, urgent) 'ot', 'kl', etc.
+    DEV.LOSS_CHOICE = 'l1'   # TODO (high, urgent) 'ot', 'kl', etc. l2 doesn't work
     DEV.LOSS_FAC = 0.5
     DEV.BUFFER_SIZE = 1000  # set to 1 if use all historic data
     DEV.FEAT_BRANCH_POOL_SIZE = 14
@@ -258,8 +258,8 @@ class CocoConfig(Config):
             self.DEV.BUFFER_SIZE = 1
             self.DEV.EFFECT_AFER_EP_PERCENT = 0
             self.CTRL.QUICK_VERIFY = True
-            self.DEV.LOSS_FAC = 500.
-            self.DEV.LOSS_CHOICE = 'kl'
+            self.DEV.LOSS_FAC = .5
+            self.DEV.LOSS_CHOICE = 'l1'
             _ignore_yaml = True
 
         elif args.config_name.startswith('base_101'):
