@@ -219,7 +219,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             _meta_loss_value = meta_loss.data.cpu()[0]
             if _meta_loss_value < 0:
                 # TODO: seriously consider this case
-                print_log('\n** meta_loss: {:.4f}, at iter{:d} epoch {:d} **\n'.format(
+                print_log('\n** meta_loss: {:.4f}, at iter {:d} epoch {:d}; set to 0 in this case **\n'.format(
                     _meta_loss_value, iter_ind, curr_ep), config.MISC.LOG_FILE)
                 meta_loss = Variable(torch.zeros(1).cuda())
 
