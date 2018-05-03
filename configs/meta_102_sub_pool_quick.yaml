@@ -9,7 +9,7 @@ DATA:
   IMAGE_MAX_DIM: 1024
 DEV:
   SWITCH: True
-  BUFFER_SIZE: 1  # use all history
+  BUFFER_SIZE: 2000
   LOSS_CHOICE: 'kl'
   LOSS_FAC: 200
 MODEL:

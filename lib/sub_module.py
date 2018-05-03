@@ -306,7 +306,7 @@ class Dev(nn.Module):
             if config.DEV.LOSS_CHOICE == 'l2':
                 _layer_list.append(nn.Sigmoid())
             elif config.DEV.LOSS_CHOICE == 'kl':
-                _layer_list.append(nn.Softmax())
+                _layer_list.append(nn.Softmax(dim=1))
             self.feat_extract = nn.Sequential(*_layer_list)
 
     @staticmethod
