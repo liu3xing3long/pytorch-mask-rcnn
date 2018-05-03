@@ -276,6 +276,7 @@ def update_config_and_load_model(config, network, train_generator=None):
     phase = config.CTRL.PHASE
 
     # determine model_path
+    use_pretrain = False
     if phase == 'train':
         if os.path.exists(choice):
             print('[{:s}]loading designated weights\t{:s}\n'.format(phase.upper(), choice))
@@ -306,6 +307,7 @@ def update_config_and_load_model(config, network, train_generator=None):
                     print('init file choice is [LAST]; however no file found; '
                           'use pretrain model to init')
                 print('use {:s} pretrain model...'.format(suffix))
+                use_pretrain = True
 
         print('loading weights \t{:s}\n'.format(model_path))
     elif phase == 'inference':
@@ -325,7 +327,7 @@ def update_config_and_load_model(config, network, train_generator=None):
     try:
         network.load_state_dict(checkpoints['state_dict'], strict=False)
     except KeyError:
-        network.load_state_dict(checkpoints, strict=False)  # legacy reason
+        network.load_state_dict(checkpoints, strict=False)  # legacy reason or pretrain model
 
     # determine start_iter and epoch for resume
     # update network.start_epoch, network.start_iter
@@ -367,27 +369,23 @@ def update_config_and_load_model(config, network, train_generator=None):
         if config.DEV.SWITCH:
             try:
                 # indicate this is a resumed model
-                network.buffer = Variable(torch.from_numpy(checkpoints['buffer']).cuda(), requires_grad=False)
-                network.buffer_cnt = Variable(torch.from_numpy(checkpoints['buffer_cnt']).cuda(), requires_grad=False)
+                network.buffer = torch.from_numpy(checkpoints['buffer']).cuda()
+                network.buffer_cnt = torch.from_numpy(checkpoints['buffer_cnt'])
                 buffer_size = network.buffer.size(0)
                 if buffer_size != config.DEV.BUFFER_SIZE:
                     print_log('[WARNING] loaded buffer size: {}, config size: {}\n'
                               'check your config; for now use EMPTY buffer when resume!!!'.
                               format(buffer_size, config.DEV.BUFFER_SIZE), config.MISC.LOG_FILE)
-                    network.buffer = Variable(
-                        torch.zeros(config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES).cuda(), requires_grad=False)
-                    network.buffer_cnt = Variable(
-                        torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES).cuda(), requires_grad=False)
+                    network.buffer = torch.zeros(config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES).cuda()
+                    network.buffer_cnt = torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES).cuda()
                 else:
                     print_log('load existent buffer from previous model ...', config.MISC.LOG_FILE)
 
             except KeyError:
                 # indicate this is a pretrain model; init buffer from scratch
                 print_log('init buffer from scratch ...', config.MISC.LOG_FILE)
-                network.buffer = Variable(
-                    torch.zeros(config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES).cuda(), requires_grad=False)
-                network.buffer_cnt = Variable(
-                    torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES).cuda(), requires_grad=False)
+                network.buffer = torch.zeros(config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES).cuda()
+                network.buffer_cnt = torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES).cuda()
 
     elif phase == 'inference':
         model_name = os.path.basename(model_path).replace('.pth', '')   # mask_rcnn_ep_0053_iter_001234
@@ -402,6 +400,10 @@ def update_config_and_load_model(config, network, train_generator=None):
             if not os.path.exists(config.MISC.SAVE_IMAGE_DIR):
                 os.makedirs(config.MISC.SAVE_IMAGE_DIR)
 
+    if use_pretrain:
+        print_log('\tuse pretrain_model; pretrain weights detail:')
+        for key, value in checkpoints.items():
+            print_log('\t\t{}, size: {}'.format(key, value.size()), config.MISC.LOG_FILE)
     config.display(config.MISC.LOG_FILE)
     network.config = config
 

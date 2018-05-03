@@ -255,7 +255,7 @@ class CocoConfig(Config):
         if args.config_name == 'fuck':
             # debug mode on local pc
             self.DEV.SWITCH = True
-            self.DEV.BUFFER_SIZE = 1
+            self.DEV.BUFFER_SIZE = 10
             self.DEV.EFFECT_AFER_EP_PERCENT = .8
             self.CTRL.QUICK_VERIFY = True
             _ignore_yaml = True

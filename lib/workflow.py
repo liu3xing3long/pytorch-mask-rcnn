@@ -15,13 +15,13 @@ from tools.image_utils import *
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
     # all layers but the backbone
-    "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
-    # From a specific Resnet stage and up
+    "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+    # From a specific resnet stage and up
     "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
     "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
-    "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)",
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+    "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
     # All layers
     "all": ".*",
 }
@@ -93,8 +93,12 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
 
     if not model.config.TRAIN.END2END:
         if layers in LAYER_REGEX.keys():
-            layers = LAYER_REGEX[layers]
-        model.set_trainable(layers)
+            regx = LAYER_REGEX[layers]
+            print_log('Stage: [{}] setting some layers trainable or not ...'.format(stage_name),
+                      model.config.MISC.LOG_FILE)
+            model.set_trainable(regx, model.config.MISC.LOG_FILE)
+        else:
+            raise Exception('unknown layer choice')
 
     # EPOCH LOOP
     for ep in range(model.epoch, total_ep_till_now+1):
@@ -117,7 +121,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
                                   'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(ep, iter_per_epoch))
         print_log('Epoch ends, saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
         if model.config.DEV.SWITCH:
-            buffer, buffer_cnt = model.buffer.data.cpu().numpy(), model.buffer_cnt.data.cpu().numpy()
+            buffer, buffer_cnt = model.buffer.cpu().numpy(), model.buffer_cnt.cpu().numpy()
         else:
             buffer, buffer_cnt = [], []
         torch.save({
@@ -261,7 +265,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
                                       'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(curr_ep, iter_ind))
             print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
             if config.DEV.SWITCH:
-                buffer, buffer_cnt = model.buffer.data.cpu().numpy(), model.buffer_cnt.data.cpu().numpy()
+                buffer, buffer_cnt = model.buffer.cpu().numpy(), model.buffer_cnt.cpu().numpy()
             else:
                 buffer, buffer_cnt = [], []
             torch.save({

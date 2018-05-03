@@ -10,8 +10,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Mask R-CNN')
 
     parser.add_argument('--phase',
-                        # default='train',
-                        default='inference',
+                        default='train',
+                        # default='inference',
                         help='train or inference')
 
     parser.add_argument('--config_name',
@@ -56,6 +56,8 @@ if __name__ == '__main__':
     # Select weights file to load (MUST be put at the end)
     # update start epoch and iter if resume
     config, model = update_config_and_load_model(config, model, train_data)
+
+    print_log(model, config.MISC.LOG_FILE)
 
     if config.MISC.GPU_COUNT < 1:
         print('cpu mode ...')
