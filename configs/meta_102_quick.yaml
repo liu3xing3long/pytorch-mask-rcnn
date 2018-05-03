@@ -11,7 +11,7 @@ DEV:
   SWITCH: True
   BUFFER_SIZE: 1  # use all history
   LOSS_CHOICE: 'kl'
-  LOSS_FAC: 200
+  LOSS_FAC: 200.
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:
