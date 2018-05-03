@@ -144,7 +144,7 @@ class Config(object):
     # evaluate mAP after each stage
     TRAIN.DO_VALIDATION = True
     TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
-
+    TRAIN.FORCE_START_EPOCH = 0
     # ==============================
     DEV = AttrDict()
     DEV.SWITCH = False
