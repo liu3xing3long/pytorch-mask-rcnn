@@ -292,7 +292,7 @@ class Dev(nn.Module):
 
             # define feature extractor to be compared
             _ksize = int(self.feat_pool_size / 2)
-            self.feat_extract = nn.Sequential(*[
+            _layer_list = [
                 nn.Conv2d(self.depth, 512, kernel_size=3, padding=1, stride=2),   # halve the map
                 nn.BatchNorm2d(512),
                 nn.ReLU(inplace=True),
@@ -300,8 +300,13 @@ class Dev(nn.Module):
                 nn.BatchNorm2d(1024),
                 nn.ReLU(inplace=True),
                 nn.Conv2d(1024, 1024, kernel_size=1, stride=1),
-                nn.Sigmoid()
-            ])
+            ]
+            # TODO (consider this sigmoid vs softmax)
+            if config.DEV.LOSS_CHOICE == 'l2':
+                _layer_list.append(nn.Sigmoid())
+            elif config.DEV.LOSS_CHOICE == 'kl':
+                _layer_list.append(nn.Softmax())
+            self.feat_extract = nn.Sequential(*_layer_list)
 
     @staticmethod
     def _find_big_box(level, roi_level):

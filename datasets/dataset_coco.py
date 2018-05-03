@@ -2,16 +2,14 @@ import os
 import shutil
 import urllib.request
 import zipfile
-from datasets.pycocotools.coco import COCO
-from datasets.pycocotools import mask as maskUtils
+from datasets.cocoeval.coco import COCO
+from datasets.cocoeval import mask as maskUtils
 import skimage.color
 import skimage.io
 from lib.layers import *
-
 import torch
 import tools.image_utils as utils
 import torch.utils.data
-from torch.autograd import Variable
 
 
 class Dataset(object):

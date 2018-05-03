@@ -1,9 +1,7 @@
 import re
-from lib.workflow import *
 from lib.sub_module import *
-import torch
 import torch.nn as nn
-from torch.autograd import Variable
+from lib.layers import *
 EPS = 10e-20
 
 
@@ -63,10 +61,6 @@ class MaskRCNN(nn.Module):
         self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, input_ch=256)
         # RoI
         self.dev_roi = Dev(config, depth=256)
-        if self.config.DEV.SWITCH:
-            if self.config.DEV.LOSS_CHOICE == 'l2':
-                # self.dist = nn.PairwiseDistance(p=2)
-                self.criterion = nn.MSELoss()
 
         # FPN Classifier
         self.classifier = \
@@ -74,6 +68,7 @@ class MaskRCNN(nn.Module):
         # FPN Mask
         self.mask = Mask(depth=256, num_classes=config.DATASET.NUM_CLASSES)
 
+        # Update (May 3): comment the following
         # if not config.TRAIN.BN_LEARN:
         #     # Fix batch norm layers
         #     def set_bn_fix(m):
@@ -98,6 +93,16 @@ class MaskRCNN(nn.Module):
             elif isinstance(m, nn.Linear):
                 m.weight.data.normal_(0, 0.01)
                 m.bias.data.zero_()
+
+    def initialize_buffer(self, log_file):
+        # called in 'utils.py'
+        if self.config.DEV.INIT_BUFFER_WEIGHT == 'scratch':
+            print_log('init buffer from scratch ...', log_file)
+            self.buffer = torch.zeros(self.config.DEV.BUFFER_SIZE, 1024, self.config.DATASET.NUM_CLASSES).cuda()
+            self.buffer_cnt = torch.zeros(self.config.DEV.BUFFER_SIZE, 1, self.config.DATASET.NUM_CLASSES).cuda()
+        elif self.config.DEV.INIT_BUFFER_WEIGHT == 'coco_pretrain':
+            print_log('init buffer from pretrain model ...', log_file)
+            NotImplementedError()
 
     def set_trainable(self, layer_regex, log_file):
         """called in 'workflow.py'
@@ -152,14 +157,22 @@ class MaskRCNN(nn.Module):
             final_big_feat = \
                 torch.sum(self.buffer * self.buffer_cnt, dim=0) / (torch.sum(self.buffer_cnt, dim=0) + EPS)
 
-        final_small_cnt.data[0][0] = 0
+        final_small_cnt.data[0][0] = 0  # Variable
         _idx = torch.nonzero(final_small_cnt.squeeze()).squeeze().data
         if _idx.size():
             SMALL = final_small_feat[:, _idx].t()  # say 15 x 1024
             final_big_feat_var = Variable(final_big_feat)
             BIG = final_big_feat_var[:, _idx].t()
+
             # compute meta-loss
-            loss = self.criterion(SMALL, BIG)
+            if self.config.DEV.LOSS_CHOICE == 'l2':
+                loss = F.mse_loss(SMALL, BIG)
+
+            elif self.config.DEV.LOSS_CHOICE == 'kl':
+                loss = F.kl_div(torch.log(SMALL), BIG)
+
+            elif self.config.DEV.LOSS_CHOICE == 'ot':
+                NotImplementedError()
         else:
             loss = 0
         return loss

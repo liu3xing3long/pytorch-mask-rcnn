@@ -1,9 +1,8 @@
 import os
 from tools import visualize
 import time
-from lib.layers import *
-from datasets.pycocotools import mask as maskUtils
-from datasets.pycocotools.cocoeval import COCOeval
+from datasets.cocoeval import mask as maskUtils
+from datasets.cocoeval.cocoeval import COCOeval
 from tools.utils import print_log, compute_left_time, adjust_lr
 from torch.autograd import Variable
 import torch
@@ -15,13 +14,18 @@ from tools.image_utils import *
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
     # all layers but the backbone
-    "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+    "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
+             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+
     # From a specific resnet stage and up
     "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
           r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+
     "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
           r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
-    "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+
+    "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
+          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
     # All layers
     "all": ".*",
 }
@@ -211,6 +215,11 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             # big_feat: gpu_num x scale_num x 1024 x 81
             # update the buffer also
             meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt])
+
+            _meta_loss_value = meta_loss.data.cpu()[0]
+            assert _meta_loss_value >= 0, '** meta_loss: {.4f}, at iter{} epoch {} **'.\
+                format(_meta_loss_value, iter_ind, curr_ep)
+
             if do_meta:
                 meta_loss *= config.DEV.LOSS_FAC
             else:
@@ -324,7 +333,6 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
         save_im_folder = model.config.MISC.SAVE_IMAGE_DIR if model.config.TEST.SAVE_IM else None
 
     dataset = valset.dataset
-
     # Pick COCO images from the dataset
     image_ids = image_ids or dataset.image_ids
     # Limit to a subset
@@ -415,14 +423,14 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
     # Load results. This modifies results with additional attributes.
     coco_results = coco_api.loadRes(results)
     eval_type = "bbox"
-    cocoEval = COCOeval(coco_api, coco_results, eval_type)
-    cocoEval.params.imgIds = coco_image_ids
-    cocoEval.evaluate()
-    cocoEval.accumulate()
-    cocoEval.summarize()
+    coco_eval = COCOeval(coco_api, coco_results, eval_type)
+    coco_eval.params.imgIds = coco_image_ids
+    coco_eval.evaluate()
+    coco_eval.accumulate()
+    coco_eval.summarize(log_file)
     print_log('Total time: {:.4f}'.format(time.time() - t_start), log_file, additional_file=train_log_file)
     print_log('Config_name [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
-              format(model.config.CTRL.CONFIG_NAME, model_file_name, cocoEval.stats[0]),
+              format(model.config.CTRL.CONFIG_NAME, model_file_name, coco_eval.stats[0]),
               log_file, additional_file=train_log_file)
     print_log('Done!', log_file, additional_file=train_log_file)
 

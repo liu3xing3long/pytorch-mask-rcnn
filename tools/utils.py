@@ -275,7 +275,7 @@ def update_config_and_load_model(config, network, train_generator=None):
     choice = config.MODEL.INIT_FILE_CHOICE
     phase = config.CTRL.PHASE
 
-    # determine model_path
+    # determine model_path to load model
     use_pretrain = False
     if phase == 'train':
         if os.path.exists(choice):
@@ -322,7 +322,13 @@ def update_config_and_load_model(config, network, train_generator=None):
             print('use designated model for inference')
         print('[{:s}] loading model weights\t{:s} for inference\n'.format(phase.upper(), model_path))
 
-    # load model
+    if not os.path.exists(model_path):
+        raise Exception('For now we do not allow training from scratch!!!')
+    # set MODEL.INIT_MODEL
+    config.MODEL.INIT_MODEL = model_path
+
+    # load model (resumed or pretrain)
+    # TODO (mid): peek over which weights in pretrain are loaded into the network
     checkpoints = torch.load(model_path)
     try:
         network.load_state_dict(checkpoints['state_dict'], strict=False)
@@ -350,11 +356,9 @@ def update_config_and_load_model(config, network, train_generator=None):
         network.epoch = network.start_epoch
         network.iter = network.start_iter
 
-    # set MODEL.INIT_MODEL
-    config.MODEL.INIT_MODEL = model_path
-
     now = datetime.datetime.now()
-    # set MISC.LOG_FILE; (inference) MISC.DET_RESULT_FILE, MISC.SAVE_IMAGE_DIR
+    # set MISC.LOG_FILE;
+    # for inference, set also MISC.DET_RESULT_FILE, MISC.SAVE_IMAGE_DIR
     if phase == 'train':
         config.MISC.LOG_FILE = os.path.join(config.MISC.RESULT_FOLDER,
                                             'train_log_start_ep_{:04d}_iter_{:06d}.txt'.
@@ -370,22 +374,19 @@ def update_config_and_load_model(config, network, train_generator=None):
             try:
                 # indicate this is a resumed model
                 network.buffer = torch.from_numpy(checkpoints['buffer']).cuda()
-                network.buffer_cnt = torch.from_numpy(checkpoints['buffer_cnt'])
+                network.buffer_cnt = torch.from_numpy(checkpoints['buffer_cnt']).cuda()
                 buffer_size = network.buffer.size(0)
                 if buffer_size != config.DEV.BUFFER_SIZE:
                     print_log('[WARNING] loaded buffer size: {}, config size: {}\n'
-                              'check your config; for now use EMPTY buffer when resume!!!'.
+                              'check your config; for now initialize buffer as instructed in config when resume!!!'.
                               format(buffer_size, config.DEV.BUFFER_SIZE), config.MISC.LOG_FILE)
-                    network.buffer = torch.zeros(config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES).cuda()
-                    network.buffer_cnt = torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES).cuda()
+                    network.initialize_buffer(config.MISC.LOG_FILE)
                 else:
                     print_log('load existent buffer from previous model ...', config.MISC.LOG_FILE)
 
             except KeyError:
-                # indicate this is a pretrain model; init buffer from scratch
-                print_log('init buffer from scratch ...', config.MISC.LOG_FILE)
-                network.buffer = torch.zeros(config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES).cuda()
-                network.buffer_cnt = torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES).cuda()
+                # indicate this is a pretrain model; init buffer as instructed in config
+                network.initialize_buffer(config.MISC.LOG_FILE)
 
     elif phase == 'inference':
         model_name = os.path.basename(model_path).replace('.pth', '')   # mask_rcnn_ep_0053_iter_001234

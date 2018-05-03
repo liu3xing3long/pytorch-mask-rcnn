@@ -194,15 +194,15 @@ class Config(object):
     def _set_value(self):
         """Set values of computed attributes. Override all previous settings."""
 
+        if self.CTRL.QUICK_VERIFY:
+            self.CTRL.SHOW_INTERVAL = 10
+            self.TRAIN.SAVE_FREQ_WITHIN_EPOCH = 2
+
         if self.CTRL.DEBUG:
             self.CTRL.SHOW_INTERVAL = 1
             self.DATA.IMAGE_MIN_DIM = 320
             self.DATA.IMAGE_MAX_DIM = 512
             self.CTRL.PROFILE_ANALYSIS = False
-
-        if self.CTRL.QUICK_VERIFY:
-            self.CTRL.SHOW_INTERVAL = 10
-            self.TRAIN.SAVE_FREQ_WITHIN_EPOCH = 2
 
         # set MISC.RESULT_FOLDER, 'results/base_101/train (or inference)/'
         self.MISC.RESULT_FOLDER = os.path.join(
@@ -255,9 +255,11 @@ class CocoConfig(Config):
         if args.config_name == 'fuck':
             # debug mode on local pc
             self.DEV.SWITCH = True
-            self.DEV.BUFFER_SIZE = 10
-            self.DEV.EFFECT_AFER_EP_PERCENT = .8
+            self.DEV.BUFFER_SIZE = 1
+            self.DEV.EFFECT_AFER_EP_PERCENT = 0
             self.CTRL.QUICK_VERIFY = True
+            self.DEV.LOSS_FAC = 500.
+            self.DEV.LOSS_CHOICE = 'kl'
             _ignore_yaml = True
 
         elif args.config_name.startswith('base_101'):
