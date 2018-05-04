@@ -212,10 +212,13 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
 
         # meta-loss
         if config.DEV.SWITCH:
-            # big_feat: gpu_num x scale_num x 1024 x 81
-            # update the buffer also
-            meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt])
+            if config.DEV.DIS_REG_LOSS:
+                detailed_loss.data[3] = 0  # roi_bbox
+                detailed_loss.data[1] = 0  # rpn_bbox
+                detailed_loss.data[4] = 0  # mask
 
+            # big_feat: gpu_num x scale_num x 1024 x 81; also update the buffer
+            meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt])
             _meta_loss_value = meta_loss.data.cpu()[0]
             if _meta_loss_value < 0:
                 # TODO: seriously consider this case

@@ -9,9 +9,12 @@ DATA:
   IMAGE_MAX_DIM: 1024
 DEV:
   SWITCH: True
-  BUFFER_SIZE: 1
-  LOSS_CHOICE: 'l1'
-  LOSS_FAC: .5
+  BUFFER_SIZE: 1  # use all history
+  LOSS_CHOICE: 'kl'
+  LOSS_FAC: 2000.
+  DIS_REG_LOSS: True
+ROIS:
+  ASSIGN_ANCHOR_BASE: 40.
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:

@@ -16,8 +16,8 @@ class Config(object):
     MODEL.PRETRAIN_COCO_MODEL = os.path.join('datasets/pretrain_model', 'mask_rcnn_coco.pth')
     MODEL.INIT_FILE_CHOICE = 'last'  # or file (xxx.pth)
     MODEL.INIT_MODEL = None   # set in 'utils.py'
-
-    MODEL.BACKBONE = 'resnet101'  # todo: other structures (ssd, etc.)
+    # TODO: other structures (ssd, etc.)
+    MODEL.BACKBONE = 'resnet101'
     MODEL.BACKBONE_STRIDES = []
     MODEL.BACKBONE_SHAPES = []
 
@@ -101,9 +101,10 @@ class Config(object):
     # Percent of positive ROIs used to train classifier/mask heads
     ROIS.ROI_POSITIVE_RATIO = 0.33
     # Eqn.(1) in FPN paper
+    # useless when DEV.ASSIGN_BOX_ON_ALL_SCALE is True
     ROIS.ASSIGN_ANCHOR_BASE = 224.
-
-    ROIS.METHOD = 'roi_align'  # todo: regular roi_pooling
+    # TODO: regular roi_pooling
+    ROIS.METHOD = 'roi_align'
 
     # ==================================
     TEST = AttrDict()
@@ -150,13 +151,22 @@ class Config(object):
     # ==============================
     DEV = AttrDict()
     DEV.SWITCH = False
-    DEV.INIT_BUFFER_WEIGHT = 'scratch'    # TODO (high, urgent) 'coco_pretrain'
-    DEV.EFFECT_AFER_EP_PERCENT = 0.  # set to <= 0 if trained from the very first iter
+    # TODO (high, urgent) 'coco_pretrain'
+    DEV.INIT_BUFFER_WEIGHT = 'scratch'
+    # set to <= 0 if trained from the very first iter
+    DEV.EFFECT_AFER_EP_PERCENT = 0.
     DEV.UPSAMPLE_FAC = 2.
-    DEV.LOSS_CHOICE = 'l1'   # TODO (high, urgent) 'ot', 'kl', etc. l2 doesn't work
+    # TODO (high, urgent) 'ot'; supported: 'kl', 'l2'
+    DEV.LOSS_CHOICE = 'l1'
     DEV.LOSS_FAC = 0.5
-    DEV.BUFFER_SIZE = 1000  # set to 1 if use all historic data
+    # set to 1 if use all historic data
+    DEV.BUFFER_SIZE = 1000
     DEV.FEAT_BRANCH_POOL_SIZE = 14
+    # ignore regression loss (only for **DEBUG**);
+    # doomed if you use it during deployment
+    DEV.DIS_REG_LOSS = False
+    # assign anchors on all scales and split anchor based on roi-pooling output size
+    DEV.ASSIGN_BOX_ON_ALL_SCALE = False
 
     # ==============================
     CTRL = AttrDict()
@@ -197,7 +207,7 @@ class Config(object):
         """Set values of computed attributes. Override all previous settings."""
 
         if self.CTRL.QUICK_VERIFY:
-            self.CTRL.SHOW_INTERVAL = 10
+            self.CTRL.SHOW_INTERVAL = 5
             self.TRAIN.SAVE_FREQ_WITHIN_EPOCH = 2
 
         if self.CTRL.DEBUG:
@@ -255,14 +265,19 @@ class CocoConfig(Config):
         _ignore_yaml = False
         # ================ (CUSTOMIZED CONFIG) =========================
         if args.config_name == 'fuck':
+
             # debug mode on local pc
+            self.CTRL.QUICK_VERIFY = True
+
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1
-            self.CTRL.QUICK_VERIFY = True
             self.DEV.LOSS_FAC = 100
             self.DEV.LOSS_CHOICE = 'kl'
+            # self.DEV.DIS_REG_LOSS = True
+            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = True
+
             self.TRAIN.BATCH_SIZE = 2
-            self.ROIS.ASSIGN_ANCHOR_BASE = 26.
+            self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
             _ignore_yaml = True
 
         elif args.config_name.startswith('base_101'):

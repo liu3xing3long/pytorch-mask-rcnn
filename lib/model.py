@@ -77,7 +77,6 @@ class MaskRCNN(nn.Module):
         #             for p in m.parameters():
         #                 p.requires_grad = False
         #     self.apply(set_bn_fix)
-        a = 1
 
     def _initialize_weights(self):
 
@@ -132,12 +131,8 @@ class MaskRCNN(nn.Module):
             print_log('\tlayer name: {}\t\treguires_grad: {}'.format(name, param.requires_grad), log_file)
 
     def meta_loss(self, feat_input):
-        """
-        Compute the divergence between big objects and small ones
-            Args:
-                big_feat:   [gpu_num, scale_num, feat_dim(1024), cls_num]
-                big_cnt:    [gpu_num, scale_num, feat_dim(1), cls_num]
-        """
+        """the loss is computed in GPU 0"""
+        # the direct outcome (feat_out) from 'forward() of Dev class in sub_module.py'
         [big_feat, big_cnt, small_feat, small_cnt] = feat_input
         # final_small_feat, 1024 x 81; final_small_cnt, 1 x 81
         final_small_feat, final_small_cnt = self._merge_feat_vec(small_feat, small_cnt)
@@ -186,7 +181,7 @@ class MaskRCNN(nn.Module):
 
     @staticmethod
     def _merge_feat_vec(box_feat, box_cnt):
-
+        """merge [gpu_num, scale_num] into 1"""
         feat_avg_sum = box_feat * box_cnt
         feat_avg_sum = torch.sum(torch.sum(feat_avg_sum, dim=0), dim=0)  # 1024 x 81
         cnt_sum = torch.sum(torch.sum(box_cnt, dim=0), dim=0)  # 1 x 81

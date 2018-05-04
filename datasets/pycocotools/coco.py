@@ -1,12 +1,12 @@
-__author__ = 'tylin'
-__version__ = '2.0'
+__author__ = 'not_tylin'
+__version__ = '100'
 # Interface for accessing the Microsoft COCO dataset.
 
 # Microsoft COCO is a large image dataset designed for object detection,
 # segmentation, and caption generation. pycocotools is a Python API that
 # assists in loading, parsing and visualizing the annotations in COCO.
 # Please visit http://mscoco.org/ for more information on COCO, including
-# for the data, paper, and tutorials. The exact format of the annotations
+# for the datasets, paper, and tutorials. The exact format of the annotations
 # is also described on the COCO website. For example usage of the pycocotools
 # please see pycocotools_demo.ipynb. In addition to this API, please download both
 # the COCO images and annotations in order to run the demo.
@@ -18,7 +18,7 @@ __version__ = '2.0'
 # captions not all functions are defined (e.g. categories are undefined).
 
 # The following API functions are defined:
-#  COCO       - COCO api class that loads COCO annotation file and prepare data structures.
+#  COCO       - COCO api class that loads COCO annotation file and prepare datasets structures.
 #  decodeMask - Decode binary mask M encoded via run-length encoding.
 #  encodeMask - Encode binary mask M using run-length encoding.
 #  getAnnIds  - Get ann ids that satisfy given filter conditions.
@@ -61,11 +61,6 @@ if PYTHON_VERSION == 2:
     from urllib import urlretrieve
 elif PYTHON_VERSION == 3:
     from urllib.request import urlretrieve
-
-
-def _isArrayLike(obj):
-    return hasattr(obj, '__iter__') and hasattr(obj, '__len__')
-
 
 class COCO:
     def __init__(self, annotation_file=None):
@@ -135,8 +130,8 @@ class COCO:
                iscrowd (boolean)       : get anns for given crowd label (False or True)
         :return: ids (int array)       : integer array of ann ids
         """
-        imgIds = imgIds if _isArrayLike(imgIds) else [imgIds]
-        catIds = catIds if _isArrayLike(catIds) else [catIds]
+        imgIds = imgIds if type(imgIds) == list else [imgIds]
+        catIds = catIds if type(catIds) == list else [catIds]
 
         if len(imgIds) == len(catIds) == len(areaRng) == 0:
             anns = self.dataset['annotations']
@@ -162,9 +157,9 @@ class COCO:
         :param catIds (int array)  : get cats for given cat ids
         :return: ids (int array)   : integer array of cat ids
         """
-        catNms = catNms if _isArrayLike(catNms) else [catNms]
-        supNms = supNms if _isArrayLike(supNms) else [supNms]
-        catIds = catIds if _isArrayLike(catIds) else [catIds]
+        catNms = catNms if type(catNms) == list else [catNms]
+        supNms = supNms if type(supNms) == list else [supNms]
+        catIds = catIds if type(catIds) == list else [catIds]
 
         if len(catNms) == len(supNms) == len(catIds) == 0:
             cats = self.dataset['categories']
@@ -183,8 +178,8 @@ class COCO:
         :param catIds (int array) : get imgs with all given cats
         :return: ids (int array)  : integer array of img ids
         '''
-        imgIds = imgIds if _isArrayLike(imgIds) else [imgIds]
-        catIds = catIds if _isArrayLike(catIds) else [catIds]
+        imgIds = imgIds if type(imgIds) == list else [imgIds]
+        catIds = catIds if type(catIds) == list else [catIds]
 
         if len(imgIds) == len(catIds) == 0:
             ids = self.imgs.keys()
@@ -203,7 +198,7 @@ class COCO:
         :param ids (int array)       : integer ids specifying anns
         :return: anns (object array) : loaded ann objects
         """
-        if _isArrayLike(ids):
+        if type(ids) == list:
             return [self.anns[id] for id in ids]
         elif type(ids) == int:
             return [self.anns[ids]]
@@ -214,7 +209,7 @@ class COCO:
         :param ids (int array)       : integer ids specifying cats
         :return: cats (object array) : loaded cat objects
         """
-        if _isArrayLike(ids):
+        if type(ids) == list:
             return [self.cats[id] for id in ids]
         elif type(ids) == int:
             return [self.cats[ids]]
@@ -225,7 +220,7 @@ class COCO:
         :param ids (int array)       : integer ids specifying img
         :return: imgs (object array) : loaded img objects
         """
-        if _isArrayLike(ids):
+        if type(ids) == list:
             return [self.imgs[id] for id in ids]
         elif type(ids) == int:
             return [self.imgs[ids]]
@@ -305,7 +300,12 @@ class COCO:
 
         print('Loading and preparing results...')
         tic = time.time()
-        if type(resFile) == str or type(resFile) == unicode:
+        # Check result type in a way compatible with Python 2 and 3.
+        try:
+            is_string = isinstance(resFile, basestring)  # Python 2
+        except NameError:
+            is_string = isinstance(resFile, str)  # Python 3
+        if is_string:
             anns = json.load(open(resFile))
         elif type(resFile) == np.ndarray:
             anns = self.loadNumpyAnnotations(resFile)
@@ -381,7 +381,7 @@ class COCO:
 
     def loadNumpyAnnotations(self, data):
         """
-        Convert result data from a numpy array [Nx7] where each row contains {imageID,x1,y1,w,h,score,class}
+        Convert result datasets from a numpy array [Nx7] where each row contains {imageID,x1,y1,w,h,score,class}
         :param  data (numpy.ndarray)
         :return: annotations (python nested list)
         """

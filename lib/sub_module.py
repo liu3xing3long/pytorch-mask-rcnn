@@ -290,7 +290,6 @@ class Dev(nn.Module):
                 ])
             else:
                 raise Exception('unsupported upsampling factor')
-
             # define feature extractor to be compared
             _ksize = int(self.feat_pool_size / 2)
             _layer_list = [
@@ -331,33 +330,62 @@ class Dev(nn.Module):
             mask_out = pyramid_roi_align([rois] + x, self.mask_pool_size, self.image_shape, base=base)
             feat_out = None
         else:
+            # used for splitting train and test
             train_phase = False if roi_cls_gt is None else True
+
             # Assign each ROI to a level in the pyramid based on the ROI area.
-            y1, x1, y2, x2 = rois.chunk(4, dim=2)
+            y1, x1, y2, x2 = rois.chunk(4, dim=2)   # in normalized coordinate
             h, w = y2 - y1, x2 - x1
-            _image_area = Variable(torch.FloatTensor(
-                [float(self.image_shape[0]*self.image_shape[1])]), requires_grad=False).cuda()
-            roi_level = 4 + utils.log2(torch.sqrt(h*w)/(base/torch.sqrt(_image_area)))
-            roi_level = roi_level.round().int()
-            # in case batch size =1, we keep that dim
-            roi_level = roi_level.clamp(2, 5).squeeze(dim=-1)   # size: [bs, num_roi], say [3, 200]
+            area = w*h
+
+            # use either 'roi_level' or 'accu_small_idx' to assign anchors
+            if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                # original plan
+                _image_area = Variable(torch.FloatTensor(
+                    [float(self.image_shape[0]*self.image_shape[1])]), requires_grad=False).cuda()
+                roi_level = 4 + utils.log2(torch.sqrt(h*w)/(base/torch.sqrt(_image_area)))
+                roi_level = roi_level.round().int()
+                # in case batch size =1, we keep that dim
+                roi_level = roi_level.clamp(2, 5).squeeze(dim=-1)   # size: [bs, num_roi], say [3, 200]
+            else:
+                accu_small_idx = Variable(torch.ByteTensor(rois.size(0), rois.size(1)).cuda())
+                accu_small_idx[:] = False
+
+            # if self.config.CTRL.DEBUG:
+            #     print('\tassign ROIs (total num: {:d}) in {:d} scales.'
+            #           'max box area: {:.4f}, min box area: {:.4f}'.format(
+            #             rois.size(0)*rois.size(1), 4, area.max().data[0], area.min().data[0]))
 
             pooled, mask, box_to_level = [], [], []
             big_feat, big_cnt, small_feat, small_cnt = [], [], [], []   # to generate feat_out
             # Loop through levels and apply ROI pooling to each.
             # P2 to P5, with 2 being the most coarse map
-            if self.config.CTRL.DEBUG:
-                print('\tassign ROIs (total num: {:d}) in {:d} scales.'.format(rois.size(0)*rois.size(1), 4))
-
             for i, level in enumerate(range(2, 6)):
 
-                _use_upsample = True if level in [2, 3] else False
                 curr_feat_maps = x[i]
 
-                # ix: bs, num_roi
-                ix = roi_level == level
-                if not ix.any():
-                    # there is no "small" boxes
+                if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                    _use_upsample = True if level in [2, 3] else False   # original plan
+                else:
+                    _use_upsample = True  # conduct meta-loss on each scale
+
+                # Decide "small_ix": bs, num_roi
+                _thres = (self.feat_pool_size / curr_feat_maps.size(-1))**2
+                if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                    small_ix = roi_level == level
+                else:
+                    # new plan!
+                    # these boxes is smaller than RoI output
+                    # Note: on the last scale (5), there might have some big boxes; deem it as supervision (target).
+                    _temp = area.squeeze(-1) <= _thres
+                    small_ix = _temp - accu_small_idx
+                    accu_small_idx = _temp
+
+                if not small_ix.any():
+                    # if self.config.CTRL.DEBUG:
+                    #     print('\tscale {:d} (thres: {:.4f}), NO (small) num_box, skip this scale ...'
+                    #           .format(level, _thres))
+                    # if there are no "small" boxes, we won't compute stats of *both* small and big on this scale
                     if _use_upsample and train_phase:
                         small_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
                         small_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
@@ -365,8 +393,13 @@ class Dev(nn.Module):
                         big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
                     continue
 
+                # deal with 'big' boxes during train
                 if train_phase:
-                    big_ix = self._find_big_box(level, roi_level)
+                    if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                        big_ix = self._find_big_box(level, roi_level)
+                    else:
+                        big_ix = accu_small_idx == 0
+
                     if not big_ix.any():
                         if _use_upsample:
                             # there is no "big" boxes; never mind, we use historic data
@@ -392,9 +425,15 @@ class Dev(nn.Module):
                         big_cnt.append(_b_cnt)
                         big_num = big_index.size(0)
 
+                # for inference, merge the big box index with small on the last scale
+                if not train_phase and level == 5 and self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                    # can't use big_ix during inference (since it's not generated)
+                    # small_ix = (small_ix + big_ix) > 0
+                    small_ix = ((accu_small_idx == 0) + small_ix) > 0
+
                 # "SMALL" boxes (or simply boxes on scale 4,5) exist
-                # index: say, 2670 (actual boxes found in this level) x 2
-                small_index = torch.nonzero(ix)
+                # small_index: say, 2670 (actual boxes found in this level) x 2
+                small_index = torch.nonzero(small_ix)
                 # Keep track of which box is mapped to which level
                 box_to_level.append(small_index.data)
                 # rois: [bs, num_roi, 4] -> small_boxes [index[0], 4]
@@ -404,7 +443,9 @@ class Dev(nn.Module):
                 box_ind = small_index[:, 0].int()
                 if _use_upsample:
                     small_boxes *= self.upsample_fac
-                    _feat_maps = self.upsample(curr_feat_maps)  # this is what we are trying to optimize
+                    # this is what we are trying to optimize
+                    # TODO: consider different upsampler on different scales
+                    _feat_maps = self.upsample(curr_feat_maps)
                 else:
                     _feat_maps = curr_feat_maps
 
@@ -429,9 +470,9 @@ class Dev(nn.Module):
                     small_feat.append(_s_feat)
                     small_cnt.append(_s_cnt)
 
-                if self.config.CTRL.DEBUG:
-                    print('\tscale {:d}, num_box: {:d}, big_box: {:d}, upsample: {}'.format(
-                          level, small_index.size(0), big_num, _use_upsample))
+                # if self.config.CTRL.DEBUG:
+                #     print('\tscale {:d} (thres: {:.4f}), (small) num_box: {:d}, big_box: {:d}, upsample: {}'
+                #           .format(level, _thres, small_index.size(0), big_num, _use_upsample))
             # SCALE LOOP ENDS
 
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
