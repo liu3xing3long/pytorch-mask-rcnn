@@ -1,8 +1,8 @@
 import os
 from tools import visualize
 import time
-from datasets.cocoeval import mask as maskUtils
-from datasets.cocoeval.cocoeval import COCOeval
+from datasets.pycocotools import mask as maskUtils
+from datasets.pycocotools.cocoeval import COCOeval
 from tools.utils import print_log, compute_left_time, adjust_lr
 from torch.autograd import Variable
 import torch

@@ -143,7 +143,7 @@ def proposal_layer(inputs, proposal_count, nms_threshold, priors, config=None):
 ############################################################
 #  ROIAlign Layer
 ############################################################
-def pyramid_roi_align(inputs, pool_size, image_shape):
+def pyramid_roi_align(inputs, pool_size, image_shape, base=224.):
     """Implements ROI Pooling on multiple levels of the feature pyramid.
     Args:
         pool_size: [height, width] of the output pooled regions. Usually [7, 7]
@@ -176,7 +176,7 @@ def pyramid_roi_align(inputs, pool_size, image_shape):
     image_area = Variable(torch.FloatTensor([float(image_shape[0]*image_shape[1])]), requires_grad=False)
     if boxes.is_cuda:
         image_area = image_area.cuda()
-    roi_level = 4 + utils.log2(torch.sqrt(h*w)/(224.0/torch.sqrt(image_area)))
+    roi_level = 4 + utils.log2(torch.sqrt(h*w)/(base/torch.sqrt(image_area)))
     roi_level = roi_level.round().int()
     # in case batch size =1, we keep that dim
     roi_level = roi_level.clamp(2, 5).squeeze(dim=-1)   # size: [bs, num_roi], say [3, 1000 or 2000]
