@@ -308,10 +308,12 @@ class MaskRCNN(nn.Module):
             mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
             mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
             # gpu_num, scale_num, feat_dim, cls_num
-            big_feat = Variable(torch.zeros(1, 2, 1024, self.config.DATASET.NUM_CLASSES).cuda())
-            big_cnt = Variable(torch.zeros(1, 2, 1, self.config.DATASET.NUM_CLASSES).cuda())
-            small_feat = Variable(torch.zeros(1, 2, 1024, self.config.DATASET.NUM_CLASSES).cuda())
-            small_cnt = Variable(torch.zeros(1, 2, 1, self.config.DATASET.NUM_CLASSES).cuda())
+            # used for meta-loss
+            scale_num = 4 if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE else 2
+            big_feat = Variable(torch.zeros(1, scale_num, 1024, self.config.DATASET.NUM_CLASSES).cuda())
+            big_cnt = Variable(torch.zeros(1, scale_num, 1, self.config.DATASET.NUM_CLASSES).cuda())
+            small_feat = Variable(torch.zeros(1, scale_num, 1024, self.config.DATASET.NUM_CLASSES).cuda())
+            small_cnt = Variable(torch.zeros(1, scale_num, 1, self.config.DATASET.NUM_CLASSES).cuda())
 
             # 1. compute RPN targets
             target_rpn_match, target_rpn_bbox = \
@@ -336,11 +338,11 @@ class MaskRCNN(nn.Module):
                     self.dev_roi(_mrcnn_feature_maps, _rois, target_class_ids)
                 if self.config.DEV.SWITCH:
                     [big_feat, big_cnt, small_feat, small_cnt] = _feat_out
-                    if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
-                        assert big_feat.size() == (1, 4, 1024, 81), 'big_feat size: {}'.format(big_feat.size())
-                        assert small_feat.size() == big_feat.size(), 'small_feat size: {}'.format(small_feat.size())
-                        assert big_cnt.size() == (1, 4, 1, 81), 'big_cnt size: {}'.format(big_cnt.size())
-                        assert small_cnt.size() == big_cnt.size(), 'small_cnt size: {}'.format(small_cnt.size())
+                    # if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                    #     assert big_feat.size() == (1, 4, 1024, 81), 'big_feat size: {}'.format(big_feat.size())
+                    #     assert small_feat.size() == big_feat.size(), 'small_feat size: {}'.format(small_feat.size())
+                    #     assert big_cnt.size() == (1, 4, 1, 81), 'big_cnt size: {}'.format(big_cnt.size())
+                    #     assert small_cnt.size() == big_cnt.size(), 'small_cnt size: {}'.format(small_cnt.size())
 
                 # classifier
                 mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_pooled_cls)
