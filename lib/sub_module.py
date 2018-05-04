@@ -324,7 +324,7 @@ class Dev(nn.Module):
 
     def forward(self, x, rois, roi_cls_gt=None):
         # x is a multi-scale List containing Variable
-        base = self.ROIS.ASSIGN_ANCHOR_BASE
+        base = self.config.ROIS.ASSIGN_ANCHOR_BASE
         if not self.use_dev:
             # in 'layers.py'
             pooled_out = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape, base=base)

@@ -262,6 +262,7 @@ class CocoConfig(Config):
             self.DEV.LOSS_FAC = 100
             self.DEV.LOSS_CHOICE = 'kl'
             self.TRAIN.BATCH_SIZE = 2
+            self.ROIS.ASSIGN_ANCHOR_BASE = 26.
             _ignore_yaml = True
 
         elif args.config_name.startswith('base_101'):
