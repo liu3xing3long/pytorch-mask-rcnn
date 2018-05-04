@@ -33,7 +33,7 @@ if __name__ == '__main__':
                         default=1, type=int)  # no bool type here please
 
     parser.add_argument('--device_id',
-                        default='0', type=str)
+                        default='0,1', type=str)
 
     parser.add_argument('opts',
                         help='See lib/config.py for all options',

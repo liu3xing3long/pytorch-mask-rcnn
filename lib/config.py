@@ -276,7 +276,7 @@ class CocoConfig(Config):
             # self.DEV.DIS_REG_LOSS = True
             self.DEV.ASSIGN_BOX_ON_ALL_SCALE = True
 
-            self.TRAIN.BATCH_SIZE = 2
+            self.TRAIN.BATCH_SIZE = 6
             self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
             _ignore_yaml = True
 

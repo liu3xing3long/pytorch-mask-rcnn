@@ -82,7 +82,6 @@ class COCOeval:
             self.params.imgIds = sorted(cocoGt.getImgIds())
             self.params.catIds = sorted(cocoGt.getCatIds())
 
-
     def _prepare(self):
         '''
         Prepare ._gts and ._dts for evaluation based on params
