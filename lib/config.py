@@ -273,7 +273,7 @@ class CocoConfig(Config):
 
         elif args.config_name.startswith('base_102'):
             self.MODEL.INIT_FILE_CHOICE = 'imagenet_pretrain'
-            self.CTRL.BATCH_SIZE = 16
+            self.TRAIN.BATCH_SIZE = 16
             self.CTRL.PROFILE_ANALYSIS = False
             self.TEST.SAVE_IM = False
             _ignore_yaml = True
