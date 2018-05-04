@@ -100,6 +100,8 @@ class Config(object):
 
     # Percent of positive ROIs used to train classifier/mask heads
     ROIS.ROI_POSITIVE_RATIO = 0.33
+    # Eqn.(1) in FPN paper
+    ROIS.ASSIGN_ANCHOR_BASE = 224.
 
     ROIS.METHOD = 'roi_align'  # todo: regular roi_pooling
 
@@ -256,10 +258,11 @@ class CocoConfig(Config):
             # debug mode on local pc
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1
-            self.DEV.EFFECT_AFER_EP_PERCENT = 0
             self.CTRL.QUICK_VERIFY = True
             self.DEV.LOSS_FAC = 100
             self.DEV.LOSS_CHOICE = 'kl'
+            self.TRAIN.BATCH_SIZE = 2
+            self.ROIS.ASSIGN_ANCHOR_BASE = 26.
             _ignore_yaml = True
 
         elif args.config_name.startswith('base_101'):

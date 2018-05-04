@@ -269,6 +269,7 @@ class Dev(nn.Module):
         self.mask_pool_size = config.MRCNN.MASK_POOL_SIZE
         self.image_shape = config.DATA.IMAGE_SHAPE
         self.num_classs = config.DATASET.NUM_CLASSES
+        self.config = config
 
         if self.use_dev:
 
@@ -277,7 +278,7 @@ class Dev(nn.Module):
             self.upsample_fac = config.DEV.UPSAMPLE_FAC
             assert self.feat_pool_size % 2 == 0, 'pool size of feature branch has to be even'
 
-            # define upsample
+            # define upsampler
             if self.upsample_fac == 2.0:
                 self.upsample = nn.Sequential(*[
                     nn.ConvTranspose2d(self.depth, self.depth, kernel_size=3, stride=2, padding=1, output_padding=1),
@@ -323,27 +324,31 @@ class Dev(nn.Module):
 
     def forward(self, x, rois, roi_cls_gt=None):
         # x is a multi-scale List containing Variable
+        base = self.config.ROIS.ASSIGN_ANCHOR_BASE
         if not self.use_dev:
             # in 'layers.py'
-            pooled_out = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape)
-            mask_out = pyramid_roi_align([rois] + x, self.mask_pool_size, self.image_shape)
+            pooled_out = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape, base=base)
+            mask_out = pyramid_roi_align([rois] + x, self.mask_pool_size, self.image_shape, base=base)
             feat_out = None
         else:
-            # Assign each ROI to a level in the pyramid based on the ROI area.
             train_phase = False if roi_cls_gt is None else True
+            # Assign each ROI to a level in the pyramid based on the ROI area.
             y1, x1, y2, x2 = rois.chunk(4, dim=2)
             h, w = y2 - y1, x2 - x1
-            image_area = Variable(torch.FloatTensor(
+            _image_area = Variable(torch.FloatTensor(
                 [float(self.image_shape[0]*self.image_shape[1])]), requires_grad=False).cuda()
-            roi_level = 4 + utils.log2(torch.sqrt(h*w)/(224.0/torch.sqrt(image_area)))
+            roi_level = 4 + utils.log2(torch.sqrt(h*w)/(base/torch.sqrt(_image_area)))
             roi_level = roi_level.round().int()
             # in case batch size =1, we keep that dim
             roi_level = roi_level.clamp(2, 5).squeeze(dim=-1)   # size: [bs, num_roi], say [3, 200]
 
             pooled, mask, box_to_level = [], [], []
             big_feat, big_cnt, small_feat, small_cnt = [], [], [], []   # to generate feat_out
-            # Loop through levels and apply ROI pooling to each. P2 to P5.
-            # with 2 being the most coarse map
+            # Loop through levels and apply ROI pooling to each.
+            # P2 to P5, with 2 being the most coarse map
+            if self.config.CTRL.DEBUG:
+                print('\tassign ROIs (total num: {:d}) in {:d} scales.'.format(rois.size(0)*rois.size(1), 4))
+
             for i, level in enumerate(range(2, 6)):
 
                 _use_upsample = True if level in [2, 3] else False
@@ -367,6 +372,7 @@ class Dev(nn.Module):
                             # there is no "big" boxes; never mind, we use historic data
                             big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
                             big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
+                        big_num = 0
                     else:
                         # process big-small-supervise (big part)
                         # this case only occurs when scale is 2 or 3
@@ -384,17 +390,18 @@ class Dev(nn.Module):
                         _b_feat, _b_cnt = self._assign_feat2cls([big_box_gt, big_output])
                         big_feat.append(_b_feat)
                         big_cnt.append(_b_cnt)
+                        big_num = big_index.size(0)
 
                 # "SMALL" boxes (or simply boxes on scale 4,5) exist
                 # index: say, 2670 (actual boxes found in this level) x 2
-                index = torch.nonzero(ix)
+                small_index = torch.nonzero(ix)
                 # Keep track of which box is mapped to which level
-                box_to_level.append(index.data)
+                box_to_level.append(small_index.data)
                 # rois: [bs, num_roi, 4] -> small_boxes [index[0], 4]
-                small_boxes = rois[index[:, 0].data, index[:, 1].data, :]
+                small_boxes = rois[small_index[:, 0].data, small_index[:, 1].data, :]
 
                 # scale up feature map of smaller boxes
-                box_ind = index[:, 0].int()
+                box_ind = small_index[:, 0].int()
                 if _use_upsample:
                     small_boxes *= self.upsample_fac
                     _feat_maps = self.upsample(curr_feat_maps)  # this is what we are trying to optimize
@@ -416,11 +423,15 @@ class Dev(nn.Module):
                 # for scale 4 and 5, we don't do meta-supervise
                 if _use_upsample and train_phase:
                     # process big-small-supervise (small part)
-                    small_box_gt = roi_cls_gt[index[:, 0].data, index[:, 1].data]
+                    small_box_gt = roi_cls_gt[small_index[:, 0].data, small_index[:, 1].data]
                     small_output = self.feat_extract(mask_and_feat)
                     _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
                     small_feat.append(_s_feat)
                     small_cnt.append(_s_cnt)
+
+                if self.config.CTRL.DEBUG:
+                    print('\tscale {:d}, num_box: {:d}, big_box: {:d}, upsample: {}'.format(
+                          level, small_index.size(0), big_num, _use_upsample))
             # SCALE LOOP ENDS
 
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())

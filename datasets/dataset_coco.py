@@ -2,8 +2,8 @@ import os
 import shutil
 import urllib.request
 import zipfile
-from datasets.cocoeval.coco import COCO
-from datasets.cocoeval import mask as maskUtils
+from datasets.pycocotools.coco import COCO
+from datasets.pycocotools import mask as maskUtils
 import skimage.color
 import skimage.io
 from lib.layers import *
