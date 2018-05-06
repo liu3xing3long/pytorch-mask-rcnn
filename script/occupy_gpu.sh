@@ -15,6 +15,7 @@ CUDA_VISIBLE_DEVICES=$DEVICE_ID python main.py \
     --phase=train \
     --config_name=base_102_new_occupy_gpu \
     --debug=0 \
+    TRAIN.BATCH_SIZE 8 \
     TRAIN.DO_VALIDATION True \
     TRAIN.SCHEDULE 10,10,10
 
