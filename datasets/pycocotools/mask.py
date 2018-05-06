@@ -1,6 +1,6 @@
-__author__ = 'tsungyi'
+__author__ = 'not_tylin'
 
-import pycocotools._mask as _mask
+import datasets.pycocotools._mask as _mask
 
 # Interface for manipulating masks stored in RLE format.
 #
