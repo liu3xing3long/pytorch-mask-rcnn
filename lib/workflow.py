@@ -10,6 +10,7 @@ import torch.nn as nn
 import math
 import matplotlib.pyplot as plt
 from tools.image_utils import *
+import datetime
 
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
@@ -324,12 +325,15 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
         _model_name = model_file_name.replace('.pth', '')
         _model_suffix = _model_name.replace('mask_rcnn_', '')  # say, ep_0053_iter_1234
         log_file = os.path.join(_val_folder, 'inference_from_{:s}.txt'.format(_model_name))
+
         det_res_file = os.path.join(_val_folder, 'det_result_{:s}.pth'.format(_model_suffix))
         train_log_file = model.config.MISC.LOG_FILE
         save_im_folder = os.path.join(_val_folder, _model_suffix)
         if model.config.TEST.SAVE_IM:
             if not os.path.exists(save_im_folder):
                 os.makedirs(save_im_folder)
+        now = datetime.datetime.now()
+        print_log('\n[Inference during train] Start timestamp: {:%Y%m%dT%H%M}'.format(now), file=log_file, init=True)
     else:
         # validation-only case
         model_file_name = os.path.basename(model.config.MODEL.INIT_MODEL)
