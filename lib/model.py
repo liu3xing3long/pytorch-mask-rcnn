@@ -128,7 +128,8 @@ class MaskRCNN(nn.Module):
             else:
                 param[1].requires_grad = True
         for name, param in self.named_parameters():
-            print_log('\tlayer name: {}\t\treguires_grad: {}'.format(name, param.requires_grad), log_file)
+            print_log('\tlayer name: {}\t\treguires_grad: {}'.format(name, param.requires_grad),
+                      log_file, quiet_termi=True)
 
     def meta_loss(self, feat_input):
         """the loss is computed in GPU 0"""
@@ -156,7 +157,7 @@ class MaskRCNN(nn.Module):
             final_big_feat = \
                 torch.sum(self.buffer * self.buffer_cnt, dim=0) / (torch.sum(self.buffer_cnt, dim=0) + EPS)
 
-        final_small_cnt.data[0][0] = 0  # Variable
+        final_small_cnt.data[0][0] = 0  # Variable; do not include background cls when computing meta_loss
         _idx = torch.nonzero(final_small_cnt.squeeze()).squeeze().data
         if _idx.size():
             SMALL = final_small_feat[:, _idx].t()  # say 15 x 1024
@@ -277,8 +278,9 @@ class MaskRCNN(nn.Module):
 
         if mode == 'inference':
 
+            assert _proposals.sum().data[0] != 0
             _pooled_cls, _, _ = self.dev_roi(_mrcnn_feature_maps, _proposals)
-
+            # TODO: mrcnn_class, highest scores always at background for meta_101_quick_3
             _, mrcnn_class, mrcnn_bbox = self.classifier(_pooled_cls)
             # Detections
             # input[1], image_metas, (3, 90), Variable
@@ -286,6 +288,7 @@ class MaskRCNN(nn.Module):
             # output is [batch, num_detections (say 100), (y1, x1, y2, x2, class_id, score)] in image coordinates
             detections = detection_layer(_proposals, mrcnn_class, mrcnn_bbox, windows, self.config)
 
+            assert detections.sum().data[0] != 0
             # Convert boxes to normalized coordinates
             normalize_boxes = detections[:, :, :4] / scale
             # Create masks for detections
@@ -322,7 +325,7 @@ class MaskRCNN(nn.Module):
                 print('\t[gpu {:d}] pass rpn_target generation'.format(curr_gpu_id))
 
             # 2. compute DET targets
-            # _rois: bs, TRAIN_ROIS_PER_IMAGE (say 200), 4; zero padded
+            # _rois shape: bs x TRAIN_ROIS_PER_IMAGE (say 200) x 4; zero padded
             # target_class_ids: bs, 200
             _rois, target_class_ids, target_deltas, target_mask = \
                 prepare_det_target(_proposals.detach(), gt_class_ids, gt_boxes / scale, gt_masks, self.config)
@@ -346,6 +349,10 @@ class MaskRCNN(nn.Module):
 
                 # classifier
                 mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_pooled_cls)
+                if self.config.CTRL.DEBUG:
+                    a, b = torch.max(mrcnn_cls_logits, dim=-1)
+                    print('train classifier, ROIs pred_cls sum: {}'.format(b.sum().data[0]))
+
                 # mask
                 mrcnn_mask = self.mask(_pooled_mask)
 

@@ -305,6 +305,8 @@ class Dev(nn.Module):
             # TODO (consider this sigmoid vs softmax)
             if config.DEV.LOSS_CHOICE == 'l2':
                 _layer_list.append(nn.Sigmoid())
+            # elif config.DEV.LOSS_CHOICE == 'l1':
+            #     _layer_list.append(nn.Sigmoid())
             elif config.DEV.LOSS_CHOICE == 'kl':
                 _layer_list.append(nn.Softmax(dim=1))
             self.feat_extract = nn.Sequential(*_layer_list)
@@ -469,7 +471,6 @@ class Dev(nn.Module):
                     _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
                     small_feat.append(_s_feat)
                     small_cnt.append(_s_cnt)
-
                 # if self.config.CTRL.DEBUG:
                 #     print('\tscale {:d} (thres: {:.4f}), (small) num_box: {:d}, big_box: {:d}, upsample: {}'
                 #           .format(level, _thres, small_index.size(0), big_num, _use_upsample))
@@ -558,7 +559,7 @@ class Classifier(nn.Module):
         x = self.relu(x)
 
         x = x.view(-1, 1024)
-        mrcnn_class_logits = self.linear_class(x)
+        mrcnn_class_logits = self.linear_class(x)           # x shape: bs x rois_num, 1024
         mrcnn_probs = self.softmax(mrcnn_class_logits)
 
         mrcnn_bbox = self.linear_bbox(x)

@@ -100,8 +100,8 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
     if not model.config.TRAIN.END2END:
         if layers in LAYER_REGEX.keys():
             regx = LAYER_REGEX[layers]
-            print_log('Stage: [{}] setting some layers trainable or not ...'.format(stage_name),
-                      model.config.MISC.LOG_FILE)
+            print_log('Stage: [{}] setting some layers trainable or not; '
+                      'detail shown in log file; NOT shown in terminal'.format(stage_name), model.config.MISC.LOG_FILE)
             model.set_trainable(regx, model.config.MISC.LOG_FILE)
         else:
             raise Exception('unknown layer choice')
@@ -353,82 +353,84 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
 
     num_test_im = len(image_ids)
     test_bs = model.config.TEST.BATCH_SIZE
-
-    print("Running COCO evaluation on {} images.".format(num_test_im))
-    assert (num_test_im % test_bs) % model.config.MISC.GPU_COUNT == 0, \
-        '[INFERENCE] last mini-batch in an epoch is not divisible by gpu number.'
     # Get corresponding COCO image IDs.
     coco_image_ids = [dataset.image_info[ind]["id"] for ind in image_ids]
-
     t_prediction = 0
     t_start = time.time()
 
-    results, cnt = [], 0
-    total_iter = math.ceil(num_test_im / test_bs)
-    show_test_progress_base = math.floor(total_iter / (model.config.CTRL.SHOW_INTERVAL/2))
-    # note that GPU efficiency is low when SAVE_IM=True
+    if os.path.exists(det_res_file):
+        print_log('results file: {} exists, skip inference and directly evaluate ...'.format(det_res_file),
+                  log_file, additional_file=train_log_file)
+        results = torch.load(det_res_file)['det_result']
+    else:
+        print_log("Running COCO evaluation on {} images.".format(num_test_im), log_file, additional_file=train_log_file)
+        assert (num_test_im % test_bs) % model.config.MISC.GPU_COUNT == 0, \
+            '[INFERENCE] last mini-batch in an epoch is not divisible by gpu number.'
 
-    # TODO(low): if (det_res_file) exists, skip the following
-    for iter_ind in range(total_iter):
+        results, cnt = [], 0
+        total_iter = math.ceil(num_test_im / test_bs)
+        show_test_progress_base = math.floor(total_iter / (model.config.CTRL.SHOW_INTERVAL/2))
+        # note that GPU efficiency is low when SAVE_IM=True
+        for iter_ind in range(total_iter):
 
-        curr_start_id = iter_ind*test_bs
-        curr_end_id = min(curr_start_id + test_bs, num_test_im)
-        curr_image_ids = image_ids[curr_start_id:curr_end_id]
+            curr_start_id = iter_ind*test_bs
+            curr_end_id = min(curr_start_id + test_bs, num_test_im)
+            curr_image_ids = image_ids[curr_start_id:curr_end_id]
 
-        # Run detection
-        t_pred_start = time.time()
-        # Mold inputs to format expected by the neural network
-        molded_images, image_metas, windows, images = _mold_inputs(model, curr_image_ids, dataset)
+            # Run detection
+            t_pred_start = time.time()
+            # Mold inputs to format expected by the neural network
+            molded_images, image_metas, windows, images = _mold_inputs(model, curr_image_ids, dataset)
 
-        # FORWARD PASS
-        # detections: 8,100,6; mrcnn_mask: 8,100,81,28,28
-        detections, mrcnn_mask = input_model([molded_images, image_metas], mode=mode)
+            # FORWARD PASS
+            # detections: 8,100,6; mrcnn_mask: 8,100,81,28,28
+            detections, mrcnn_mask = input_model([molded_images, image_metas], mode=mode)
 
-        # Convert to numpy
-        detections = detections.data.cpu().numpy()
-        mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).contiguous().data.cpu().numpy()
+            # Convert to numpy
+            detections = detections.data.cpu().numpy()
+            mrcnn_mask = mrcnn_mask.permute(0, 1, 3, 4, 2).contiguous().data.cpu().numpy()
 
-        # LOOP for each image within this batch
-        for i, image in enumerate(images):
-            curr_coco_id = coco_image_ids[curr_image_ids[i]]
+            # LOOP for each image within this batch
+            for i, image in enumerate(images):
+                curr_coco_id = coco_image_ids[curr_image_ids[i]]
 
-            final_rois, final_class_ids, final_scores, final_masks = _unmold_detections(
-                detections[i], mrcnn_mask[i], image.shape, windows[i])
+                final_rois, final_class_ids, final_scores, final_masks = _unmold_detections(
+                    detections[i], mrcnn_mask[i], image.shape, windows[i])
 
-            if final_rois is None:
-                continue
-            for det_id in range(final_rois.shape[0]):
-                bbox = np.around(final_rois[det_id], 1)
-                curr_result = {
-                    "image_id":     curr_coco_id,
-                    "category_id":  dataset.get_source_class_id(final_class_ids[det_id], "coco"),
-                    "bbox":         [bbox[1], bbox[0], bbox[3] - bbox[1], bbox[2] - bbox[0]],
-                    "score":        final_scores[det_id],
-                    "segmentation": maskUtils.encode(np.asfortranarray(final_masks[:, :, det_id]))
-                }
-                results.append(curr_result)
-            # visualize result if necessary
-            if model.config.TEST.SAVE_IM:
-                plt.close()
-                visualize.display_instances(
-                    image, final_rois, final_masks, final_class_ids, CLASS_NAMES, final_scores)
+                if final_rois is None:
+                    continue
+                for det_id in range(final_rois.shape[0]):
+                    bbox = np.around(final_rois[det_id], 1)
+                    curr_result = {
+                        "image_id":     curr_coco_id,
+                        "category_id":  dataset.get_source_class_id(final_class_ids[det_id], "coco"),
+                        "bbox":         [bbox[1], bbox[0], bbox[3] - bbox[1], bbox[2] - bbox[0]],
+                        "score":        final_scores[det_id],
+                        "segmentation": maskUtils.encode(np.asfortranarray(final_masks[:, :, det_id]))
+                    }
+                    results.append(curr_result)
+                # visualize result if necessary
+                if model.config.TEST.SAVE_IM:
+                    plt.close()
+                    visualize.display_instances(
+                        image, final_rois, final_masks, final_class_ids, CLASS_NAMES, final_scores)
 
-                im_file = os.path.join(save_im_folder, 'coco_im_id_{:d}.png'.format(curr_coco_id))
-                plt.savefig(im_file, bbox_inches='tight')
+                    im_file = os.path.join(save_im_folder, 'coco_im_id_{:d}.png'.format(curr_coco_id))
+                    plt.savefig(im_file, bbox_inches='tight')
 
-        t_prediction += (time.time() - t_pred_start)
-        cnt += len(curr_image_ids)
+            t_prediction += (time.time() - t_pred_start)
+            cnt += len(curr_image_ids)
 
-        # show progress
-        if iter_ind % show_test_progress_base == 0 or cnt == len(image_ids):
-            print_log('[{:s}][{:s}] evaluation progress \t{:4d} images /{:4d} total ...'.
-                      format(model.config.CTRL.CONFIG_NAME, model_file_name, cnt, len(image_ids)),
-                      log_file, additional_file=train_log_file)
+            # show progress
+            if iter_ind % show_test_progress_base == 0 or cnt == len(image_ids):
+                print_log('[{:s}][{:s}] evaluation progress \t{:4d} images /{:4d} total ...'.
+                          format(model.config.CTRL.CONFIG_NAME, model_file_name, cnt, len(image_ids)),
+                          log_file, additional_file=train_log_file)
 
-    print_log("Prediction time: {:.4f}. Average {:.4f} sec/image".format(
-        t_prediction, t_prediction / len(image_ids)), log_file, additional_file=train_log_file)
-    print_log('Saving results to {:s}'.format(det_res_file), log_file, additional_file=train_log_file)
-    torch.save({'det_result': results}, det_res_file)
+        print_log("Prediction time: {:.4f}. Average {:.4f} sec/image".format(
+            t_prediction, t_prediction / len(image_ids)), log_file, additional_file=train_log_file)
+        print_log('Saving results to {:s}'.format(det_res_file), log_file, additional_file=train_log_file)
+        torch.save({'det_result': results}, det_res_file)
 
     # Evaluate
     print('\nBegin to evaluate ...')

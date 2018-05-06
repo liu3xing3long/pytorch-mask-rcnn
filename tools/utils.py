@@ -86,9 +86,10 @@ def remove(file_name):
         pass
 
 
-def print_log(msg, file=None, init=False, additional_file=None):
+def print_log(msg, file=None, init=False, additional_file=None, quiet_termi=False):
 
-    print(msg)
+    if not quiet_termi:
+        print(msg)
     if file is None:
         pass
     else:
@@ -404,9 +405,10 @@ def update_config_and_load_model(config, network, train_generator=None):
                 os.makedirs(config.MISC.SAVE_IMAGE_DIR)
 
     if use_pretrain:
-        print_log('\tuse pretrain_model; pretrain weights detail:')
+        print_log('\tuse pretrain_model; pretrain weights detail in log file; NOT shown in terminal',
+                  config.MISC.LOG_FILE)
         for key, value in checkpoints.items():
-            print_log('\t\t{}, size: {}'.format(key, value.size()), config.MISC.LOG_FILE)
+            print_log('\t\t{}, size: {}'.format(key, value.size()), config.MISC.LOG_FILE, quiet_termi=True)
     config.display(config.MISC.LOG_FILE)
     network.config = config
 
