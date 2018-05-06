@@ -2,7 +2,7 @@ import torch
 import os
 
 # in terminal, execute python this_file_name.py, the following path is right; however, in MacPycharm, it sees tools folder as root
-base_name = 'results/meta_101_quick_1/train'
+base_name = 'results/meta_101_quick_3/train'
 file_name = 'mask_rcnn_ep_0006_iter_001238.pth'
 # old file
 model_path = os.path.join(base_name, file_name)
@@ -13,6 +13,7 @@ weights = checkpoints['state_dict']
 iter = checkpoints['iter'] - 1
 epoch = checkpoints['epoch']
 
+# Do **NOT** change the following
 # new file
 model_file = os.path.join(base_name, 'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(epoch, iter))
 print('saving file: {}'.format(model_file))
