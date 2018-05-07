@@ -340,7 +340,7 @@ class Dev(nn.Module):
             h, w = y2 - y1, x2 - x1
             area = w*h
 
-            # use either 'roi_level' or 'accu_small_idx' to assign anchors
+            # use **either** 'roi_level' or 'accu_small_idx' to assign anchors
             if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
                 # original plan
                 _image_area = Variable(torch.FloatTensor(
@@ -376,12 +376,17 @@ class Dev(nn.Module):
                 if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
                     small_ix = roi_level == level
                 else:
-                    # new plan!
-                    # these boxes is smaller than RoI output
+                    # new plan: these boxes is smaller than RoI output
                     # Note: on the last scale (5), there might have some big boxes; deem it as supervision (target).
                     _temp = area.squeeze(-1) <= _thres
                     small_ix = _temp - accu_small_idx
                     accu_small_idx = _temp
+
+                # for inference, merge the big box index with small on the last scale
+                if not train_phase and level == 5 and self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                    # can't use big_ix during inference (since it's not generated)
+                    # small_ix = (small_ix + big_ix) > 0
+                    small_ix = ((accu_small_idx == 0) + small_ix) > 0
 
                 if not small_ix.any():
                     # if self.config.CTRL.DEBUG:
@@ -395,7 +400,7 @@ class Dev(nn.Module):
                         big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
                     continue
 
-                # deal with 'big' boxes during train
+                # Decide "big_ix"; deal with 'big' boxes during train
                 if train_phase:
                     if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
                         big_ix = self._find_big_box(level, roi_level)
@@ -427,12 +432,6 @@ class Dev(nn.Module):
                         big_cnt.append(_b_cnt)
                         big_num = big_index.size(0)
 
-                # for inference, merge the big box index with small on the last scale
-                if not train_phase and level == 5 and self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
-                    # can't use big_ix during inference (since it's not generated)
-                    # small_ix = (small_ix + big_ix) > 0
-                    small_ix = ((accu_small_idx == 0) + small_ix) > 0
-
                 # "SMALL" boxes (or simply boxes on scale 4,5) exist
                 # small_index: say, 2670 (actual boxes found in this level) x 2
                 small_index = torch.nonzero(small_ix)
@@ -441,23 +440,25 @@ class Dev(nn.Module):
                 # rois: [bs, num_roi, 4] -> small_boxes [index[0], 4]
                 small_boxes = rois[small_index[:, 0].data, small_index[:, 1].data, :]
 
-                # scale up feature map of smaller boxes
+                # scale up feature map of "smaller" boxes
                 box_ind = small_index[:, 0].int()
                 if _use_upsample:
-                    small_boxes *= self.upsample_fac
+                    # TODO (super important): uncomment the following!!!
+                    # small_boxes *= self.upsample_fac
                     # this is what we are trying to optimize
                     # TODO: consider different upsampler on different scales
                     _feat_maps = self.upsample(curr_feat_maps)
                 else:
                     _feat_maps = curr_feat_maps
 
+                assert small_boxes.max().data[0] <= 1.0
                 # shape: say 473, 256, 7, 7
                 pooled_features = CropAndResizeFunction(
                     self.pool_size, self.pool_size)(_feat_maps, small_boxes, box_ind)
                 pooled.append(pooled_features)
 
-                # mask and feat features are shared with a RoI since the output size is the same
-                # (mask_pool_size=feat_pool_size)
+                # mask and feat features are shared with a RoI
+                # since the output size is the same (mask_pool_size=feat_pool_size)
                 # shape: say 473, 256, 14, 14
                 mask_and_feat = CropAndResizeFunction(
                     self.mask_pool_size, self.mask_pool_size)(_feat_maps, small_boxes, box_ind)
