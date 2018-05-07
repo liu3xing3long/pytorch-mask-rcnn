@@ -81,10 +81,14 @@ class MaskRCNN(nn.Module):
     def _initialize_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Conv2d) or isinstance(m, nn.ConvTranspose2d):
+            if isinstance(m, nn.Conv2d):
                 # n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 # m.weight.data.normal_(0, math.sqrt(2. / n))
                 nn.init.xavier_uniform(m.weight)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.ConvTranspose2d):  # TODO (init): really does not matter
+                nn.init.xavier_normal(m.weight)
                 if m.bias is not None:
                     m.bias.data.zero_()
             elif isinstance(m, nn.BatchNorm2d):
@@ -163,7 +167,10 @@ class MaskRCNN(nn.Module):
             SMALL = final_small_feat[:, _idx].t()  # say 15 x 1024
             final_big_feat_var = Variable(final_big_feat)
             BIG = final_big_feat_var[:, _idx].t()
-
+            # if self.config.CTRL.DEBUG:
+            #     print('comp_cls_num in meta-loss: {}'.format(_idx.size(0)))
+            #     print('SMALL mean: {:.4f}'.format(SMALL.mean().data.cpu()[0]))
+            #     print('BIG mean: {:.4f}'.format(BIG.mean().data.cpu()[0]))
             # compute meta-loss
             if self.config.DEV.LOSS_CHOICE == 'l2':
                 loss = F.mse_loss(SMALL, BIG)   # use sigmoid before comparison; doesn't work
@@ -305,13 +312,12 @@ class MaskRCNN(nn.Module):
 
             gt_class_ids, gt_boxes, gt_masks = input[1], input[2], input[3]
             # 0. init outputs
-            num_rois, mask_sz, num_cls = self.config.ROIS.TRAIN_ROIS_PER_IMAGE, \
-                                            self.config.MRCNN.MASK_SHAPE[0], self.config.DATASET.NUM_CLASSES
+            num_rois, mask_sz, num_cls = \
+                self.config.ROIS.TRAIN_ROIS_PER_IMAGE, self.config.MRCNN.MASK_SHAPE[0], self.config.DATASET.NUM_CLASSES
             mrcnn_class_logits = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls).cuda())
             mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
             mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
-            # gpu_num, scale_num, feat_dim, cls_num
-            # used for meta-loss
+            # gpu_num, scale_num, feat_dim, cls_num; used for meta-loss
             scale_num = 4 if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE else 2
             big_feat = Variable(torch.zeros(1, scale_num, 1024, self.config.DATASET.NUM_CLASSES).cuda())
             big_cnt = Variable(torch.zeros(1, scale_num, 1, self.config.DATASET.NUM_CLASSES).cuda())
@@ -346,12 +352,15 @@ class MaskRCNN(nn.Module):
                     #     assert small_feat.size() == big_feat.size(), 'small_feat size: {}'.format(small_feat.size())
                     #     assert big_cnt.size() == (1, 4, 1, 81), 'big_cnt size: {}'.format(big_cnt.size())
                     #     assert small_cnt.size() == big_cnt.size(), 'small_cnt size: {}'.format(small_cnt.size())
+                    # if self.config.CTRL.DEBUG:
+                    #     print('pooled_cls mean: {:.4f}'.format(_pooled_cls.mean().data.cpu()[0]))
+                    #     print('pooled_mask mean: {:.4f}'.format(_pooled_mask.mean().data.cpu()[0]))
 
                 # classifier
                 mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_pooled_cls)
-                if self.config.CTRL.DEBUG:
-                    a, b = torch.max(mrcnn_cls_logits, dim=-1)
-                    print('train classifier, ROIs pred_cls sum: {}'.format(b.sum().data[0]))
+                # if self.config.CTRL.DEBUG:
+                #     a, b = torch.max(mrcnn_cls_logits, dim=-1)
+                #     print('train classifier, ROIs pred_cls sum: {}'.format(b.sum().data[0]))
 
                 # mask
                 mrcnn_mask = self.mask(_pooled_mask)

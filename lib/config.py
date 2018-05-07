@@ -1,5 +1,6 @@
 from tools.utils import *
 from tools.collections import AttrDict
+import random
 
 
 class Config(object):
@@ -147,7 +148,7 @@ class Config(object):
     # evaluate mAP after each stage
     TRAIN.DO_VALIDATION = True
     TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
-    TRAIN.FORCE_START_EPOCH = 0
+    TRAIN.FORCE_START_EPOCH = 0   # when you resume training and change the batch size, this is useful
     # ==============================
     DEV = AttrDict()
     DEV.SWITCH = False
@@ -181,6 +182,7 @@ class Config(object):
 
     # ==============================
     MISC = AttrDict()
+    MISC.SEED = 2000
     # the following will be set somewhere else
     MISC.LOG_FILE = None
     MISC.DET_RESULT_FILE = None
@@ -205,6 +207,9 @@ class Config(object):
 
     def _set_value(self):
         """Set values of computed attributes. Override all previous settings."""
+
+        random.seed(self.MISC.SEED)
+        torch.manual_seed(self.MISC.SEED)
 
         if self.CTRL.QUICK_VERIFY:
             self.CTRL.SHOW_INTERVAL = 5
