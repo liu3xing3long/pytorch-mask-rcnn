@@ -11,51 +11,16 @@ import math
 import matplotlib.pyplot as plt
 from tools.image_utils import *
 import datetime
-
-# Pre-defined layer regular expressions
-LAYER_REGEX = {
-    # all layers but the backbone
-    "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
-             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
-
-    # From a specific resnet stage and up
-    "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
-
-    "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
-
-    "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
-          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
-    # All layers
-    "all": ".*",
-}
-
-CLASS_NAMES = ['BG', 'person', 'bicycle', 'car', 'motorcycle', 'airplane',
-               'bus', 'train', 'truck', 'boat', 'traffic light',
-               'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird',
-               'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear',
-               'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie',
-               'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
-               'kite', 'baseball bat', 'baseball glove', 'skateboard',
-               'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup',
-               'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
-               'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza',
-               'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed',
-               'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote',
-               'keyboard', 'cell phone', 'microwave', 'oven', 'toaster',
-               'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors',
-               'teddy bear', 'hair drier', 'toothbrush']
-_TEMP = {'heads': 1, '4+': 2, 'all': 3}
+from lib.config import LAYER_REGEX, CLASS_NAMES, TEMP
 
 
-def train_model(input_model, train_generator, valset, optimizer, layers, coco_api=None):
+def train_model(input_model, train_generator, valset, optimizer, layers, vis=None, coco_api=None):
     """
     Args:
         input_model:        nn.DataParallel
         train_generator:    Dataloader
         valset:             Dataset
-        lr:                 The learning rate to train with
+        optimizer:          The learning rate to train with
         layers:
                             (only valid when END2END=False)
                             Allows selecting wich layers to train. It can be:
@@ -66,7 +31,8 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
                                 3+: Train Resnet stage 3 and up
                                 4+: Train Resnet stage 4 and up
                                 5+: Train Resnet stage 5 and up
-        coco_api            validation api
+        vis:
+        coco_api:            validation api
     """
     stage_name = layers.upper()
     if isinstance(input_model, nn.DataParallel):
@@ -77,7 +43,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
 
     num_train_im = train_generator.dataset.dataset.num_images
     iter_per_epoch = math.floor(num_train_im/model.config.TRAIN.BATCH_SIZE)
-    total_ep_till_now = sum(model.config.TRAIN.SCHEDULE[:_TEMP[layers]])
+    total_ep_till_now = sum(model.config.TRAIN.SCHEDULE[:TEMP[layers]])
 
     # check details
     if (num_train_im % model.config.TRAIN.BATCH_SIZE) % model.config.MISC.GPU_COUNT != 0:
@@ -93,10 +59,11 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
 
     print_log('\n[Current stage: {:s}] start training at epoch {:d}, iter {:d}. \n'
               'Total epoch in this stage: {:d}.'.format(stage_name,
-                model.epoch, model.iter, model.config.TRAIN.SCHEDULE[_TEMP[layers]-1]),
+                model.epoch, model.iter, model.config.TRAIN.SCHEDULE[TEMP[layers]-1]),
                 model.config.MISC.LOG_FILE)
 
     # TODO(low): try all* case to fit the largest possible batch size in one gpu
+    # Do NOT forget to modify LAYER_REGEX when adding new layers!
     if not model.config.TRAIN.END2END:
         if layers in LAYER_REGEX.keys():
             regx = LAYER_REGEX[layers]
@@ -115,7 +82,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
         loss = train_epoch_new(input_model, train_generator, optimizer,
                                stage_name=stage_name, epoch_str=epoch_str,
                                epoch=ep, start_iter=model.iter, total_iter=iter_per_epoch,
-                               valset=valset, coco_api=coco_api)
+                               valset=valset, coco_api=coco_api, vis=vis)
 
         # TODO(mid): visualize the loss with resume concerned; include visdom
         model.loss_history.append(loss)
@@ -147,7 +114,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, coco_ap
     if model.config.TRAIN.DO_VALIDATION:
         print_log('\nDo validation at end of current stage [{:s}] (model ep {:d} iter {:d}) ...'.
                   format(stage_name.upper(), total_ep_till_now, iter_per_epoch), model.config.MISC.LOG_FILE)
-        test_model(input_model, valset, coco_api, during_train=True, epoch=ep, iter=iter_per_epoch)
+        test_model(input_model, valset, coco_api, during_train=True, epoch=ep, iter=iter_per_epoch, vis=vis)
 
 
 def train_epoch_new(input_model, data_loader, optimizer, **args):
@@ -163,6 +130,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # single-gpu
         model = input_model
     config = model.config
+    vis = args['vis']
 
     loss_sum = 0
     start_iter, total_iter, curr_ep = args['start_iter'], args['total_iter'], args['epoch']
@@ -296,7 +264,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
                       format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
             test_model(input_model, args['valset'], args['coco_api'],
-                       during_train=True, epoch=args['epoch'], iter=iter_ind)
+                       during_train=True, epoch=args['epoch'], iter=iter_ind, vis=vis)
 
     return loss_sum
 
@@ -317,6 +285,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
         # single-gpu
         model = input_model
 
+    vis = args['vis']
     # set up save and log folder for both train and inference
     if args['during_train']:
         model_file_name = 'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(args['epoch'], args['iter'])

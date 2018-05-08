@@ -2,6 +2,43 @@ from tools.utils import *
 from tools.collections import AttrDict
 import random
 
+# Pre-defined layer regular expressions
+LAYER_REGEX = {
+    # all layers but the backbone
+    "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
+             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+
+    # From a specific resnet stage and up
+    "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+
+    "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+
+    "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
+          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+    # All layers
+    "all": ".*",
+}
+
+CLASS_NAMES = ['BG', 'person', 'bicycle', 'car', 'motorcycle', 'airplane',
+               'bus', 'train', 'truck', 'boat', 'traffic light',
+               'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird',
+               'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear',
+               'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie',
+               'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
+               'kite', 'baseball bat', 'baseball glove', 'skateboard',
+               'surfboard', 'tennis racket', 'bottle', 'wine glass', 'cup',
+               'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+               'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza',
+               'donut', 'cake', 'chair', 'couch', 'potted plant', 'bed',
+               'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote',
+               'keyboard', 'cell phone', 'microwave', 'oven', 'toaster',
+               'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors',
+               'teddy bear', 'hair drier', 'toothbrush']
+
+TEMP = {'heads': 1, '4+': 2, 'all': 3}
+
 
 class Config(object):
     """Base configuration class. For custom configurations, create a
@@ -177,12 +214,12 @@ class Config(object):
     CTRL.QUICK_VERIFY = False   # train on minival and test also on minival
 
     CTRL.SHOW_INTERVAL = 50
-    CTRL.USE_VISDOM = False
     CTRL.PROFILE_ANALYSIS = False  # show time for some pass
 
     # ==============================
     MISC = AttrDict()
     MISC.SEED = 2000
+    MISC.USE_VISDOM = False
     # the following will be set somewhere else
     MISC.LOG_FILE = None
     MISC.DET_RESULT_FILE = None
@@ -250,6 +287,13 @@ class Config(object):
         if not self.TRAIN.LR_WARM_UP:
             del self.TRAIN['LR_WP_ITER']
             del self.TRAIN['LR_WP_FACTOR']
+
+        if self.MISC.USE_VISDOM:
+            self.MISC.VIS.PORT = 4000
+            self.MISC.VIS.LINE = 100
+            self.MISC.VIS.TXT = 200
+            self.MISC.VIS.IMG = 300
+            self.MISC.VIS.LOSS_LEGEND = ['total_loss', 'mrcnn_cls']
 
 
 class CocoConfig(Config):
