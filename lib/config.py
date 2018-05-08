@@ -126,7 +126,11 @@ class Config(object):
     # Bounding box refinement standard deviation for RPN and final detections.
     DATA.BBOX_STD_DEV = np.array([0.1, 0.1, 0.2, 0.2])
     DATA.IMAGE_SHAPE = []
-    DATA.LOADER_WORKER_NUM = 8
+    # Quote from "roytseng-tw/Detectron.pytorch":
+    # Number of Python threads to use for the data loader (warning: using too many
+    # threads can cause GIL-based interference with Python Ops leading to *slower*
+    # training; 4 seems to be the sweet spot in our experience)
+    DATA.LOADER_WORKER_NUM = 4
 
     # ==================================
     ROIS = AttrDict()
@@ -319,6 +323,7 @@ class CocoConfig(Config):
         if args.config_name == 'fuck':
 
             # debug mode on local pc
+            # self.CTRL.PROFILE_ANALYSIS = True
             self.CTRL.QUICK_VERIFY = True
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1

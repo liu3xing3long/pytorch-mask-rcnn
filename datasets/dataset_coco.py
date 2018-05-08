@@ -477,7 +477,8 @@ def get_data(config):
     train_generator = None if config.CTRL.PHASE == 'inference' else \
         torch.utils.data.DataLoader(dset_train, batch_size=config.TRAIN.BATCH_SIZE,
                                     shuffle=True, num_workers=config.DATA.LOADER_WORKER_NUM,
-                                    collate_fn=detection_collate, drop_last=True, pin_memory=True)
+                                    collate_fn=detection_collate)
+                                    # collate_fn=detection_collate, drop_last=True, pin_memory=True)
 
     return train_generator, dset_val, val_coco_api
 
