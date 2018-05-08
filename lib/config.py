@@ -141,7 +141,7 @@ class Config(object):
     # Eqn.(1) in FPN paper
     # useless when DEV.ASSIGN_BOX_ON_ALL_SCALE is True
     ROIS.ASSIGN_ANCHOR_BASE = 224.
-    # TODO: regular roi_pooling
+    # TODO: incorporate regular roi_pooling
     ROIS.METHOD = 'roi_align'
 
     # ==================================
@@ -186,6 +186,7 @@ class Config(object):
     TRAIN.DO_VALIDATION = True
     TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
     TRAIN.FORCE_START_EPOCH = 0   # when you resume training and change the batch size, this is useful
+
     # ==============================
     DEV = AttrDict()
     DEV.SWITCH = False
@@ -194,7 +195,7 @@ class Config(object):
     # set to <= 0 if trained from the very first iter
     DEV.EFFECT_AFER_EP_PERCENT = 0.
     DEV.UPSAMPLE_FAC = 2.
-    # TODO (high, urgent) 'ot'; supported: 'kl', 'l2'
+    # TODO (high, urgent) 'ot'
     DEV.LOSS_CHOICE = 'l1'
     DEV.LOSS_FAC = 0.5
     # set to 1 if use all historic data
@@ -205,6 +206,8 @@ class Config(object):
     DEV.DIS_REG_LOSS = False
     # assign anchors on all scales and split anchor based on roi-pooling output size
     DEV.ASSIGN_BOX_ON_ALL_SCALE = False
+    DEV.BASELINE = False
+    DEV.MULTI_UPSAMPLER = False
 
     # ==============================
     CTRL = AttrDict()
@@ -322,11 +325,12 @@ class CocoConfig(Config):
             self.DEV.BUFFER_SIZE = 1
             self.DEV.LOSS_FAC = 100
             self.DEV.LOSS_CHOICE = 'kl'
+            self.TRAIN.BATCH_SIZE = 6
             # self.DEV.DIS_REG_LOSS = True
             self.DEV.ASSIGN_BOX_ON_ALL_SCALE = True
+            # self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
 
-            self.TRAIN.BATCH_SIZE = 6
-            self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
+            self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
             _ignore_yaml = True
 
         elif args.config_name.startswith('base_101'):

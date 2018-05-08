@@ -136,7 +136,7 @@ class MaskRCNN(nn.Module):
                       log_file, quiet_termi=True)
 
     def meta_loss(self, feat_input):
-        """the loss is computed in GPU 0"""
+        """the loss is computed in GPU 0; called in workflow.py *only*."""
         # the direct outcome (feat_out) from 'forward() of Dev class in sub_module.py'
         [big_feat, big_cnt, small_feat, small_cnt] = feat_input
         # final_small_feat, 1024 x 81; final_small_cnt, 1 x 81
@@ -287,7 +287,6 @@ class MaskRCNN(nn.Module):
 
             assert _proposals.sum().data[0] != 0
             _pooled_cls, _, _ = self.dev_roi(_mrcnn_feature_maps, _proposals)
-            # TODO: mrcnn_class, highest scores always at background for meta_101_quick_3
             _, mrcnn_class, mrcnn_bbox = self.classifier(_pooled_cls)
             # Detections
             # input[1], image_metas, (3, 90), Variable
@@ -345,7 +344,7 @@ class MaskRCNN(nn.Module):
                 # _pooled_cls: 600 (bsx200), 256, 7, 7
                 _pooled_cls, _pooled_mask, _feat_out = \
                     self.dev_roi(_mrcnn_feature_maps, _rois, target_class_ids)
-                if self.config.DEV.SWITCH:
+                if self.config.DEV.SWITCH and not self.config.DEV.BASELINE:
                     [big_feat, big_cnt, small_feat, small_cnt] = _feat_out
                     # if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
                     #     assert big_feat.size() == (1, 4, 1024, 81), 'big_feat size: {}'.format(big_feat.size())
@@ -370,9 +369,7 @@ class MaskRCNN(nn.Module):
                 mrcnn_bbox = mrcnn_bbox.view(sample_per_gpu, -1, mrcnn_bbox.size(1), mrcnn_bbox.size(2))
                 mrcnn_mask = mrcnn_mask.view(
                     sample_per_gpu, -1, mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
-                # (old comment left here)
-                # if **ALL** samples within the batch has empty "_rois", skip the heads and output zero predictions.
-                # this is really rare case. otherwise, pass the heads even some samples don't have _rois.
+
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass mask and cls generation'.format(curr_gpu_id))
 

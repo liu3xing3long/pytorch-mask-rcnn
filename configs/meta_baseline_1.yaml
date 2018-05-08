@@ -10,6 +10,8 @@ DATA:
 DEV:
   SWITCH: True
   BASELINE: True
+ROIS:
+  ASSIGN_ANCHOR_BASE: 40
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:

@@ -93,7 +93,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, vis=Non
         model_file = os.path.join(model.config.MISC.RESULT_FOLDER,
                                   'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(ep, iter_per_epoch))
         print_log('Epoch ends, saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
-        if model.config.DEV.SWITCH:
+        if model.config.DEV.SWITCH and not model.config.DEV.BASELINE:  # has meta-loss
             buffer, buffer_cnt = model.buffer.cpu().numpy(), model.buffer_cnt.cpu().numpy()
         else:
             buffer, buffer_cnt = [], []
@@ -150,7 +150,7 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
     # ITERATION LOOP
     for iter_ind in range(start_iter, total_iter+1):
 
-        if config.DEV.SWITCH:
+        if config.DEV.SWITCH and not config.DEV.BASELINE:
             if iter_ind > do_meta_after_iter:
                 do_meta = True
                 if SHOW_META_LOSS:
@@ -174,13 +174,13 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
             t = time.time()
 
         # FORWARD PASS
-        # the loss shape: gpu_num x 5
+        # the loss shape: gpu_num x 5; meta_loss *NOT* included
         merged_loss, big_feat, big_cnt, small_feat, small_cnt = input_model(
             [images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
         detailed_loss = torch.mean(merged_loss, dim=0)
 
         # meta-loss
-        if config.DEV.SWITCH:
+        if config.DEV.SWITCH and not config.DEV.BASELINE:
             if config.DEV.DIS_REG_LOSS:
                 detailed_loss.data[3] = 0  # roi_bbox
                 detailed_loss.data[1] = 0  # rpn_bbox
@@ -222,12 +222,12 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         # Progress
         if iter_ind % config.CTRL.SHOW_INTERVAL == 0 or iter_ind == args['start_iter']:
             iter_time = time.time() - curr_iter_time_start
-            days, hrs = compute_left_time(iter_time, curr_ep,
-                                          sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
-            suffix = ' - meta_loss: {:.3f}' if config.DEV.SWITCH else '{:s}'
-            last_output = '' if not config.DEV.SWITCH else meta_loss.data.cpu()[0]
-            config_name_str = config.CTRL.CONFIG_NAME if not config.CTRL.QUICK_VERIFY \
-                            else config.CTRL.CONFIG_NAME + ', quick verify mode'
+            days, hrs = compute_left_time(
+                iter_time, curr_ep, sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
+            suffix = ' - meta_loss: {:.3f}' if config.DEV.SWITCH and not config.DEV.BASELINE else '{:s}'
+            last_output = meta_loss.data.cpu()[0] if config.DEV.SWITCH and not config.DEV.BASELINE else ''
+            config_name_str = config.CTRL.CONFIG_NAME if not config.CTRL.QUICK_VERIFY else \
+                config.CTRL.CONFIG_NAME + ', quick verify mode'
             progress_str = '[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:2.1f} hrs] (iter_t: {:.2f})' \
                            '\tlr: {:.6f} | loss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} ' \
                            '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}' + suffix
@@ -245,10 +245,10 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
 
         # save model
         if iter_ind % save_iter_base == 0:
-            model_file = os.path.join(config.MISC.RESULT_FOLDER,
-                                      'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(curr_ep, iter_ind))
+            model_file = os.path.join(
+                config.MISC.RESULT_FOLDER, 'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(curr_ep, iter_ind))
             print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
-            if config.DEV.SWITCH:
+            if config.DEV.SWITCH and not config.DEV.BASELINE:  # has meta-loss
                 buffer, buffer_cnt = model.buffer.cpu().numpy(), model.buffer_cnt.cpu().numpy()
             else:
                 buffer, buffer_cnt = [], []

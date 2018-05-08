@@ -278,7 +278,8 @@ class Dev(nn.Module):
             self.upsample_fac = config.DEV.UPSAMPLE_FAC
             assert self.feat_pool_size % 2 == 0, 'pool size of feature branch has to be even'
 
-            # define upsampler
+            # define **upsampler**
+            # TODO: consider different upsampler on different scales
             if self.upsample_fac == 2.0:
                 self.upsample = nn.Sequential(*[
                     nn.ConvTranspose2d(self.depth, self.depth, kernel_size=3, stride=2, padding=1, output_padding=1),
@@ -290,26 +291,28 @@ class Dev(nn.Module):
                 ])
             else:
                 raise Exception('unsupported upsampling factor')
-            # define feature extractor to be compared
-            _ksize = int(self.feat_pool_size / 2)
-            _layer_list = [
-                nn.Conv2d(self.depth, 512, kernel_size=3, padding=1, stride=2),   # halve the map
-                nn.BatchNorm2d(512),
-                nn.ReLU(inplace=True),
-                nn.Conv2d(512, 1024, kernel_size=_ksize, stride=1),
-                # nn.BatchNorm2d(1024),
-                # nn.ReLU(inplace=True),
-                # nn.Conv2d(1024, 1024, kernel_size=1, stride=1),
-            ]
-            # shape: say 20, 1024, 1, 1
-            # TODO (consider this sigmoid vs softmax)
-            if config.DEV.LOSS_CHOICE == 'l2':
-                _layer_list.append(nn.Sigmoid())
-            elif config.DEV.LOSS_CHOICE == 'l1':
-                _layer_list.append(nn.Sigmoid())
-            elif config.DEV.LOSS_CHOICE == 'kl':
-                _layer_list.append(nn.Softmax(dim=1))
-            self.feat_extract = nn.Sequential(*_layer_list)
+
+            # define **feature extractor** to be compared
+            if not self.config.DEV.BASELINE:
+                _ksize = int(self.feat_pool_size / 2)
+                _layer_list = [
+                    nn.Conv2d(self.depth, 512, kernel_size=3, padding=1, stride=2),   # halve the map
+                    nn.BatchNorm2d(512),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(512, 1024, kernel_size=_ksize, stride=1),
+                    # nn.BatchNorm2d(1024),
+                    # nn.ReLU(inplace=True),
+                    # nn.Conv2d(1024, 1024, kernel_size=1, stride=1),
+                ]
+                # shape: say 20, 1024, 1, 1
+                # TODO (consider this sigmoid vs softmax)
+                if config.DEV.LOSS_CHOICE == 'l2':
+                    _layer_list.append(nn.Sigmoid())
+                elif config.DEV.LOSS_CHOICE == 'l1':
+                    _layer_list.append(nn.Sigmoid())
+                elif config.DEV.LOSS_CHOICE == 'kl':
+                    _layer_list.append(nn.Softmax(dim=1))
+                self.feat_extract = nn.Sequential(*_layer_list)
 
     @staticmethod
     def _find_big_box(level, roi_level):
@@ -345,7 +348,7 @@ class Dev(nn.Module):
                 # original plan
                 _image_area = Variable(torch.FloatTensor(
                     [float(self.image_shape[0]*self.image_shape[1])]), requires_grad=False).cuda()
-                roi_level = 4 + utils.log2(torch.sqrt(h*w)/(base/torch.sqrt(_image_area)))
+                roi_level = 4 + utils.log2(torch.sqrt(area)/(base/torch.sqrt(_image_area)))
                 roi_level = roi_level.round().int()
                 # in case batch size =1, we keep that dim
                 roi_level = roi_level.clamp(2, 5).squeeze(dim=-1)   # size: [bs, num_roi], say [3, 200]
@@ -360,7 +363,7 @@ class Dev(nn.Module):
 
             pooled, mask, box_to_level = [], [], []
             big_feat, big_cnt, small_feat, small_cnt = [], [], [], []   # to generate feat_out
-            # Loop through levels and apply ROI pooling to each.
+            # LOOP through levels and apply ROI pooling to each.
             # P2 to P5, with 2 being the most coarse map
             for i, level in enumerate(range(2, 6)):
 
@@ -370,6 +373,8 @@ class Dev(nn.Module):
                     _use_upsample = True if level in [2, 3] else False   # original plan
                 else:
                     _use_upsample = True  # conduct meta-loss on each scale
+                if self.config.DEV.BASELINE:
+                    _use_upsample = True
 
                 # Decide "small_ix": bs, num_roi
                 _thres = (self.feat_pool_size / curr_feat_maps.size(-1))**2
@@ -383,7 +388,7 @@ class Dev(nn.Module):
                     accu_small_idx = _temp
 
                 # for inference, merge the big box index with small on the last scale
-                if not train_phase and level == 5 and self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE and not train_phase and level == 5:
                     # can't use big_ix during inference (since it's not generated)
                     # small_ix = (small_ix + big_ix) > 0
                     small_ix = ((accu_small_idx == 0) + small_ix) > 0
@@ -393,7 +398,7 @@ class Dev(nn.Module):
                     #     print('\tscale {:d} (thres: {:.4f}), NO (small) num_box, skip this scale ...'
                     #           .format(level, _thres))
                     # if there are no "small" boxes, we won't compute stats of *both* small and big on this scale
-                    if _use_upsample and train_phase:
+                    if _use_upsample and train_phase and not self.config.DEV.BASELINE:
                         small_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
                         small_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
                         big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
@@ -401,7 +406,7 @@ class Dev(nn.Module):
                     continue
 
                 # Decide "big_ix"; deal with 'big' boxes during train
-                if train_phase:
+                if train_phase and not self.config.DEV.BASELINE:
                     if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
                         big_ix = self._find_big_box(level, roi_level)
                     else:
@@ -444,7 +449,6 @@ class Dev(nn.Module):
                 box_ind = small_index[:, 0].int()
                 if _use_upsample:
                     # small_boxes *= self.upsample_fac
-                    # TODO: consider different upsampler on different scales
                     _feat_maps = self.upsample(curr_feat_maps)
                 else:
                     _feat_maps = curr_feat_maps
@@ -463,7 +467,7 @@ class Dev(nn.Module):
                 mask.append(mask_and_feat)
 
                 # for scale 4 and 5, we don't do meta-supervise
-                if _use_upsample and train_phase:
+                if _use_upsample and train_phase and not self.config.DEV.BASELINE:
                     # process big-small-supervise (small part)
                     small_box_gt = roi_cls_gt[small_index[:, 0].data, small_index[:, 1].data]
                     small_output = self.feat_extract(mask_and_feat)
@@ -476,7 +480,7 @@ class Dev(nn.Module):
             # SCALE LOOP ENDS
 
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
-            if train_phase:
+            if train_phase and not self.config.DEV.BASELINE:
                 feat_out = [torch.stack(big_feat).detach().unsqueeze(dim=0),
                             torch.stack(big_cnt).unsqueeze(dim=0),
                             torch.stack(small_feat).unsqueeze(dim=0),
