@@ -117,6 +117,10 @@ def train_model(input_model, train_generator, valset, optimizer, layers, vis=Non
         test_model(input_model, valset, coco_api, during_train=True, epoch=ep, iter=iter_per_epoch, vis=vis)
 
 
+SEE_ONE_EXAMPLE = False
+EXAMPLE_COCO_IND = 510033
+
+
 def train_epoch_new(input_model, data_loader, optimizer, **args):
     """new training flow scheme
     Args:
@@ -162,21 +166,33 @@ def train_epoch_new(input_model, data_loader, optimizer, **args):
         curr_iter_time_start = time.time()
         lr = adjust_lr(optimizer, curr_ep, iter_ind, config.TRAIN)   # return lr to show in console
 
-        inputs = next(data_iterator)
+        inputs = next(data_iterator)    # TODO: takes super long time!!!(when bs is large, like 16)
         images = Variable(inputs[0].cuda())
         image_metas = Variable(inputs[-1].cuda())
-        # pad with zeros
-        gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
 
-        if config.CTRL.PROFILE_ANALYSIS:
-            print('\ncurr_iter: ', iter_ind)
-            print('fetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
-            t = time.time()
+        if SEE_ONE_EXAMPLE:
+            # Make sure *all* train data could be seen
+            assert image_metas.size(0) == 1, 'you need to set bs to be 1'
+            # bs = image_metas.size(0)
+            # _list = [image_metas[i][-1].data.cpu()[0] for i in range(bs)]
+            assert EXAMPLE_COCO_IND == image_metas[0][-1].data.cpu()[0]
+            gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
+            input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')  # DEBUG HERE
 
-        # FORWARD PASS
-        # the loss shape: gpu_num x 5; meta_loss *NOT* included
-        merged_loss, big_feat, big_cnt, small_feat, small_cnt = input_model(
-            [images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
+        else:
+            # pad with zeros
+            gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
+
+            if config.CTRL.PROFILE_ANALYSIS:
+                print('\ncurr_iter: ', iter_ind)
+                print('fetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
+                t = time.time()
+
+            # FORWARD PASS
+            # the loss shape: gpu_num x 5; meta_loss *NOT* included
+            merged_loss, big_feat, big_cnt, small_feat, small_cnt = input_model(
+                [images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
+
         detailed_loss = torch.mean(merged_loss, dim=0)
 
         # meta-loss

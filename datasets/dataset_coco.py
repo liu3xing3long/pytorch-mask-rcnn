@@ -10,6 +10,7 @@ from lib.layers import *
 import torch
 import tools.image_utils as utils
 import torch.utils.data
+from lib.workflow import SEE_ONE_EXAMPLE, EXAMPLE_COCO_IND
 
 
 class Dataset(object):
@@ -388,6 +389,13 @@ class COCODataset(torch.utils.data.Dataset):
         self.augment = augment
 
     def __getitem__(self, image_index):
+
+        if SEE_ONE_EXAMPLE:
+            # ignore input image_index
+            set_len = len(self.dataset.image_info)
+            coco_id_list = [self.dataset.image_info[i]['id'] for i in range(set_len)]
+            image_index = coco_id_list.index(EXAMPLE_COCO_IND)
+
         # Get GT bounding boxes and masks for image.
         image_id = self.dataset.image_ids[image_index]
 
