@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torch.autograd import Variable
+EPS = 10e-20
 
 
 def apply_box_deltas(boxes, deltas):
@@ -134,7 +135,7 @@ def compute_iou(boxes1, boxes2):
     b2_area = (b2_y2 - b2_y1) * (b2_x2 - b2_x1)
     union = b1_area[:, 0] + b2_area[:, 0] - intersection
     # 4. Compute IoU and reshape to [boxes1, boxes2]
-    iou = intersection / union
+    iou = intersection / (union + EPS)
     overlaps = iou.view(boxes2_repeat, boxes1_repeat)
     return overlaps
 
