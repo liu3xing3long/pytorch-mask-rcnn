@@ -305,8 +305,8 @@ class Dev(nn.Module):
             # TODO (consider this sigmoid vs softmax)
             if config.DEV.LOSS_CHOICE == 'l2':
                 _layer_list.append(nn.Sigmoid())
-            # elif config.DEV.LOSS_CHOICE == 'l1':
-            #     _layer_list.append(nn.Sigmoid())
+            elif config.DEV.LOSS_CHOICE == 'l1':
+                _layer_list.append(nn.Sigmoid())
             elif config.DEV.LOSS_CHOICE == 'kl':
                 _layer_list.append(nn.Softmax(dim=1))
             self.feat_extract = nn.Sequential(*_layer_list)
@@ -443,9 +443,7 @@ class Dev(nn.Module):
                 # scale up feature map of "smaller" boxes
                 box_ind = small_index[:, 0].int()
                 if _use_upsample:
-                    # TODO (super important): uncomment the following!!!
                     # small_boxes *= self.upsample_fac
-                    # this is what we are trying to optimize
                     # TODO: consider different upsampler on different scales
                     _feat_maps = self.upsample(curr_feat_maps)
                 else:

@@ -1,8 +1,9 @@
 .DS_Store
 *.png
+!demo/assets/*.png
 *.swp
 *.txt*
-!tools
+!tools/*.txt
 datasets/coco
 .idea/
 *.pth
@@ -11,3 +12,4 @@ datasets/coco
 *.o
 *_ext*
 *.zip
+tmp
