@@ -170,7 +170,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
         # inputs = next(data_iterator)
         images = Variable(inputs[0].cuda())
         image_metas = Variable(inputs[-1].cuda())
-        print('fetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
+        # print('fetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
 
         if SEE_ONE_EXAMPLE:
             # Make sure *all* train data could be seen
