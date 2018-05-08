@@ -10,8 +10,8 @@ DATA:
 DEV:
   SWITCH: True
   BUFFER_SIZE: 1  # use all history
-  LOSS_CHOICE: 'l2'
-  LOSS_FAC: .5
+  LOSS_CHOICE: 'kl'
+  LOSS_FAC: 200.
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:
