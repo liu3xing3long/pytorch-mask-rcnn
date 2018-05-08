@@ -173,12 +173,12 @@ class MaskRCNN(nn.Module):
             #     print('BIG mean: {:.4f}'.format(BIG.mean().data.cpu()[0]))
             # compute meta-loss
             if self.config.DEV.LOSS_CHOICE == 'l2':
-                loss = F.mse_loss(SMALL, BIG)   # use sigmoid before comparison; doesn't work
+                loss = F.mse_loss(SMALL, BIG)   # use sigmoid before comparison
 
             elif self.config.DEV.LOSS_CHOICE == 'kl':
-                loss = F.kl_div(torch.log(SMALL), BIG)   # use softmax, meta_loss_fac=200
+                loss = F.kl_div(torch.log(SMALL), BIG)   # use softmax
 
-            elif self.config.DEV.LOSS_CHOICE == 'l1':   # use raw features directly, meta_loss_fac=.5
+            elif self.config.DEV.LOSS_CHOICE == 'l1':   # use raw features directly
                 loss = F.l1_loss(SMALL, BIG)
 
             elif self.config.DEV.LOSS_CHOICE == 'ot':

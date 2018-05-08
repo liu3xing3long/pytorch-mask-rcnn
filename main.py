@@ -4,6 +4,7 @@ from lib.config import CocoConfig
 from lib.workflow import *
 from tools.utils import update_config_and_load_model, set_optimizer
 from datasets.dataset_coco import get_data
+from tools.visualize import Visualizer
 
 if __name__ == '__main__':
 
@@ -53,6 +54,8 @@ if __name__ == '__main__':
 
     # Get data
     train_data, val_data, val_api = get_data(config)
+    # Visualizer
+    vis = Visualizer(config, train_data, val_data)
 
     # Select weights file to load (MUST be put at the end)
     # update start epoch and iter if resume
@@ -79,26 +82,23 @@ if __name__ == '__main__':
         # Training - Stage 1
         print("\nTraining network heads")
         train_model(model, train_data, val_data,
-                    optimizer=optimizer,
-                    layers='heads', coco_api=val_api)
+                    optimizer=optimizer, layers='heads', coco_api=val_api, vis=vis)
 
         # Training - Stage 2
         # Finetune layers from ResNet stage 4 and up
         print("\nFinetune Resnet stage 4 and up")
         train_model(model, train_data, val_data,
-                    optimizer=optimizer,
-                    layers='4+', coco_api=val_api)
+                    optimizer=optimizer, layers='4+', coco_api=val_api, vis=vis)
 
         # Training - Stage 3
         # Fine tune all layers
         print("\nFine tune all layers")
         train_model(model, train_data, val_data,
-                    optimizer=optimizer,
-                    layers='all', coco_api=val_api)
+                    optimizer=optimizer, layers='all', coco_api=val_api, vis=vis)
 
     elif args.phase == 'inference':
 
-        test_model(model, val_data, val_api, during_train=False)
+        test_model(model, val_data, val_api, during_train=False, vis=vis)
     else:
         print("'{}' is not recognized. "
               "Use 'train' or 'evaluate'".format(args.phase))
