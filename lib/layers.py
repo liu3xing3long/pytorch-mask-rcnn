@@ -434,14 +434,18 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     return rois_out, target_class_ids, target_deltas, target_mask
 
 
-############################################################
-#  RPN target layer (previously in __get_item__)
-############################################################
+##############################################################################
+#  RPN target layer (previously in __get_item__ now in forward() Train phase)
+##############################################################################
 def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
-
+    """per sample op."""
     # sample_id is the id within each GPU
     curr_sample_id = args[0]
     coco_im_id = args[1].data.cpu().numpy()
+
+    if SEE_ONE_EXAMPLE and EXAMPLE_COCO_IND == coco_im_id[curr_sample_id]:
+        print('this is the image you want to see: {}'.format(EXAMPLE_COCO_IND))
+        a = 1
 
     # RPN Match: 1 = positive anchor, -1 = negative anchor, 0 = neutral
     target_rpn_match = Variable(torch.zeros(anchors.size(0)).cuda(), requires_grad=False)

@@ -357,6 +357,8 @@ class Dataset(object):
 
 
 class COCODataset(torch.utils.data.Dataset):
+    ONLY_ONCE = True
+
     def __init__(self, config, augment=True):
         """A generator that returns images and corresponding target class ids,
             bounding box deltas, and masks.
@@ -390,11 +392,12 @@ class COCODataset(torch.utils.data.Dataset):
 
     def __getitem__(self, image_index):
 
-        if SEE_ONE_EXAMPLE:
+        if SEE_ONE_EXAMPLE and self.ONLY_ONCE:
             # ignore input image_index
             set_len = len(self.dataset.image_info)
             coco_id_list = [self.dataset.image_info[i]['id'] for i in range(set_len)]
             image_index = coco_id_list.index(EXAMPLE_COCO_IND)
+            self.ONLY_ONCE = False
 
         # Get GT bounding boxes and masks for image.
         image_id = self.dataset.image_ids[image_index]
