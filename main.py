@@ -17,15 +17,13 @@ if __name__ == '__main__':
 
     parser.add_argument('--config_name',
                         required=False,
-                        default='')
-                        # default='all_new')
-                        # default='hyli_default_old')
-                        # default='fuck')
+                        # default='')
+                        default='local_pc')
                         # default='base_101_quick')
 
     parser.add_argument('--config_file',
-                        # default=None)
-                        default='configs/meta_102_quick_1.yaml')
+                        default=None)
+                        # default='configs/meta_102_quick_1.yaml')
                         # default='configs/meta_101_quick_3.yaml')
 
     # debug mode: set train_data to val_data for faster data loading.
@@ -35,7 +33,7 @@ if __name__ == '__main__':
                         default=1, type=int)  # no bool type here please
 
     parser.add_argument('--device_id',
-                        default='0', type=str)
+                        default='0,1', type=str)
 
     parser.add_argument('opts',
                         help='See lib/config.py for all options',
@@ -54,12 +52,13 @@ if __name__ == '__main__':
 
     # Get data
     train_data, val_data, val_api = get_data(config)
-    # Visualizer
-    vis = Visualizer(config, train_data, val_data)
 
     # Select weights file to load (MUST be put at the end)
     # update start epoch and iter if resume
     config, model = update_config_and_load_model(config, model, train_data)
+
+    # Visualizer
+    vis = Visualizer(config, model, val_data)
 
     print_log('print network structure in log file [NOT shown in terminal] ...', config.MISC.LOG_FILE)
     print_log(model, config.MISC.LOG_FILE, quiet_termi=True)

@@ -2,20 +2,14 @@ import re
 from lib.sub_module import *
 import torch.nn as nn
 from lib.layers import *
-EPS = 10e-20
+from lib.OT_module import OptTrans
+EPS = 1e-20
 
 
 class MaskRCNN(nn.Module):
     def __init__(self, config):
-        """
-            config: A Sub-class of the Config class
-            model_dir: Directory to save training results and trained weights
-        """
         super(MaskRCNN, self).__init__()
         self.config = config
-        self.loss_history = []
-        self.val_loss_history = []
-
         self._build(config=config)
         self._initialize_weights()
 
@@ -61,6 +55,8 @@ class MaskRCNN(nn.Module):
         self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, input_ch=256)
         # RoI
         self.dev_roi = Dev(config, depth=256)
+        if self.config.DEV.LOSS_CHOICE == 'ot':
+            self.ot_loss = OptTrans(self.config, ch_x=1024, ch_y=1024)
 
         # FPN Classifier
         self.classifier = \
@@ -81,17 +77,17 @@ class MaskRCNN(nn.Module):
     def _initialize_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv1d):
                 # n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 # m.weight.data.normal_(0, math.sqrt(2. / n))
                 nn.init.xavier_uniform(m.weight)
                 if m.bias is not None:
                     m.bias.data.zero_()
-            elif isinstance(m, nn.ConvTranspose2d):  # TODO (init): really does not matter
+            elif isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.ConvTranspose1d):
                 nn.init.xavier_normal(m.weight)
                 if m.bias is not None:
                     m.bias.data.zero_()
-            elif isinstance(m, nn.BatchNorm2d):
+            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm1d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
             elif isinstance(m, nn.Linear):
@@ -106,6 +102,7 @@ class MaskRCNN(nn.Module):
             self.buffer_cnt = torch.zeros(self.config.DEV.BUFFER_SIZE, 1, self.config.DATASET.NUM_CLASSES).cuda()
 
         elif self.config.DEV.INIT_BUFFER_WEIGHT == 'coco_pretrain':
+            # TODO: init buffer
             print_log('init buffer from pretrain model ...', log_file)
             NotImplementedError()
 
@@ -136,7 +133,7 @@ class MaskRCNN(nn.Module):
                       log_file, quiet_termi=True)
 
     def meta_loss(self, feat_input):
-        """the loss is computed in GPU 0"""
+        """the loss is computed in GPU 0; called in workflow.py *only*."""
         # the direct outcome (feat_out) from 'forward() of Dev class in sub_module.py'
         [big_feat, big_cnt, small_feat, small_cnt] = feat_input
         # final_small_feat, 1024 x 81; final_small_cnt, 1 x 81
@@ -166,11 +163,12 @@ class MaskRCNN(nn.Module):
         if _idx.size():
             SMALL = final_small_feat[:, _idx].t()  # say 15 x 1024
             final_big_feat_var = Variable(final_big_feat)
-            BIG = final_big_feat_var[:, _idx].t()
+            BIG = final_big_feat_var[:, _idx].t()   # also 15 x 1024
             # if self.config.CTRL.DEBUG:
             #     print('comp_cls_num in meta-loss: {}'.format(_idx.size(0)))
             #     print('SMALL mean: {:.4f}'.format(SMALL.mean().data.cpu()[0]))
             #     print('BIG mean: {:.4f}'.format(BIG.mean().data.cpu()[0]))
+
             # compute meta-loss
             if self.config.DEV.LOSS_CHOICE == 'l2':
                 loss = F.mse_loss(SMALL, BIG)   # use sigmoid before comparison
@@ -178,11 +176,11 @@ class MaskRCNN(nn.Module):
             elif self.config.DEV.LOSS_CHOICE == 'kl':
                 loss = F.kl_div(torch.log(SMALL), BIG)   # use softmax
 
-            elif self.config.DEV.LOSS_CHOICE == 'l1':   # use raw features directly
+            elif self.config.DEV.LOSS_CHOICE == 'l1':   # use sigmoid before comparison
                 loss = F.l1_loss(SMALL, BIG)
 
             elif self.config.DEV.LOSS_CHOICE == 'ot':
-                NotImplementedError()
+                loss = self.ot_loss(SMALL.unsqueeze(dim=-1), BIG.unsqueeze(dim=-1).contiguous())
         else:
             loss = Variable(torch.zeros(1).cuda())
         return loss
@@ -287,7 +285,6 @@ class MaskRCNN(nn.Module):
 
             assert _proposals.sum().data[0] != 0
             _pooled_cls, _, _ = self.dev_roi(_mrcnn_feature_maps, _proposals)
-            # TODO: mrcnn_class, highest scores always at background for meta_101_quick_3
             _, mrcnn_class, mrcnn_bbox = self.classifier(_pooled_cls)
             # Detections
             # input[1], image_metas, (3, 90), Variable
@@ -323,6 +320,7 @@ class MaskRCNN(nn.Module):
             big_cnt = Variable(torch.zeros(1, scale_num, 1, self.config.DATASET.NUM_CLASSES).cuda())
             small_feat = Variable(torch.zeros(1, scale_num, 1024, self.config.DATASET.NUM_CLASSES).cuda())
             small_cnt = Variable(torch.zeros(1, scale_num, 1, self.config.DATASET.NUM_CLASSES).cuda())
+            big_loss = Variable(torch.zeros(1, scale_num, 1).cuda())
 
             # 1. compute RPN targets
             target_rpn_match, target_rpn_bbox = \
@@ -340,13 +338,12 @@ class MaskRCNN(nn.Module):
 
             # 3. mask and cls generation
             if torch.sum(_rois).data[0] != 0:
-
                 # COMPUTE META_OUTPUTS HERE
                 # _pooled_cls: 600 (bsx200), 256, 7, 7
                 _pooled_cls, _pooled_mask, _feat_out = \
                     self.dev_roi(_mrcnn_feature_maps, _rois, target_class_ids)
-                if self.config.DEV.SWITCH:
-                    [big_feat, big_cnt, small_feat, small_cnt] = _feat_out
+                if self.config.DEV.SWITCH and not self.config.DEV.BASELINE:
+                    [big_feat, big_cnt, small_feat, small_cnt, big_loss] = _feat_out
                     # if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
                     #     assert big_feat.size() == (1, 4, 1024, 81), 'big_feat size: {}'.format(big_feat.size())
                     #     assert small_feat.size() == big_feat.size(), 'small_feat size: {}'.format(small_feat.size())
@@ -370,9 +367,7 @@ class MaskRCNN(nn.Module):
                 mrcnn_bbox = mrcnn_bbox.view(sample_per_gpu, -1, mrcnn_bbox.size(1), mrcnn_bbox.size(2))
                 mrcnn_mask = mrcnn_mask.view(
                     sample_per_gpu, -1, mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
-                # (old comment left here)
-                # if **ALL** samples within the batch has empty "_rois", skip the heads and output zero predictions.
-                # this is really rare case. otherwise, pass the heads even some samples don't have _rois.
+
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass mask and cls generation'.format(curr_gpu_id))
 
@@ -388,6 +383,6 @@ class MaskRCNN(nn.Module):
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass loss compute!'.format(curr_gpu_id))
 
-            return loss_merge, big_feat, big_cnt, small_feat, small_cnt  # must be Variables
+            return loss_merge, big_feat, big_cnt, small_feat, small_cnt, big_loss  # must be Variables
 
 

@@ -13,7 +13,7 @@ echo $DEVICE_ID
 CUDA_VISIBLE_DEVICES=$DEVICE_ID python main.py \
     --device_id=$DEVICE_ID \
     --phase=train \
-    --config_name=base_102_new_occupy_gpu \
+    --config_name=base_102_new_super_good \
     --debug=0 \
     TRAIN.BATCH_SIZE 8 \
     TRAIN.DO_VALIDATION True \
