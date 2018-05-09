@@ -230,6 +230,7 @@ class Config(object):
     MISC = AttrDict()
     MISC.SEED = 2000
     MISC.USE_VISDOM = False
+    MISC.VIS = AttrDict()
     MISC.VIS.PORT = -1  # must be passed from configs on different servers
     # the following will be set somewhere else
     MISC.LOG_FILE = None
@@ -300,7 +301,6 @@ class Config(object):
             del self.TRAIN['LR_WP_FACTOR']
 
         if self.MISC.USE_VISDOM:
-            self.MISC.VIS = AttrDict()
             if self.CTRL.DEBUG:
                 self.MISC.VIS.PORT = 8097  # debug
             assert self.MISC.VIS.PORT > 0, 'vis_port not designated!!!'
