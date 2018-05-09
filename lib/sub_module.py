@@ -450,7 +450,8 @@ class Dev(nn.Module):
                 box_ind = small_index[:, 0].int()
                 if _use_upsample:
                     # small_boxes *= self.upsample_fac
-                    _feat_maps = self.upsample[i](curr_feat_maps)
+                    _idx = i if self.config.DEV.MULTI_UPSAMPLER else 0
+                    _feat_maps = self.upsample[_idx](curr_feat_maps)
                 else:
                     _feat_maps = curr_feat_maps
 
