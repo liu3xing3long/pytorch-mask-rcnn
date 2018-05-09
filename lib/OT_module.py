@@ -34,7 +34,7 @@ class OptTrans(nn.Module):
         else:
             self.G_net = nn.Sequential(*[
                 nn.Conv1d(ch_x, ch_y, kernel_size=3, padding=1, stride=1),
-                nn.BatchNorm1d(ch_y),
+                # nn.BatchNorm1d(ch_y),
                 nn.ReLU()
             ])
 
@@ -56,7 +56,8 @@ class OptTrans(nn.Module):
                 if self.config.DEV.OT_ONE_DIM_FORM == 'conv':
                     self.critic = nn.Sequential(*[
                         nn.Conv1d(ch_y, int(ch_y/4), kernel_size=3, padding=1, stride=1),
-                        nn.BatchNorm1d(int(ch_y/4)),
+                        # comment BN layer; since 1(only one sample)x1024x1 will report error
+                        # nn.BatchNorm1d(int(ch_y/4)),
                         nn.ReLU()
                     ])
                 elif self.config.DEV.OT_ONE_DIM_FORM == 'fc':
