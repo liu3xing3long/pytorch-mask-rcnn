@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from tools.box_utils import *
 from tools.image_utils import *
 from tools.utils import print_log
+from lib.workflow import SEE_ONE_EXAMPLE, EXAMPLE_COCO_IND
 
 
 def generate_priors(scales, ratios, shape, feature_stride, anchor_stride):
@@ -433,21 +434,26 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     return rois_out, target_class_ids, target_deltas, target_mask
 
 
-############################################################
-#  RPN target layer (previously in __get_item__)
-############################################################
+##############################################################################
+#  RPN target layer (previously in __get_item__ now in forward() Train phase)
+##############################################################################
 def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
-
+    """per sample op."""
     # sample_id is the id within each GPU
     curr_sample_id = args[0]
     coco_im_id = args[1].data.cpu().numpy()
+
+    if SEE_ONE_EXAMPLE and EXAMPLE_COCO_IND == coco_im_id[curr_sample_id]:
+        print('this is the image you want to see: {}'.format(EXAMPLE_COCO_IND))
+        a = 1
 
     # RPN Match: 1 = positive anchor, -1 = negative anchor, 0 = neutral
     target_rpn_match = Variable(torch.zeros(anchors.size(0)).cuda(), requires_grad=False)
     # RPN bounding boxes: [max anchors per image, (dy, dx, log(dh), log(dw))]
     target_rpn_bbox = Variable(torch.zeros(config.RPN.TRAIN_ANCHORS_PER_IMAGE, 4).cuda(), requires_grad=False)
 
-    original_gt_num = gt_class_ids.size(0)
+    original_gt_full_size = gt_class_ids.size(0)
+    original_gt_num = torch.sum((gt_class_ids > 0).long()).data[0]
     if torch.nonzero(gt_class_ids < 0).size():
         # Filter out crowds from ground truth class IDs and boxes
         _ind_crowd = torch.nonzero(gt_class_ids < 0).squeeze()
@@ -499,6 +505,9 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         print('\t\t[sample_id {}, im {}] 1. passed initial assignment in generate_rpn_target'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
 
+    _pos_num_before = torch.sum((target_rpn_match == 1).long()).data[0]
+    _neg_num_before = torch.sum((target_rpn_match == -1).long()).data[0]
+    _neutral_num_before = torch.sum((target_rpn_match == 0).long()).data[0]
     # 4. Subsample to balance positive and negative anchors
     # Don't let positives be more than half the anchors
     pos_ids = torch.nonzero(target_rpn_match == 1).squeeze()
@@ -512,9 +521,12 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         # _tmp = torch.randperm(pos_ids.size(0)).cuda()
         _ids = pos_ids[_tmp[:pos_extra]]
         target_rpn_match[_ids] = 0
+        pos_set_to_zero = _ids.size(0)
         if config.CTRL.PROFILE_ANALYSIS:
             print('\t\t\t[sample_id {}, im {}] set extra anchors of positive to neutral '
                   'in generate_rpn_target'.format(curr_sample_id, coco_im_id[curr_sample_id]))
+    else:
+        pos_set_to_zero = -1
 
     # Same for negative proposals
     neg_ids = torch.nonzero(target_rpn_match == -1).squeeze()
@@ -524,27 +536,38 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         # Reset the extra ones to neutral
         _tmp = torch.from_numpy(np.random.permutation(neg_ids.size(0))).cuda()
         _ids = neg_ids[_tmp[:neg_extra]]
+        _neg_set_to_zero = _ids.size(0)
         target_rpn_match[_ids] = 0
+    else:
+        _neg_set_to_zero = -1
     # ======= ABOVE DONE =======
-
-    _pos_num = torch.sum((target_rpn_match == 1).long()).data[0]   # TODO: bug this line. RuntimeError: cuda runtime error (59) : device-side assert triggered at
-    _neg_num = torch.sum((target_rpn_match == -1).long()).data[0]
+    # TODO: bug this line. RuntimeError: cuda runtime error (59) : device-side assert triggered at
+    _temp = target_rpn_match == 1
+    _pos_num = torch.sum(_temp.long()).data[0]
+    _temp = target_rpn_match == -1
+    _neg_num = torch.sum(_temp.long()).data[0]
+    _temp = target_rpn_match == 0
+    _neutral_num = torch.sum(_temp.long()).data[0]
 
     if _pos_num + _neg_num != config.RPN.TRAIN_ANCHORS_PER_IMAGE:
-        # TODO (potential bug): on s162, the previous assertion fails
         curr_im_name = coco_im_id[curr_sample_id]
-        _neutral_num = torch.sum((target_rpn_match == 0).long()).data[0]
         print_log('\n[im: {}][WARNING!!!]'
-                  '\tactual_rpn_pos_neg_num is {}, config num is {}\n'
-                  '\t\tpos_num: {}, neg_num: {}, neutral_num: {}\n'
-                  '\t\tgt_boxes size: {}, actual_gt_num (after crowd): {}, anchors_num: {}\n'
-                  '\t\toriginal_gt_num: {}, pos_ids size: {}, neg_ids size: {}\n'
-                  '\t\tpos_extra: {}, neg_extra: {}'.
-                  format(curr_im_name, _pos_num + _neg_num, config.RPN.TRAIN_ANCHORS_PER_IMAGE,
-                         _pos_num, _neg_num, _neutral_num,
-                         gt_boxes.size(), actual_gt_num, anchors.size(0),
-                         original_gt_num, pos_ids.size(0), neg_ids.size(0),
-                         pos_extra, neg_extra), config.MISC.LOG_FILE)
+                  '\tactual_rpn_pos_and_neg_num is {}, config num is {}\n'
+                  '\t\tpos_num: {}, neg_num: {}, neutral_num: {}, anchors_num: {}\n'
+                  '\t\toriginal_gt_num: {}, actual_gt_num (after crowd): {}, original_gt_full_size: {}\n'
+                  '\t\tpos_ids size: {}, neg_ids size: {}\n'
+                  '\t\tpos_extra: {}, neg_extra: {}\n'
+                  '\t\tpos_set_to_zero size: {}, neg_set_to_zero size: {}\n'
+                  '\t\tbefore sub-sample: pos {}, neg {}, neutral {}'.
+                  format(curr_im_name,
+                         _pos_num + _neg_num, config.RPN.TRAIN_ANCHORS_PER_IMAGE,
+                         _pos_num, _neg_num, _neutral_num, anchors.size(0),
+                         original_gt_num, actual_gt_num, original_gt_full_size,
+                         pos_ids.size(0), neg_ids.size(0),
+                         pos_extra, neg_extra,
+                         pos_set_to_zero, _neg_set_to_zero,
+                         _pos_num_before, _neg_num_before, _neutral_num_before
+                         ), config.MISC.LOG_FILE)
 
     if config.CTRL.PROFILE_ANALYSIS:
         print('\t\t[sample_id {}, im {}] 2. passed rpn_target_match'.

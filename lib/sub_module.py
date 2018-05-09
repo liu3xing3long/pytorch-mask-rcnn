@@ -272,23 +272,24 @@ class Dev(nn.Module):
         self.config = config
 
         if self.use_dev:
-
-            # TODO: for now it's the same size with mask_pool_size (14)
+            # for now it's the same size with mask_pool_size (14)
             self.feat_pool_size = config.DEV.FEAT_BRANCH_POOL_SIZE
             self.upsample_fac = config.DEV.UPSAMPLE_FAC
             assert self.feat_pool_size % 2 == 0, 'pool size of feature branch has to be even'
 
             # define **upsampler**
-            # TODO: consider different upsampler on different scales
             if self.upsample_fac == 2.0:
-                self.upsample = nn.Sequential(*[
-                    nn.ConvTranspose2d(self.depth, self.depth, kernel_size=3, stride=2, padding=1, output_padding=1),
-                    nn.BatchNorm2d(self.depth),
-                    nn.ReLU(inplace=True),
-                    # nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1, padding=1),
-                    # nn.BatchNorm2d(self.depth),
-                    # nn.ReLU(inplace=True)
-                ])
+                upsample_num = 4 if self.config.DEV.MULTI_UPSAMPLER else 1
+                self.upsample = nn.ModuleList()
+                for i in range(upsample_num):
+                    self.upsample.append(nn.Sequential(*[
+                        nn.ConvTranspose2d(self.depth, self.depth, kernel_size=3, stride=2, padding=1, output_padding=1),
+                        nn.BatchNorm2d(self.depth),
+                        nn.ReLU(inplace=True),
+                        # nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1, padding=1),
+                        # nn.BatchNorm2d(self.depth),
+                        # nn.ReLU(inplace=True)
+                    ]))
             else:
                 raise Exception('unsupported upsampling factor')
 
@@ -300,19 +301,19 @@ class Dev(nn.Module):
                     nn.BatchNorm2d(512),
                     nn.ReLU(inplace=True),
                     nn.Conv2d(512, 1024, kernel_size=_ksize, stride=1),
-                    # nn.BatchNorm2d(1024),
-                    # nn.ReLU(inplace=True),
+                    nn.BatchNorm2d(1024),  # TODO: what's the meaning of doing BN on a 1x1 spatial size?
+                    nn.ReLU(inplace=True),
                     # nn.Conv2d(1024, 1024, kernel_size=1, stride=1),
                 ]
-                # shape: say 20, 1024, 1, 1
-                # TODO (consider this sigmoid vs softmax)
-                if config.DEV.LOSS_CHOICE == 'l2':
-                    _layer_list.append(nn.Sigmoid())
-                elif config.DEV.LOSS_CHOICE == 'l1':
-                    _layer_list.append(nn.Sigmoid())
-                elif config.DEV.LOSS_CHOICE == 'kl':
-                    _layer_list.append(nn.Softmax(dim=1))
+                # shape: say 40, 1024, 1, 1
                 self.feat_extract = nn.Sequential(*_layer_list)
+                if config.DEV.LOSS_CHOICE == 'l2' or config.DEV.LOSS_CHOICE == 'l1':
+                    self.last_op = nn.Sigmoid()
+                elif config.DEV.LOSS_CHOICE == 'kl':
+                    self.last_op = nn.Softmax(dim=1)
+
+                if self.config.DEV.BIG_SUPERVISE:
+                    self.big_fc_layer = nn.Linear(1024, self.num_classs)
 
     @staticmethod
     def _find_big_box(level, roi_level):
@@ -328,6 +329,7 @@ class Dev(nn.Module):
 
     def forward(self, x, rois, roi_cls_gt=None):
         # x is a multi-scale List containing Variable
+        # rois: [bs, 200, 4]
         base = self.config.ROIS.ASSIGN_ANCHOR_BASE
         if not self.use_dev:
             # in 'layers.py'
@@ -363,6 +365,7 @@ class Dev(nn.Module):
 
             pooled, mask, box_to_level = [], [], []
             big_feat, big_cnt, small_feat, small_cnt = [], [], [], []   # to generate feat_out
+            big_loss = []
             # LOOP through levels and apply ROI pooling to each.
             # P2 to P5, with 2 being the most coarse map
             for i, level in enumerate(range(2, 6)):
@@ -403,6 +406,7 @@ class Dev(nn.Module):
                         small_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
                         big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
                         big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
+                        big_loss.append(Variable(torch.zeros(1).cuda()))
                     continue
 
                 # Decide "big_ix"; deal with 'big' boxes during train
@@ -417,6 +421,7 @@ class Dev(nn.Module):
                             # there is no "big" boxes; never mind, we use historic data
                             big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
                             big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
+                            big_loss.append(Variable(torch.zeros(1).cuda()))
                         big_num = 0
                     else:
                         # process big-small-supervise (big part)
@@ -430,12 +435,24 @@ class Dev(nn.Module):
                         big_feat_pooled = CropAndResizeFunction(
                             self.feat_pool_size, self.feat_pool_size)(curr_feat_maps, big_boxes, big_box_ind)
                         # shape: say 20, 1024, 1, 1
-                        big_output = self.feat_extract(big_feat_pooled)
+                        _big_out_before_last = self.feat_extract(big_feat_pooled)
+                        if self.config.DEV.LOSS_CHOICE != 'ot':
+                            big_output = self.last_op(_big_out_before_last)
+                        else:
+                            big_output = _big_out_before_last
                         # shape: always 1024 x 81 (cls_num)
                         _b_feat, _b_cnt = self._assign_feat2cls([big_box_gt, big_output])
                         big_feat.append(_b_feat)
                         big_cnt.append(_b_cnt)
                         big_num = big_index.size(0)
+
+                        if self.config.DEV.BIG_SUPERVISE:
+                            big_x = _big_out_before_last.view(-1, 1024)
+                            big_feat_cls_digits = self.big_fc_layer(big_x)   # big_num x 81
+                            curr_big_loss = F.cross_entropy(big_feat_cls_digits, big_box_gt.long())
+                            big_loss.append(curr_big_loss)
+                        else:
+                            big_loss.append(Variable(torch.zeros(1).cuda()))
 
                 # "SMALL" boxes (or simply boxes on scale 4,5) exist
                 # small_index: say, 2670 (actual boxes found in this level) x 2
@@ -449,7 +466,8 @@ class Dev(nn.Module):
                 box_ind = small_index[:, 0].int()
                 if _use_upsample:
                     # small_boxes *= self.upsample_fac
-                    _feat_maps = self.upsample(curr_feat_maps)
+                    _idx = i if self.config.DEV.MULTI_UPSAMPLER else 0
+                    _feat_maps = self.upsample[_idx](curr_feat_maps)
                 else:
                     _feat_maps = curr_feat_maps
 
@@ -471,6 +489,8 @@ class Dev(nn.Module):
                     # process big-small-supervise (small part)
                     small_box_gt = roi_cls_gt[small_index[:, 0].data, small_index[:, 1].data]
                     small_output = self.feat_extract(mask_and_feat)
+                    if self.config.DEV.LOSS_CHOICE != 'ot':
+                        small_output = self.last_op(small_output)
                     _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
                     small_feat.append(_s_feat)
                     small_cnt.append(_s_cnt)
@@ -481,10 +501,13 @@ class Dev(nn.Module):
 
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
             if train_phase and not self.config.DEV.BASELINE:
-                feat_out = [torch.stack(big_feat).detach().unsqueeze(dim=0),
-                            torch.stack(big_cnt).unsqueeze(dim=0),
-                            torch.stack(small_feat).unsqueeze(dim=0),
-                            torch.stack(small_cnt).unsqueeze(dim=0)]
+                feat_out = [
+                    torch.stack(big_feat).detach().unsqueeze(dim=0),   # do *NOT* pass gradient of big_feat
+                    torch.stack(big_cnt).unsqueeze(dim=0),
+                    torch.stack(small_feat).unsqueeze(dim=0),
+                    torch.stack(small_cnt).unsqueeze(dim=0),
+                    torch.stack(big_loss).unsqueeze(dim=0),
+                ]
             else:
                 feat_out = []
 
@@ -562,11 +585,11 @@ class Classifier(nn.Module):
         x = self.relu(x)
 
         x = x.view(-1, 1024)
-        mrcnn_class_logits = self.linear_class(x)           # x shape: bs x rois_num, 1024
+        mrcnn_class_logits = self.linear_class(x)           # x shape: bs x rois_num, 1024; used for CE loss
         mrcnn_probs = self.softmax(mrcnn_class_logits)
 
         mrcnn_bbox = self.linear_bbox(x)
-        mrcnn_bbox = mrcnn_bbox.view(mrcnn_bbox.size()[0], -1, 4)
+        mrcnn_bbox = mrcnn_bbox.view(mrcnn_bbox.size(0), -1, 4)
 
         return [mrcnn_class_logits, mrcnn_probs, mrcnn_bbox]
 
