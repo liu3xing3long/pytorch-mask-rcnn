@@ -3,7 +3,7 @@ from tools import visualize
 import time
 from datasets.eval.PythonAPI.pycocotools import mask as maskUtils
 from datasets.eval.PythonAPI.pycocotools.cocoeval import COCOeval
-from tools.utils import print_log, compute_left_time, adjust_lr
+from tools.utils import print_log, show_loss_terminal, save_model, adjust_lr
 from torch.autograd import Variable
 import torch
 import torch.nn as nn
@@ -84,31 +84,24 @@ def train_model(input_model, train_generator, valset, optimizer, layers, vis=Non
         epoch_str = "[Ep {:03d}/{}]".format(ep, total_ep_till_now)
         print_log(epoch_str, model.config.MISC.LOG_FILE)
         # Training
-        loss = train_epoch(input_model, train_generator, optimizer,
-                           stage_name=stage_name, epoch_str=epoch_str,
-                           epoch=ep, start_iter=model.iter, total_iter=iter_per_epoch,
-                           valset=valset, coco_api=coco_api, vis=vis)
+        loss_data = train_epoch(input_model, train_generator, optimizer,
+                                stage_name=stage_name, epoch_str=epoch_str,
+                                epoch=ep, start_iter=model.iter, total_iter=iter_per_epoch,
+                                valset=valset, coco_api=coco_api, vis=vis)
 
-        # TODO(mid): visualize the loss with resume concerned; include visdom
-        model.loss_history.append(loss)
+        # model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
-        visualize.plot_loss(model.loss_history, model.val_loss_history,
-                            save=True, log_dir=model.config.MISC.RESULT_FOLDER)
+        # visualize.plot_loss(model.loss_history, model.val_loss_history,
+        #                     save=True, log_dir=model.config.MISC.RESULT_FOLDER)
         # save model
-        model_file = os.path.join(model.config.MISC.RESULT_FOLDER,
-                                  'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(ep, iter_per_epoch))
-        print_log('Epoch ends, saving model: {:s}\n'.format(model_file), model.config.MISC.LOG_FILE)
-        if model.config.DEV.SWITCH and not model.config.DEV.BASELINE:  # has meta-loss
-            buffer, buffer_cnt = model.buffer.cpu().numpy(), model.buffer_cnt.cpu().numpy()
-        else:
-            buffer, buffer_cnt = [], []
-        torch.save({
-            'state_dict':   model.state_dict(),
-            'epoch':        ep,
-            'iter':         iter_per_epoch,
-            'buffer':       buffer,
-            'buffer_cnt':   buffer_cnt,
-        }, model_file)
+        print_log('\n**Epoch ends**', model.config.MISC.LOG_FILE)
+        info_pass = {
+            'epoch':        ep,                 # or model.epoch
+            'iter':         iter_per_epoch,     # or model.iter
+            'loss_data':    loss_data
+        }
+        save_model(model, **info_pass)
+
         # one epoch ends; update iterator
         model.iter = 1
         model.epoch = ep
@@ -137,7 +130,6 @@ def train_epoch(input_model, data_loader, optimizer, **args):
     config = model.config
     vis = args['vis']
 
-    loss_sum = 0
     start_iter, total_iter, curr_ep = args['start_iter'], args['total_iter'], args['epoch']
     actual_total_iter = total_iter - start_iter + 1
     save_iter_base = math.floor(total_iter / config.TRAIN.SAVE_FREQ_WITHIN_EPOCH)
@@ -241,44 +233,34 @@ def train_epoch(input_model, data_loader, optimizer, **args):
 
         # Progress
         if iter_ind % config.CTRL.SHOW_INTERVAL == 0 or iter_ind == args['start_iter']:
-            iter_time = time.time() - curr_iter_time_start
-            days, hrs = compute_left_time(
-                iter_time, curr_ep, sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
-            suffix = ' - meta_loss: {:.3f}' if config.DEV.SWITCH and not config.DEV.BASELINE else '{:s}'
-            last_output = meta_loss.data.cpu()[0] if config.DEV.SWITCH and not config.DEV.BASELINE else ''
-            config_name_str = config.CTRL.CONFIG_NAME if not config.CTRL.QUICK_VERIFY else \
-                config.CTRL.CONFIG_NAME + ', quick verify mode'
-            progress_str = '[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:2.1f} hrs] (iter_t: {:.2f})' \
-                           '\tlr: {:.6f} | loss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} ' \
-                           '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}' + suffix
-
-            print_log(progress_str.format(
-                config_name_str, args['stage_name'], args['epoch_str'], iter_ind, total_iter,
-                days, hrs, iter_time, lr,
-                loss.data.cpu()[0],
-                detailed_loss[0].data.cpu()[0], detailed_loss[1].data.cpu()[0],
-                detailed_loss[2].data.cpu()[0], detailed_loss[3].data.cpu()[0],
-                detailed_loss[4].data.cpu()[0], last_output), config.MISC.LOG_FILE)
-
-        # Statistics (sort of useless)
-        loss_sum += loss.data.cpu()[0]/actual_total_iter
+            info_pass = {
+                'curr_iter_time_start': curr_iter_time_start,
+                'curr_ep': curr_ep,
+                'iter_ind': iter_ind,
+                'total_iter': total_iter,
+                'meta_loss': meta_loss,
+                'loss': loss,
+                'lr': lr,
+                'detailed_loss': detailed_loss,
+                'stage_name': args['stage_name'],
+                'epoch_str': args['epoch_str'],
+            }
+            show_loss_terminal(config, **info_pass)
+            if config.MISC.USE_VISDOM:
+                loss_data = vis.plot_loss(**info_pass)
+                vis.show_dynamic_info(**info_pass)
 
         # save model
         if iter_ind % save_iter_base == 0:
-            model_file = os.path.join(
-                config.MISC.RESULT_FOLDER, 'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(curr_ep, iter_ind))
-            print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
-            if config.DEV.SWITCH and not config.DEV.BASELINE:  # has meta-loss
-                buffer, buffer_cnt = model.buffer.cpu().numpy(), model.buffer_cnt.cpu().numpy()
-            else:
-                buffer, buffer_cnt = [], []
-            torch.save({
-                'state_dict':   model.state_dict(),
+            if not config.MISC.USE_VISDOM:
+                loss_data = []
+            info_pass = {
                 'epoch':        curr_ep,        # or model.epoch
                 'iter':         iter_ind,       # or model.iter
-                'buffer':       buffer,
-                'buffer_cnt':   buffer_cnt,
-            }, model_file)
+                'loss_data':    loss_data
+            }
+            save_model(model, **info_pass)
+
         # for debug; test the model
         if config.CTRL.DEBUG and iter_ind == (start_iter+100):
             print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
@@ -286,7 +268,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
             test_model(input_model, args['valset'], args['coco_api'],
                        during_train=True, epoch=args['epoch'], iter=iter_ind, vis=vis)
 
-    return loss_sum
+    return loss_data
 
 
 def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
@@ -431,11 +413,14 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
     coco_eval.evaluate()
     coco_eval.accumulate()
     coco_eval.summarize(log_file)
+    mAP = coco_eval.stats[0]
+
     print_log('Total time: {:.4f}'.format(time.time() - t_start), log_file, additional_file=train_log_file)
     print_log('Config_name [{:s}], model file [{:s}], mAP is {:.4f}\n\n'.
-              format(model.config.CTRL.CONFIG_NAME, model_file_name, coco_eval.stats[0]),
+              format(model.config.CTRL.CONFIG_NAME, model_file_name, mAP),
               log_file, additional_file=train_log_file)
     print_log('Done!', log_file, additional_file=train_log_file)
+    vis.show_mAP(model_file=model_file_name, mAP=mAP)
 
 
 def _mold_inputs(model, image_ids, dataset):

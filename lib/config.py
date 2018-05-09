@@ -235,19 +235,19 @@ class Config(object):
     MISC.DEVICE_ID = []
     MISC.GPU_COUNT = -1
 
-    def display(self, log_file):
+    def display(self, log_file, quiet=False):
         """Display *final* configuration values."""
-        print_log("Configurations:", file=log_file)
+        print_log("Configurations:", file=log_file, quiet_termi=quiet)
         for a in dir(self):
             if not a.startswith("__") and not callable(getattr(self, a)):
                 value = getattr(self, a)
                 if isinstance(value, AttrDict):
-                    print_log("{}:".format(a), log_file)
+                    print_log("{}:".format(a), log_file, quiet_termi=quiet)
                     for _, key in enumerate(value):
-                        print_log("\t{:30}\t\t{}".format(key, value[key]), log_file)
+                        print_log("\t{:30}\t\t{}".format(key, value[key]), log_file, quiet_termi=quiet)
                 else:
-                    print_log("{}\t{}".format(a, value), log_file)
-        print_log("\n", log_file)
+                    print_log("{}\t{}".format(a, value), log_file, quiet_termi=quiet)
+        print_log("\n", log_file, quiet_termi=quiet)
 
     def _set_value(self):
         """Set values of computed attributes. Override all previous settings."""
@@ -297,7 +297,13 @@ class Config(object):
 
         if self.MISC.USE_VISDOM:
             self.MISC.VIS = AttrDict()
-            self.MISC.VIS.PORT = 4000
+            if not self.CTRL.DEBUG:
+                self.MISC.VIS.PORT = 4000  # on remote server
+            else:
+                self.MISC.VIS.PORT = 8097  # debug
+
+            print('\n[visdom is activated] remember to execute '
+                  '**python -m visdom.server -port={:d}** on server (or pc)!\n'.format(self.MISC.VIS.PORT))
             self.MISC.VIS.LINE = 100
             self.MISC.VIS.TXT = 200
             self.MISC.VIS.IMG = 300

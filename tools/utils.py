@@ -10,6 +10,7 @@ from past.builtins import basestring
 import numpy as np
 from ast import literal_eval
 import datetime
+import time
 
 
 ############################################################
@@ -284,7 +285,7 @@ def _find_last(config):
     return dir_name, checkpoint
 
 
-def update_config_and_load_model(config, network, train_generator=None):
+def update_config_and_load_model(config, model, train_generator=None):
 
     choice = config.MODEL.INIT_FILE_CHOICE
     phase = config.CTRL.PHASE
@@ -345,40 +346,50 @@ def update_config_and_load_model(config, network, train_generator=None):
     # TODO (mid): peek over which weights in pretrain are loaded into the network
     checkpoints = torch.load(model_path)
     try:
-        network.load_state_dict(checkpoints['state_dict'], strict=False)
+        model.load_state_dict(checkpoints['state_dict'], strict=False)
     except KeyError:
-        network.load_state_dict(checkpoints, strict=False)  # legacy reason or pretrain model
+        model.load_state_dict(checkpoints, strict=False)  # legacy reason or pretrain model
 
     # determine start_iter and epoch for resume
     # update network.start_epoch, network.start_iter
     if phase == 'train':
         try:
             # indicate this is a resumed model
-            network.start_epoch = checkpoints['epoch']
-            network.start_iter = checkpoints['iter']
+            model.start_epoch = checkpoints['epoch']
+            model.start_iter = checkpoints['iter']
             num_train_im = train_generator.dataset.dataset.num_images
             iter_per_epoch = math.floor(num_train_im/config.TRAIN.BATCH_SIZE)
-            if network.start_iter % iter_per_epoch == 0:
-                network.start_iter = 1
-                network.start_epoch += 1
+            if model.start_iter % iter_per_epoch == 0:
+                model.start_iter = 1
+                model.start_epoch += 1
             else:
-                network.start_iter += 1
+                model.start_iter += 1
         except KeyError:
             # indicate this is a pretrain model
-            network.start_epoch, network.start_iter = 1, 1
+            model.start_epoch, model.start_iter = 1, 1
         if config.TRAIN.FORCE_START_EPOCH:
-            network.start_epoch, network.start_iter = config.TRAIN.FORCE_START_EPOCH, 1
+            model.start_epoch, model.start_iter = config.TRAIN.FORCE_START_EPOCH, 1
         # init counters
-        network.epoch = network.start_epoch
-        network.iter = network.start_iter
+        model.epoch = model.start_epoch
+        model.iter = model.start_iter
+
+        # load previous loss data in Visdom
+        try:
+            loss_data = checkpoints['loss_data']  # could be empty list [] or dict()
+            # resumed model
+            if config.MISC.USE_VISDOM:
+                assert isinstance(loss_data, dict)
+                model.start_loss_data = loss_data
+        except KeyError:
+            pass
 
     now = datetime.datetime.now()
     # set MISC.LOG_FILE;
     # for inference, set also MISC.DET_RESULT_FILE, MISC.SAVE_IMAGE_DIR
     if phase == 'train':
-        config.MISC.LOG_FILE = os.path.join(config.MISC.RESULT_FOLDER,
-                                            'train_log_start_ep_{:04d}_iter_{:06d}.txt'.
-                                            format(network.start_epoch, network.start_iter))
+        config.MISC.LOG_FILE = os.path.join(
+            config.MISC.RESULT_FOLDER, 'train_log_start_ep_{:04d}_iter_{:06d}.txt'.
+                format(model.start_epoch, model.start_iter))
         print_log('\nStart timestamp: {:%Y%m%dT%H%M}'.format(now), file=config.MISC.LOG_FILE, init=True)
         if config.CTRL.DEBUG:
             # set SAVE_IM=True when debug
@@ -389,20 +400,20 @@ def update_config_and_load_model(config, network, train_generator=None):
         if config.DEV.SWITCH and not config.DEV.BASELINE:
             try:
                 # indicate this is a resumed model
-                network.buffer = torch.from_numpy(checkpoints['buffer']).cuda()
-                network.buffer_cnt = torch.from_numpy(checkpoints['buffer_cnt']).cuda()
-                buffer_size = network.buffer.size(0)
+                model.buffer = torch.from_numpy(checkpoints['buffer']).cuda()
+                model.buffer_cnt = torch.from_numpy(checkpoints['buffer_cnt']).cuda()
+                buffer_size = model.buffer.size(0)
                 if buffer_size != config.DEV.BUFFER_SIZE:
                     print_log('[WARNING] loaded buffer size: {}, config size: {}\n'
                               'check your config; for now initialize buffer as instructed in config when resume!!!'.
                               format(buffer_size, config.DEV.BUFFER_SIZE), config.MISC.LOG_FILE)
-                    network.initialize_buffer(config.MISC.LOG_FILE)
+                    model.initialize_buffer(config.MISC.LOG_FILE)
                 else:
                     print_log('load existent buffer from previous model ...', config.MISC.LOG_FILE)
 
             except KeyError:
                 # indicate this is a pretrain model; init buffer as instructed in config
-                network.initialize_buffer(config.MISC.LOG_FILE)
+                model.initialize_buffer(config.MISC.LOG_FILE)
 
     elif phase == 'inference':
         model_name = os.path.basename(model_path).replace('.pth', '')   # mask_rcnn_ep_0053_iter_001234
@@ -422,10 +433,15 @@ def update_config_and_load_model(config, network, train_generator=None):
                   config.MISC.LOG_FILE)
         for key, value in checkpoints.items():
             print_log('\t\t{}, size: {}'.format(key, value.size()), config.MISC.LOG_FILE, quiet_termi=True)
-    config.display(config.MISC.LOG_FILE)
-    network.config = config
 
-    return config, network
+    if config.MISC.USE_VISDOM:
+        print_log('see configurations in Visdom or log file; NOT shown in terminal.', config.MISC.LOG_FILE)
+        config.display(config.MISC.LOG_FILE, quiet=True)
+    else:
+        config.display(config.MISC.LOG_FILE)
+    model.config = config
+
+    return config, model
 
 
 def set_optimizer(net, opt):
@@ -478,3 +494,53 @@ def adjust_lr(optimizer, curr_ep, curr_iter, config):
         param_group['lr'] = lr
     return lr
 
+
+def show_loss_terminal(config, **args):
+    curr_iter_time_start = args['curr_iter_time_start']
+    curr_ep, iter_ind, total_iter = args['curr_ep'], args['iter_ind'], args['total_iter']
+    meta_loss = args['meta_loss']
+    loss = args['loss']
+    lr = args['lr']
+    detailed_loss = args['detailed_loss']
+    stage_name, epoch_str = args['stage_name'], args['epoch_str']
+
+    iter_time = time.time() - curr_iter_time_start
+    days, hrs = compute_left_time(
+        iter_time, curr_ep, sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
+    suffix = ' - meta_loss: {:.3f}' if config.DEV.SWITCH and not config.DEV.BASELINE else '{:s}'
+    last_output = meta_loss.data.cpu()[0] if config.DEV.SWITCH and not config.DEV.BASELINE else ''
+    config_name_str = config.CTRL.CONFIG_NAME if not config.CTRL.QUICK_VERIFY else \
+        config.CTRL.CONFIG_NAME + ', quick verify mode'
+    progress_str = '[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:.2f} hrs] (iter_t: {:.2f})' \
+                   '\tlr: {:.6f} | loss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} ' \
+                   '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}' + suffix
+
+    print_log(progress_str.format(
+        config_name_str, stage_name, epoch_str, iter_ind, total_iter,
+        days, hrs, iter_time, lr,
+        loss.data.cpu()[0],
+        detailed_loss[0].data.cpu()[0], detailed_loss[1].data.cpu()[0],
+        detailed_loss[2].data.cpu()[0], detailed_loss[3].data.cpu()[0],
+        detailed_loss[4].data.cpu()[0], last_output), config.MISC.LOG_FILE)
+
+
+def save_model(model, **args):
+    config = model.config
+    curr_ep, iter_ind = args['epoch'], args['iter']
+    loss_data = args['loss_data']
+
+    model_file = os.path.join(
+        config.MISC.RESULT_FOLDER, 'mask_rcnn_ep_{:04d}_iter_{:06d}.pth'.format(curr_ep, iter_ind))
+    print_log('saving model: {:s}\n'.format(model_file), config.MISC.LOG_FILE)
+    if config.DEV.SWITCH and not config.DEV.BASELINE:  # has meta-loss
+        buffer, buffer_cnt = model.buffer.cpu().numpy(), model.buffer_cnt.cpu().numpy()
+    else:
+        buffer, buffer_cnt = [], []
+    torch.save({
+        'state_dict':   model.state_dict(),
+        'epoch':        curr_ep,        # or model.epoch
+        'iter':         iter_ind,       # or model.iter
+        'buffer':       buffer,
+        'buffer_cnt':   buffer_cnt,
+        'loss_data':    loss_data
+    }, model_file)

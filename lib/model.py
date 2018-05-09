@@ -13,9 +13,8 @@ class MaskRCNN(nn.Module):
         """
         super(MaskRCNN, self).__init__()
         self.config = config
-        self.loss_history = []
-        self.val_loss_history = []
-
+        # self.loss_history = []
+        # self.val_loss_history = []
         self._build(config=config)
         self._initialize_weights()
 

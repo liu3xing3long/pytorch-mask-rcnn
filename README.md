@@ -80,5 +80,14 @@ Also install the `future` package via conda:
 
 ``conda install -c anaconda future``
 
+Install visdom:
+
+    git clone --recursive https://github.com/facebookresearch/visdom.git
+    cd visdom
+    pip install -e .
+
+You can activate on a remote server (probably in ``tmux``):
+``python -m visdom.server -port=$PORT_ID``
+
 
 

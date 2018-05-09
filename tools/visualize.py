@@ -21,6 +21,10 @@ from tools import utils
 from scipy.misc import imread
 from tools.utils import print_log, mkdirs
 from lib.config import CLASS_NAMES
+import torch
+from tools.collections import AttrDict
+import time
+from tools.utils import compute_left_time
 
 if "DISPLAY" not in os.environ:
     plt.switch_backend('agg')
@@ -418,13 +422,25 @@ def plot_loss(loss, val_loss, save=True, log_dir=None):
 
 
 class Visualizer(object):
-    def __init__(self, opt, train_data, val_data):
+    def __init__(self, opt, model, val_data):
         self.opt = opt
+
         if self.opt.MISC.USE_VISDOM:
             import visdom
             self.vis = visdom.Visdom(port=opt.MISC.VIS.PORT, env=opt.CTRL.CONFIG_NAME)
             self.dis_im_cnt, self.dis_im_cycle = 0, 4
-            self.loss_data = {'X': [], 'Y': [], 'legend': self.opt.MISC.VIS.LOSS_LEGEND}
+            if hasattr(model, 'start_loss_data'):
+                self.loss_data = model.start_loss_data
+                assert len(self.loss_data['legend']) == len(self.opt.MISC.VIS.LOSS_LEGEND)
+            else:
+                self.loss_data = {'X': [], 'Y': [], 'legend': self.opt.MISC.VIS.LOSS_LEGEND}
+            self.line = dict()
+            self.line['height'] = 500
+            self.line['width'] = 1200
+
+            self.txt = dict()
+            self.txt['height'] = 500
+            self.txt['width'] = 450
 
             self.num_classes = val_data.dataset.num_classes
             self.class_name = CLASS_NAMES
@@ -432,16 +448,27 @@ class Visualizer(object):
             # if self.opt.TEST.SAVE_IM:
             self.save_det_res_path = self.opt.MISC.SAVE_IMAGE_DIR
 
-    def plot_loss(self, errors, progress, others=None):
+            self.start_epoch = model.start_epoch
+            self.start_iter = model.start_iter
+            self.mAP_msg = 'Config name:' \
+                           '<br/>&emsp;{:s}<br/><br/>'.format(self.opt.CTRL.CONFIG_NAME)
+
+            self._show_config()
+
+    def plot_loss(self, **args):
         """draw loss on visdom console"""
-        #TODO: set figure height and width in visdom
-        loss, loss_l, loss_c = errors[0].data[0], errors[1].data[0], errors[2].data[0]
-        epoch, iter_ind, epoch_size = progress[0], progress[1], progress[2]
-        x_progress = epoch + float(iter_ind/epoch_size)
+        curr_ep, iter_ind, total_iter = args['curr_ep'], args['iter_ind'], args['total_iter']
+        y_num = len(self.loss_data['legend'])
 
-        self.loss_data['X'].append([x_progress, x_progress, x_progress])
-        self.loss_data['Y'].append([loss, loss_l, loss_c])
+        loss = torch.cat((args['loss'], args['detailed_loss']))
+        if loss.size(0)+1 == y_num:
+            # indicates there is meta_loss
+            loss = torch.cat((loss, args['meta_loss']))
 
+        x_progress = [curr_ep - 1 + float(iter_ind/total_iter) for _ in range(y_num)]
+        loss_list = [loss[i].data.cpu()[0] for i in range(y_num)]
+        self.loss_data['X'].append(x_progress)
+        self.loss_data['Y'].append(loss_list)
         self.vis.line(
             X=np.array(self.loss_data['X']),
             Y=np.array(self.loss_data['Y']),
@@ -449,48 +476,80 @@ class Visualizer(object):
                 'title': 'Train loss over epoch',
                 'legend': self.loss_data['legend'],
                 'xlabel': 'epoch',
-                'ylabel': 'loss'},
-            win=self.opt.MISC.VIS.LINE
+                'ylabel': 'loss',
+                'height': self.line['height'],
+                'width': self.line['width']
+            },
+            win=self.opt.MISC.VIS.LINE,
         )
+        return self.loss_data
 
-    def print_loss(self, errors, progress, others=None):
-        """show loss info in console"""
-        loss, loss_l, loss_c = errors[0].data[0], errors[1].data[0], errors[2].data[0]
-        epoch, iter_ind, epoch_size = progress[0], progress[1], progress[2]
-        t0, t1 = others[0], others[1]
-        msg = '[{:s}]\tepoch/iter [{:d}/{:d}][{:d}/{:d}] ||\t' \
-              'Loss: {:.4f}, loc: {:.4f}, cls: {:.4f} ||\t' \
-              'Time: {:.4f} sec/image'.format(
-                self.opt.experiment_name, epoch, self.opt.max_epoch, iter_ind, epoch_size,
-                loss, loss_l, loss_c, (t1 - t0)/self.opt.batch_size)
-        print_log(msg, self.opt.file_name)
+    def _show_config(self):
+        """show config on visdom console"""
+        opt = self.opt
+        msg = ''
+        for a in dir(opt):
+            if not a.startswith("__") and not callable(getattr(opt, a)):
+                value = getattr(opt, a)
+                if isinstance(value, AttrDict):
+                    msg += '<u>{}</u>:<br/>'.format(a)
+                    for _, key in enumerate(value):
+                        msg += '&emsp;{:30}&emsp;&emsp;<b>{}</b><br/>'.format(key, value[key])
+                else:
+                    msg += '{}&emsp;{}'.format(a, value)
 
-    def print_info(self, progress, others):
-        """print useful info on visdom console"""
-        #TODO: test case and set size
+        self.vis.text(msg,
+                      opts={
+                          'title': 'Configurations',
+                          'height': self.txt['height'],
+                          'width': self.txt['width']},
+                      win=self.opt.MISC.VIS.TXT)
 
-        epoch, iter_ind, epoch_size = progress[0], progress[1], progress[2]
-        still_run, lr, time_per_iter = others[0], others[1], others[2]
+    def show_dynamic_info(self, **args):
+        """show dynamic info on visdom console"""
+        curr_iter_time_start = args['curr_iter_time_start']
+        curr_ep, iter_ind, total_iter = args['curr_ep'], args['iter_ind'], args['total_iter']
+        stage_name, epoch_str = args['stage_name'], args['epoch_str']
 
-        left_time = time_per_iter * (epoch_size-1-iter_ind + (self.opt.max_epoch-1-epoch)*epoch_size) / 3600 if \
-            still_run else 0
-        status = 'RUNNING' if still_run else 'DONE'
-        dynamic = 'start epoch: {:d}, iter: {:d}<br/>' \
-                  'curr lr {:.8f}<br/>' \
-                  'progress epoch/iter [{:d}/{:d}][{:d}/{:d}]<br/><br/>' \
-                  'est. left time: {:.4f} hours<br/>' \
-                  'time/image: {:.4f} sec<br/>'.format(
-                    self.opt.start_epoch, self.opt.start_iter,
-                    lr,
-                    epoch, self.opt.max_epoch, iter_ind, epoch_size,
-                    left_time, time_per_iter/self.opt.batch_size)
-        common_suffix = '<br/><br/>-----------<br/>batch_size: {:d}<br/>' \
-                        'optim: {:s}<br/>'.format(
-                            self.opt.batch_size, self.opt.optim)
+        iter_time = time.time() - curr_iter_time_start
+        days, hrs = compute_left_time(
+            iter_time, curr_ep, sum(self.opt.TRAIN.SCHEDULE), iter_ind, total_iter)
 
-        msg = 'phase: {:s}<br/>status: <b>{:s}</b><br/>'.format(self.opt.phase, status)\
-              + dynamic + common_suffix
-        self.vis.text(msg, win=self.dis_win_id_txt)
+        status = 'RUNNING' if sum([days, hrs]) > 0 else 'DONE'
+        msg = 'Phase: {:s}<br/>Status: <b>{:s}</b><br/>'.format(self.opt.CTRL.PHASE, status)
+
+        dynamic = 'Start epoch: {:d}, iter: {:d}<br/>' \
+                  'Current lr: {:.8f}<br/>' \
+                  'Progress: <br/>&emsp;[stage {:s}]<b>{:s} {:06d}/{}</b><br/><br/>' \
+                  'est. left time: {:d} days, {:.2f} hrs<br/>' \
+                  'time per image (iter/bs): {:.4f} sec<br/>'.format(
+                    self.start_epoch, self.start_iter,
+                    args['lr'],
+                    stage_name, epoch_str, iter_ind, total_iter,
+                    days, hrs,
+                    iter_time / self.opt.TRAIN.BATCH_SIZE)
+
+        msg += dynamic
+        self.vis.text(msg,
+                      opts={
+                          'title': 'Train dynamics',
+                          'height': self.txt['height']-150,
+                          'width': self.txt['width']
+                      },
+                      win=self.opt.MISC.VIS.TXT+1)
+
+    def show_mAP(self, **args):
+        curr = 'Model file:' \
+               '<br/>&emsp;{:s}<br/>&emsp;mAP is {:.4f}<br/><br/>'.format(args['model_file'], args['mAP'])
+        self.mAP_msg += curr
+        self.vis.text(
+            self.mAP_msg,
+            opts={
+                'title': 'Test result',
+                'height': self.txt['height']-150,
+                'width': self.txt['width']-100
+            },
+            win=self.opt.MISC.VIS.TXT+2)
 
     def show_image(self, progress, others=None):
         """for test, print log info in console and show detection results on visdom"""
