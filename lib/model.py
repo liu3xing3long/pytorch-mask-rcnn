@@ -2,7 +2,8 @@ import re
 from lib.sub_module import *
 import torch.nn as nn
 from lib.layers import *
-EPS = 10e-20
+from lib.OT_module import OptTrans
+EPS = 1e-20
 
 
 class MaskRCNN(nn.Module):
@@ -54,6 +55,8 @@ class MaskRCNN(nn.Module):
         self.rpn = RPN(len(config.RPN.ANCHOR_RATIOS), config.RPN.ANCHOR_STRIDE, input_ch=256)
         # RoI
         self.dev_roi = Dev(config, depth=256)
+        if self.config.DEV.LOSS_CHOICE == 'ot':
+            self.ot_loss = OptTrans(self.config, ch_x=1024, ch_y=1024)
 
         # FPN Classifier
         self.classifier = \
@@ -74,17 +77,17 @@ class MaskRCNN(nn.Module):
     def _initialize_weights(self):
 
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv1d):
                 # n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
                 # m.weight.data.normal_(0, math.sqrt(2. / n))
                 nn.init.xavier_uniform(m.weight)
                 if m.bias is not None:
                     m.bias.data.zero_()
-            elif isinstance(m, nn.ConvTranspose2d):
+            elif isinstance(m, nn.ConvTranspose2d) or isinstance(m, nn.ConvTranspose1d):
                 nn.init.xavier_normal(m.weight)
                 if m.bias is not None:
                     m.bias.data.zero_()
-            elif isinstance(m, nn.BatchNorm2d):
+            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.BatchNorm1d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
             elif isinstance(m, nn.Linear):
@@ -160,11 +163,12 @@ class MaskRCNN(nn.Module):
         if _idx.size():
             SMALL = final_small_feat[:, _idx].t()  # say 15 x 1024
             final_big_feat_var = Variable(final_big_feat)
-            BIG = final_big_feat_var[:, _idx].t()
+            BIG = final_big_feat_var[:, _idx].t()   # also 15 x 1024
             # if self.config.CTRL.DEBUG:
             #     print('comp_cls_num in meta-loss: {}'.format(_idx.size(0)))
             #     print('SMALL mean: {:.4f}'.format(SMALL.mean().data.cpu()[0]))
             #     print('BIG mean: {:.4f}'.format(BIG.mean().data.cpu()[0]))
+
             # compute meta-loss
             if self.config.DEV.LOSS_CHOICE == 'l2':
                 loss = F.mse_loss(SMALL, BIG)   # use sigmoid before comparison
@@ -172,11 +176,11 @@ class MaskRCNN(nn.Module):
             elif self.config.DEV.LOSS_CHOICE == 'kl':
                 loss = F.kl_div(torch.log(SMALL), BIG)   # use softmax
 
-            elif self.config.DEV.LOSS_CHOICE == 'l1':   # use raw features directly
+            elif self.config.DEV.LOSS_CHOICE == 'l1':   # use sigmoid before comparison
                 loss = F.l1_loss(SMALL, BIG)
 
             elif self.config.DEV.LOSS_CHOICE == 'ot':
-                NotImplementedError()
+                loss = self.ot_loss(SMALL.unsqueeze(dim=-1), BIG.unsqueeze(dim=-1).contiguous())
         else:
             loss = Variable(torch.zeros(1).cuda())
         return loss

@@ -204,7 +204,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
             meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt])
             _meta_loss_value = meta_loss.data.cpu()[0]
             if _meta_loss_value < 0:
-                # TODO: seriously consider this case (meta loss < 0)
+                # TODO: seriously consider (meta loss < 0) case in KL option
                 print_log('\n** meta_loss: {:.4f}, at iter {:d} epoch {:d}; set to 0 in this case **\n'.format(
                     _meta_loss_value, iter_ind, curr_ep), config.MISC.LOG_FILE)
                 meta_loss = Variable(torch.zeros(1).cuda())

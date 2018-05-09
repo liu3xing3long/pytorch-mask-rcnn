@@ -41,11 +41,6 @@ TEMP = {'heads': 1, '4+': 2, 'all': 3}
 
 
 class Config(object):
-    """Base configuration class. For custom configurations, create a
-    sub-class that inherits from this one and override properties
-    that need to be changed.
-    """
-
     # ==================================
     MODEL = AttrDict()
     # Path to pretrained imagenet model
@@ -198,8 +193,8 @@ class Config(object):
     # set to <= 0 if trained from the very first iter
     DEV.EFFECT_AFER_EP_PERCENT = 0.
     DEV.UPSAMPLE_FAC = 2.
-    # TODO (high, urgent) 'ot'
     DEV.LOSS_CHOICE = 'l1'
+    DEV.OT_ONE_DIM_FORM = 'fc'   # 'conv'
     DEV.LOSS_FAC = 0.5
     # set to 1 if use all historic data
     DEV.BUFFER_SIZE = 1000
@@ -210,10 +205,10 @@ class Config(object):
     # assign anchors on all scales and split anchor based on roi-pooling output size
     DEV.ASSIGN_BOX_ON_ALL_SCALE = False
     DEV.BASELINE = False
-    DEV.MULTI_UPSAMPLER = False
+    DEV.MULTI_UPSAMPLER = False   # does not affect much
 
     DEV.BIG_SUPERVISE = False
-    DEV.BIG_LOSS_CHOICE = 'ce'    # default setting
+    DEV.BIG_LOSS_CHOICE = 'ce'    # default setting (currently only support this)
     DEV.BIG_FC_INIT = 'scratch'  # or 'coco_pretrain'
     DEV.BIG_LOSS_FAC = 1.
 
@@ -296,11 +291,6 @@ class Config(object):
               int(math.ceil(self.DATA.IMAGE_SHAPE[1] / stride))]
              for stride in self.MODEL.BACKBONE_STRIDES])
 
-        # TODO (low): add more here; delete some config for brevity
-        if not self.TRAIN.LR_WARM_UP:
-            del self.TRAIN['LR_WP_ITER']
-            del self.TRAIN['LR_WP_FACTOR']
-
         if self.MISC.USE_VISDOM:
             if self.CTRL.DEBUG:
                 self.MISC.VIS.PORT = 8097  # debug
@@ -330,6 +320,15 @@ class Config(object):
                 'dev_roi.big_fc_layer.weight': 'classifier.linear_class.weight',
                 'dev_roi.big_fc_layer.bias': 'classifier.linear_class.bias',
             }
+        # TODO (low): add more here; delete some config for brevity
+        if not self.TRAIN.LR_WARM_UP:
+            del self.TRAIN['LR_WP_ITER']
+            del self.TRAIN['LR_WP_FACTOR']
+        if not self.DEV.BIG_SUPERVISE:
+            del self.DEV['BIG_LOSS_FAC']
+            del self.DEV['BIG_FC_INIT']
+            del self.DEV['BIG_LOSS_CHOICE']
+            del self.DEV['BIG_FC_INIT_LIST']
 
 
 class CocoConfig(Config):
@@ -349,7 +348,7 @@ class CocoConfig(Config):
 
         _ignore_yaml = False
         # ================ (CUSTOMIZED CONFIG) =========================
-        if args.config_name == 'fuck':
+        if args.config_name == 'local_pc':
 
             # debug mode on local pc
             # self.CTRL.PROFILE_ANALYSIS = True
@@ -357,19 +356,21 @@ class CocoConfig(Config):
             self.CTRL.QUICK_VERIFY = True
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1
-            self.DEV.LOSS_FAC = 100
-            self.DEV.LOSS_CHOICE = 'kl'
+            self.DEV.LOSS_FAC = 1.
+            self.DEV.LOSS_CHOICE = 'ot'
             self.TRAIN.BATCH_SIZE = 4
             # self.DEV.DIS_REG_LOSS = True
             self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
             # self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
 
-            self.DEV.BIG_SUPERVISE = True
+            self.DEV.OT_ONE_DIM_FORM = 'conv'  #'fc'
+
+            self.DEV.BIG_SUPERVISE = False
             self.DEV.BIG_LOSS_FAC = 1.
             self.DEV.BIG_FC_INIT = 'coco_pretrain'
 
             # self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
-            self.DEV.MULTI_UPSAMPLER = True
+            self.DEV.MULTI_UPSAMPLER = False
             _ignore_yaml = True
 
         elif args.config_name.startswith('base_101'):

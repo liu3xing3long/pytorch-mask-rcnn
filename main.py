@@ -18,9 +18,7 @@ if __name__ == '__main__':
     parser.add_argument('--config_name',
                         required=False,
                         # default='')
-                        # default='all_new')
-                        # default='hyli_default_old')
-                        default='fuck')
+                        default='local_pc')
                         # default='base_101_quick')
 
     parser.add_argument('--config_file',
