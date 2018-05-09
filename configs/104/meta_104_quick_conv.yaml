@@ -12,7 +12,7 @@ DEV:
   BUFFER_SIZE: 1  # use all history
   LOSS_CHOICE: 'ot'
   OT_ONE_DIM_FORM: 'conv'
-  LOSS_FAC: 1.
+  LOSS_FAC: 10.
   ASSIGN_BOX_ON_ALL_SCALE: False
   BIG_SUPERVISE: False
   BIG_LOSS_FAC: 1.
