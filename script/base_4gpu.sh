@@ -5,7 +5,6 @@ file_name=$1
 ext=".yaml"
 config_file=$prefix$file_name$ext
 
-#config_file=$1
 if [ -z "$1" ]
   then
     echo "No config_file (.yaml) argument."
