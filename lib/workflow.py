@@ -13,8 +13,10 @@ from tools.image_utils import *
 import datetime
 from lib.config import LAYER_REGEX, CLASS_NAMES, TEMP
 
+# set CTRL.QUICK_VERIFY=False and DEBUG=False if you want to see one particular sample
 SEE_ONE_EXAMPLE = False
-EXAMPLE_COCO_IND = 510033
+# EXAMPLE_COCO_IND = 510033
+EXAMPLE_COCO_IND = 287305
 
 
 def train_model(input_model, train_generator, valset, optimizer, layers, vis=None, coco_api=None):

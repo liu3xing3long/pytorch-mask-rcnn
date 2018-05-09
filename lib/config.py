@@ -296,11 +296,16 @@ class Config(object):
             del self.TRAIN['LR_WP_FACTOR']
 
         if self.MISC.USE_VISDOM:
+            self.MISC.VIS = AttrDict()
             self.MISC.VIS.PORT = 4000
             self.MISC.VIS.LINE = 100
             self.MISC.VIS.TXT = 200
             self.MISC.VIS.IMG = 300
-            self.MISC.VIS.LOSS_LEGEND = ['total_loss', 'mrcnn_cls']
+            self.MISC.VIS.LOSS_LEGEND = [
+                'total_loss', 'rpn_cls', 'rpn_bbox',
+                'mrcnn_cls', 'mrcnn_bbox', 'mrcnn_mask_loss']
+            if self.DEV.SWITCH and not self.DEV.BASELINE:
+                self.MISC.VIS.LOSS_LEGEND.append('meta_loss')
 
 
 class CocoConfig(Config):
@@ -324,6 +329,7 @@ class CocoConfig(Config):
 
             # debug mode on local pc
             # self.CTRL.PROFILE_ANALYSIS = True
+            self.MISC.USE_VISDOM = True
             self.CTRL.QUICK_VERIFY = True
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1
