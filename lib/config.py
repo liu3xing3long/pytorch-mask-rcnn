@@ -130,7 +130,7 @@ class Config(object):
     # Number of Python threads to use for the data loader (warning: using too many
     # threads can cause GIL-based interference with Python Ops leading to *slower*
     # training; 4 seems to be the sweet spot in our experience)
-    DATA.LOADER_WORKER_NUM = 4
+    DATA.LOADER_WORKER_NUM = 2
 
     # ==================================
     ROIS = AttrDict()
@@ -306,6 +306,10 @@ class Config(object):
                 'mrcnn_cls', 'mrcnn_bbox', 'mrcnn_mask_loss']
             if self.DEV.SWITCH and not self.DEV.BASELINE:
                 self.MISC.VIS.LOSS_LEGEND.append('meta_loss')
+        if self.MISC.GPU_COUNT == 8:
+            self.DATA.LOADER_WORKER_NUM = 32
+        elif self.MISC.GPU_COUNT == 4:
+            self.DATA.LOADER_WORKER_NUM = 16
 
 
 class CocoConfig(Config):

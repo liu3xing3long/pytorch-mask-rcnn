@@ -12,8 +12,6 @@ DEV:
   BUFFER_SIZE: 1  # use all history
   LOSS_CHOICE: 'l1'
   LOSS_FAC: 1.
-ROIS:
-  ASSIGN_ANCHOR_BASE: 40.
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:
