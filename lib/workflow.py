@@ -173,7 +173,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
             # _list = [image_metas[i][-1].data.cpu()[0] for i in range(bs)]
             # assert EXAMPLE_COCO_IND == image_metas[0][-1].data.cpu()[0]
             gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
-            merged_loss, big_feat, big_cnt, small_feat, small_cnt = \
+            merged_loss, big_feat, big_cnt, small_feat, small_cnt, _ = \
                 input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')  # DEBUG HERE
         else:
             # pad with zeros
@@ -186,7 +186,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
 
             # FORWARD PASS
             # the loss shape: gpu_num x 5; meta_loss *NOT* included
-            merged_loss, big_feat, big_cnt, small_feat, small_cnt = \
+            merged_loss, big_feat, big_cnt, small_feat, small_cnt, big_loss = \
                 input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
 
         detailed_loss = torch.mean(merged_loss, dim=0)
@@ -216,7 +216,15 @@ def train_epoch(input_model, data_loader, optimizer, **args):
         else:
             meta_loss = 0
 
-        loss = torch.sum(detailed_loss) + meta_loss
+        # big-loss
+        if config.DEV.SWITCH and config.DEV.BIG_SUPERVISE:
+            # big loss: gpu_num x scale_num x 1
+            big_loss = torch.mean(big_loss)
+            big_loss *= config.DEV.BIG_LOSS_FAC
+        else:
+            big_loss = 0
+
+        loss = torch.sum(detailed_loss) + meta_loss + big_loss
         if config.CTRL.PROFILE_ANALYSIS:
             print('forward time: {:.4f}'.format(time.time() - t))
             t = time.time()
@@ -239,6 +247,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
                 'iter_ind': iter_ind,
                 'total_iter': total_iter,
                 'meta_loss': meta_loss,
+                'big_loss': big_loss,
                 'loss': loss,
                 'lr': lr,
                 'detailed_loss': detailed_loss,

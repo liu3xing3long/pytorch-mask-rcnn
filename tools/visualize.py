@@ -460,10 +460,13 @@ class Visualizer(object):
         curr_ep, iter_ind, total_iter = args['curr_ep'], args['iter_ind'], args['total_iter']
         y_num = len(self.loss_data['legend'])
 
-        loss = torch.cat((args['loss'], args['detailed_loss']))
-        if loss.size(0)+1 == y_num:
+        loss = torch.cat((args['loss'], args['detailed_loss']))   # total loss plus other losses in Mask-RCNN
+        if self.opt.DEV.SWITCH and not self.opt.DEV.BASELINE:
             # indicates there is meta_loss
             loss = torch.cat((loss, args['meta_loss']))
+        if self.opt.DEV.SWITCH and self.opt.DEV.BIG_SUPERVISE:
+            loss = torch.cat((loss, args['big_loss']))
+        assert loss.size(0) == y_num
 
         x_progress = [curr_ep - 1 + float(iter_ind/total_iter) for _ in range(y_num)]
         loss_list = [loss[i].data.cpu()[0] for i in range(y_num)]
@@ -517,7 +520,6 @@ class Visualizer(object):
 
         status = 'RUNNING' if sum([days, hrs]) > 0 else 'DONE'
         msg = 'Phase: {:s}<br/>Status: <b>{:s}</b><br/>'.format(self.opt.CTRL.PHASE, status)
-
         dynamic = 'Start epoch: {:d}, iter: {:d}<br/>' \
                   'Current lr: {:.8f}<br/>' \
                   'Progress: <br/>&emsp;[stage {:s}]<b>{:s} {:06d}/{}</b><br/><br/>' \
@@ -530,13 +532,14 @@ class Visualizer(object):
                     iter_time / self.opt.TRAIN.BATCH_SIZE)
 
         msg += dynamic
-        self.vis.text(msg,
-                      opts={
-                          'title': 'Train dynamics',
-                          'height': self.txt['height']-150,
-                          'width': self.txt['width']
-                      },
-                      win=self.opt.MISC.VIS.TXT+1)
+        self.vis.text(
+            msg,
+            opts={
+                'title': 'Train dynamics',
+                'height': self.txt['height']-150,
+                'width': self.txt['width']
+            },
+            win=self.opt.MISC.VIS.TXT+1)
 
     def show_mAP(self, **args):
         curr = 'Model file:' \

@@ -321,6 +321,7 @@ class MaskRCNN(nn.Module):
             big_cnt = Variable(torch.zeros(1, scale_num, 1, self.config.DATASET.NUM_CLASSES).cuda())
             small_feat = Variable(torch.zeros(1, scale_num, 1024, self.config.DATASET.NUM_CLASSES).cuda())
             small_cnt = Variable(torch.zeros(1, scale_num, 1, self.config.DATASET.NUM_CLASSES).cuda())
+            big_loss = Variable(torch.zeros(1, scale_num, 1).cuda())
 
             # 1. compute RPN targets
             target_rpn_match, target_rpn_bbox = \
@@ -338,13 +339,12 @@ class MaskRCNN(nn.Module):
 
             # 3. mask and cls generation
             if torch.sum(_rois).data[0] != 0:
-
                 # COMPUTE META_OUTPUTS HERE
                 # _pooled_cls: 600 (bsx200), 256, 7, 7
                 _pooled_cls, _pooled_mask, _feat_out = \
                     self.dev_roi(_mrcnn_feature_maps, _rois, target_class_ids)
                 if self.config.DEV.SWITCH and not self.config.DEV.BASELINE:
-                    [big_feat, big_cnt, small_feat, small_cnt] = _feat_out
+                    [big_feat, big_cnt, small_feat, small_cnt, big_loss] = _feat_out
                     # if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
                     #     assert big_feat.size() == (1, 4, 1024, 81), 'big_feat size: {}'.format(big_feat.size())
                     #     assert small_feat.size() == big_feat.size(), 'small_feat size: {}'.format(small_feat.size())
@@ -384,6 +384,6 @@ class MaskRCNN(nn.Module):
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass loss compute!'.format(curr_gpu_id))
 
-            return loss_merge, big_feat, big_cnt, small_feat, small_cnt  # must be Variables
+            return loss_merge, big_feat, big_cnt, small_feat, small_cnt, big_loss  # must be Variables
 
 

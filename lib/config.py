@@ -212,6 +212,9 @@ class Config(object):
     DEV.ASSIGN_BOX_ON_ALL_SCALE = False
     DEV.BASELINE = False
     DEV.MULTI_UPSAMPLER = False
+    DEV.BIG_SUPERVISE = False
+    DEV.BIG_LOSS_CHOICE = 'ce'    # default setting
+    DEV.BIG_LOSS_FAC = 1.
 
     # ==============================
     CTRL = AttrDict()
@@ -312,6 +315,9 @@ class Config(object):
                 'mrcnn_cls', 'mrcnn_bbox', 'mrcnn_mask_loss']
             if self.DEV.SWITCH and not self.DEV.BASELINE:
                 self.MISC.VIS.LOSS_LEGEND.append('meta_loss')
+            if self.DEV.SWITCH and self.DEV.BIG_SUPERVISE:
+                self.MISC.VIS.LOSS_LEGEND.append('big_loss')
+
         if self.MISC.GPU_COUNT == 8:
             self.DATA.LOADER_WORKER_NUM = 32
         elif self.MISC.GPU_COUNT == 4:
@@ -347,8 +353,11 @@ class CocoConfig(Config):
             self.DEV.LOSS_CHOICE = 'kl'
             self.TRAIN.BATCH_SIZE = 4
             # self.DEV.DIS_REG_LOSS = True
-            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = True
+            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
             # self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
+
+            self.DEV.BIG_SUPERVISE = True
+            self.DEV.BIG_LOSS_FAC = 1.
 
             # self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
             self.DEV.MULTI_UPSAMPLER = True

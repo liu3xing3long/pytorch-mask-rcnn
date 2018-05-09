@@ -496,9 +496,9 @@ def adjust_lr(optimizer, curr_ep, curr_iter, config):
 
 
 def show_loss_terminal(config, **args):
+
     curr_iter_time_start = args['curr_iter_time_start']
     curr_ep, iter_ind, total_iter = args['curr_ep'], args['iter_ind'], args['total_iter']
-    meta_loss = args['meta_loss']
     loss = args['loss']
     lr = args['lr']
     detailed_loss = args['detailed_loss']
@@ -507,13 +507,21 @@ def show_loss_terminal(config, **args):
     iter_time = time.time() - curr_iter_time_start
     days, hrs = compute_left_time(
         iter_time, curr_ep, sum(config.TRAIN.SCHEDULE), iter_ind, total_iter)
+
+    # additional loss fill up here
+    meta_loss = args['meta_loss']
+    big_loss = args['big_loss']
     suffix = ' - meta_loss: {:.3f}' if config.DEV.SWITCH and not config.DEV.BASELINE else '{:s}'
-    last_output = meta_loss.data.cpu()[0] if config.DEV.SWITCH and not config.DEV.BASELINE else ''
-    config_name_str = config.CTRL.CONFIG_NAME if not config.CTRL.QUICK_VERIFY else \
-        config.CTRL.CONFIG_NAME + ', quick verify mode'
+    suffix += ' - big_loss: {:.3f}' if config.DEV.SWITCH and config.DEV.BIG_SUPERVISE else '{:s}'
+    last_out_1 = meta_loss.data.cpu()[0] if config.DEV.SWITCH and not config.DEV.BASELINE else ''
+    last_out_2 = big_loss.data.cpu()[0] if config.DEV.SWITCH and config.DEV.BIG_SUPERVISE else ''
+
     progress_str = '[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:.2f} hrs] (iter_t: {:.2f})' \
                    '\tlr: {:.6f} | loss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} ' \
                    '- mrcnn_cls: {:.3f} - mrcnn_bbox: {:.3f} - mrcnn_mask_loss: {:.3f}' + suffix
+
+    config_name_str = config.CTRL.CONFIG_NAME if not config.CTRL.QUICK_VERIFY else \
+        config.CTRL.CONFIG_NAME + ', quick verify mode'
 
     print_log(progress_str.format(
         config_name_str, stage_name, epoch_str, iter_ind, total_iter,
@@ -521,7 +529,9 @@ def show_loss_terminal(config, **args):
         loss.data.cpu()[0],
         detailed_loss[0].data.cpu()[0], detailed_loss[1].data.cpu()[0],
         detailed_loss[2].data.cpu()[0], detailed_loss[3].data.cpu()[0],
-        detailed_loss[4].data.cpu()[0], last_output), config.MISC.LOG_FILE)
+        detailed_loss[4].data.cpu()[0],
+        last_out_1, last_out_2),
+        config.MISC.LOG_FILE)
 
 
 def save_model(model, **args):
