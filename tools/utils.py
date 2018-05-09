@@ -386,7 +386,7 @@ def update_config_and_load_model(config, network, train_generator=None):
             config.TEST.SAVE_IM = True
 
         # set up buffer for meta-loss
-        if config.DEV.SWITCH:
+        if config.DEV.SWITCH and not config.DEV.BASELINE:
             try:
                 # indicate this is a resumed model
                 network.buffer = torch.from_numpy(checkpoints['buffer']).cuda()
