@@ -230,6 +230,7 @@ class Config(object):
     MISC = AttrDict()
     MISC.SEED = 2000
     MISC.USE_VISDOM = False
+    MISC.VIS.PORT = -1  # must be passed from configs on different servers
     # the following will be set somewhere else
     MISC.LOG_FILE = None
     MISC.DET_RESULT_FILE = None
@@ -300,10 +301,9 @@ class Config(object):
 
         if self.MISC.USE_VISDOM:
             self.MISC.VIS = AttrDict()
-            if not self.CTRL.DEBUG:
-                self.MISC.VIS.PORT = 4000  # on remote server
-            else:
+            if self.CTRL.DEBUG:
                 self.MISC.VIS.PORT = 8097  # debug
+            assert self.MISC.VIS.PORT > 0, 'vis_port not designated!!!'
 
             print('\n[visdom is activated] remember to execute '
                   '**python -m visdom.server -port={:d}** on server (or pc)!\n'.format(self.MISC.VIS.PORT))
