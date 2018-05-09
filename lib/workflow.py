@@ -18,6 +18,8 @@ SEE_ONE_EXAMPLE = False
 # EXAMPLE_COCO_IND = 510033
 EXAMPLE_COCO_IND = 287305
 
+# TODO (mid, general): show warning message in Visdom
+
 
 def train_model(input_model, train_generator, valset, optimizer, layers, vis=None, coco_api=None):
     """

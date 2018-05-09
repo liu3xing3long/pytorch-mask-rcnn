@@ -7,14 +7,8 @@ EPS = 10e-20
 
 class MaskRCNN(nn.Module):
     def __init__(self, config):
-        """
-            config: A Sub-class of the Config class
-            model_dir: Directory to save training results and trained weights
-        """
         super(MaskRCNN, self).__init__()
         self.config = config
-        # self.loss_history = []
-        # self.val_loss_history = []
         self._build(config=config)
         self._initialize_weights()
 
@@ -86,7 +80,7 @@ class MaskRCNN(nn.Module):
                 nn.init.xavier_uniform(m.weight)
                 if m.bias is not None:
                     m.bias.data.zero_()
-            elif isinstance(m, nn.ConvTranspose2d):  # TODO (init): really does not matter
+            elif isinstance(m, nn.ConvTranspose2d):
                 nn.init.xavier_normal(m.weight)
                 if m.bias is not None:
                     m.bias.data.zero_()
@@ -105,6 +99,7 @@ class MaskRCNN(nn.Module):
             self.buffer_cnt = torch.zeros(self.config.DEV.BUFFER_SIZE, 1, self.config.DATASET.NUM_CLASSES).cuda()
 
         elif self.config.DEV.INIT_BUFFER_WEIGHT == 'coco_pretrain':
+            # TODO: init buffer
             print_log('init buffer from pretrain model ...', log_file)
             NotImplementedError()
 

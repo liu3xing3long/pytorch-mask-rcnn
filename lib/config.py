@@ -194,7 +194,6 @@ class Config(object):
     # ==============================
     DEV = AttrDict()
     DEV.SWITCH = False
-    # TODO (high, urgent) 'coco_pretrain'
     DEV.INIT_BUFFER_WEIGHT = 'scratch'
     # set to <= 0 if trained from the very first iter
     DEV.EFFECT_AFER_EP_PERCENT = 0.
@@ -212,8 +211,10 @@ class Config(object):
     DEV.ASSIGN_BOX_ON_ALL_SCALE = False
     DEV.BASELINE = False
     DEV.MULTI_UPSAMPLER = False
+
     DEV.BIG_SUPERVISE = False
     DEV.BIG_LOSS_CHOICE = 'ce'    # default setting
+    DEV.BIG_FC_INIT = 'scratch'  # or 'coco_pretrain'
     DEV.BIG_LOSS_FAC = 1.
 
     # ==============================
@@ -295,7 +296,7 @@ class Config(object):
               int(math.ceil(self.DATA.IMAGE_SHAPE[1] / stride))]
              for stride in self.MODEL.BACKBONE_STRIDES])
 
-        # delete some config for brevity
+        # TODO (low): add more here; delete some config for brevity
         if not self.TRAIN.LR_WARM_UP:
             del self.TRAIN['LR_WP_ITER']
             del self.TRAIN['LR_WP_FACTOR']
@@ -322,6 +323,13 @@ class Config(object):
             self.DATA.LOADER_WORKER_NUM = 32
         elif self.MISC.GPU_COUNT == 4:
             self.DATA.LOADER_WORKER_NUM = 16
+
+        if self.DEV.BIG_FC_INIT == 'coco_pretrain':
+            self.DEV.BIG_FC_INIT_LIST = {
+                # target network vs pretrain network
+                'dev_roi.big_fc_layer.weight': 'classifier.linear_class.weight',
+                'dev_roi.big_fc_layer.bias': 'classifier.linear_class.bias',
+            }
 
 
 class CocoConfig(Config):
@@ -358,6 +366,7 @@ class CocoConfig(Config):
 
             self.DEV.BIG_SUPERVISE = True
             self.DEV.BIG_LOSS_FAC = 1.
+            self.DEV.BIG_FC_INIT = 'coco_pretrain'
 
             # self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
             self.DEV.MULTI_UPSAMPLER = True

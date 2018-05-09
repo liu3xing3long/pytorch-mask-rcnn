@@ -498,7 +498,7 @@ class Dev(nn.Module):
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
             if train_phase and not self.config.DEV.BASELINE:
                 feat_out = [
-                    torch.stack(big_feat).detach().unsqueeze(dim=0),
+                    torch.stack(big_feat).detach().unsqueeze(dim=0),   # do *NOT* pass gradient of big_feat
                     torch.stack(big_cnt).unsqueeze(dim=0),
                     torch.stack(small_feat).unsqueeze(dim=0),
                     torch.stack(small_cnt).unsqueeze(dim=0),
