@@ -20,6 +20,7 @@ from matplotlib.patches import Polygon
 from tools import utils
 from scipy.misc import imread
 from tools.utils import print_log, mkdirs
+from lib.config import CLASS_NAMES
 
 if "DISPLAY" not in os.environ:
     plt.switch_backend('agg')
@@ -423,15 +424,13 @@ class Visualizer(object):
             import visdom
             self.vis = visdom.Visdom(port=opt.MISC.VIS.PORT, env=opt.CTRL.CONFIG_NAME)
             self.dis_im_cnt, self.dis_im_cycle = 0, 4
-            self.loss_data = {'X': [], 'Y': [], 'legend': self.MISC.VIS.LOSS_LEGEND}
-            # for visualization
-            # TODO: visualize in the training process
-            self.num_classes = dataset.num_classes
-            self.class_name = dataset.COCO_CLASSES_names
+            self.loss_data = {'X': [], 'Y': [], 'legend': self.opt.MISC.VIS.LOSS_LEGEND}
+
+            self.num_classes = val_data.dataset.num_classes
+            self.class_name = CLASS_NAMES
             self.color = plt.cm.hsv(np.linspace(0, 1, (self.num_classes-1))).tolist()
-            # for both train and test
-            self.save_det_res_path = os.path.join(self.opt.save_folder, 'det_result')
-            mkdirs(self.save_det_res_path)
+            # if self.opt.TEST.SAVE_IM:
+            self.save_det_res_path = self.opt.MISC.SAVE_IMAGE_DIR
 
     def plot_loss(self, errors, progress, others=None):
         """draw loss on visdom console"""

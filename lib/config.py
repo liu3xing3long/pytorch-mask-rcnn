@@ -126,7 +126,11 @@ class Config(object):
     # Bounding box refinement standard deviation for RPN and final detections.
     DATA.BBOX_STD_DEV = np.array([0.1, 0.1, 0.2, 0.2])
     DATA.IMAGE_SHAPE = []
-    DATA.LOADER_WORKER_NUM = 8
+    # Quote from "roytseng-tw/Detectron.pytorch":
+    # Number of Python threads to use for the data loader (warning: using too many
+    # threads can cause GIL-based interference with Python Ops leading to *slower*
+    # training; 4 seems to be the sweet spot in our experience)
+    DATA.LOADER_WORKER_NUM = 4
 
     # ==================================
     ROIS = AttrDict()
@@ -292,11 +296,16 @@ class Config(object):
             del self.TRAIN['LR_WP_FACTOR']
 
         if self.MISC.USE_VISDOM:
+            self.MISC.VIS = AttrDict()
             self.MISC.VIS.PORT = 4000
             self.MISC.VIS.LINE = 100
             self.MISC.VIS.TXT = 200
             self.MISC.VIS.IMG = 300
-            self.MISC.VIS.LOSS_LEGEND = ['total_loss', 'mrcnn_cls']
+            self.MISC.VIS.LOSS_LEGEND = [
+                'total_loss', 'rpn_cls', 'rpn_bbox',
+                'mrcnn_cls', 'mrcnn_bbox', 'mrcnn_mask_loss']
+            if self.DEV.SWITCH and not self.DEV.BASELINE:
+                self.MISC.VIS.LOSS_LEGEND.append('meta_loss')
 
 
 class CocoConfig(Config):
@@ -319,17 +328,20 @@ class CocoConfig(Config):
         if args.config_name == 'fuck':
 
             # debug mode on local pc
-            self.CTRL.QUICK_VERIFY = False
+            # self.CTRL.PROFILE_ANALYSIS = True
+            self.MISC.USE_VISDOM = True
+            self.CTRL.QUICK_VERIFY = True
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1
             self.DEV.LOSS_FAC = 100
             self.DEV.LOSS_CHOICE = 'kl'
-            self.TRAIN.BATCH_SIZE = 1
+            self.TRAIN.BATCH_SIZE = 4
             # self.DEV.DIS_REG_LOSS = True
             self.DEV.ASSIGN_BOX_ON_ALL_SCALE = True
             # self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
 
-            self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
+            # self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
+            self.DEV.MULTI_UPSAMPLER = True
             _ignore_yaml = True
 
         elif args.config_name.startswith('base_101'):

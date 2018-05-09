@@ -272,23 +272,24 @@ class Dev(nn.Module):
         self.config = config
 
         if self.use_dev:
-
-            # TODO: for now it's the same size with mask_pool_size (14)
+            # for now it's the same size with mask_pool_size (14)
             self.feat_pool_size = config.DEV.FEAT_BRANCH_POOL_SIZE
             self.upsample_fac = config.DEV.UPSAMPLE_FAC
             assert self.feat_pool_size % 2 == 0, 'pool size of feature branch has to be even'
 
             # define **upsampler**
-            # TODO: consider different upsampler on different scales
             if self.upsample_fac == 2.0:
-                self.upsample = nn.Sequential(*[
-                    nn.ConvTranspose2d(self.depth, self.depth, kernel_size=3, stride=2, padding=1, output_padding=1),
-                    nn.BatchNorm2d(self.depth),
-                    nn.ReLU(inplace=True),
-                    # nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1, padding=1),
-                    # nn.BatchNorm2d(self.depth),
-                    # nn.ReLU(inplace=True)
-                ])
+                upsample_num = 4 if self.config.DEV.MULTI_UPSAMPLER else 1
+                self.upsample = nn.ModuleList()
+                for i in range(upsample_num):
+                    self.upsample.append(nn.Sequential(*[
+                        nn.ConvTranspose2d(self.depth, self.depth, kernel_size=3, stride=2, padding=1, output_padding=1),
+                        nn.BatchNorm2d(self.depth),
+                        nn.ReLU(inplace=True),
+                        # nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1, padding=1),
+                        # nn.BatchNorm2d(self.depth),
+                        # nn.ReLU(inplace=True)
+                    ]))
             else:
                 raise Exception('unsupported upsampling factor')
 
@@ -309,7 +310,7 @@ class Dev(nn.Module):
                 if config.DEV.LOSS_CHOICE == 'l2':
                     _layer_list.append(nn.Sigmoid())
                 elif config.DEV.LOSS_CHOICE == 'l1':
-                    _layer_list.append(nn.Sigmoid())
+                    _layer_list.append(nn.Sigmoid())    # now l1 loss is also appended Sigmoid
                 elif config.DEV.LOSS_CHOICE == 'kl':
                     _layer_list.append(nn.Softmax(dim=1))
                 self.feat_extract = nn.Sequential(*_layer_list)
@@ -449,7 +450,8 @@ class Dev(nn.Module):
                 box_ind = small_index[:, 0].int()
                 if _use_upsample:
                     # small_boxes *= self.upsample_fac
-                    _feat_maps = self.upsample(curr_feat_maps)
+                    _idx = i if self.config.DEV.MULTI_UPSAMPLER else 0
+                    _feat_maps = self.upsample[_idx](curr_feat_maps)
                 else:
                     _feat_maps = curr_feat_maps
 

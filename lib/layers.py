@@ -434,14 +434,18 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
     return rois_out, target_class_ids, target_deltas, target_mask
 
 
-############################################################
-#  RPN target layer (previously in __get_item__)
-############################################################
+##############################################################################
+#  RPN target layer (previously in __get_item__ now in forward() Train phase)
+##############################################################################
 def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
-
+    """per sample op."""
     # sample_id is the id within each GPU
     curr_sample_id = args[0]
     coco_im_id = args[1].data.cpu().numpy()
+
+    if SEE_ONE_EXAMPLE and EXAMPLE_COCO_IND == coco_im_id[curr_sample_id]:
+        print('this is the image you want to see: {}'.format(EXAMPLE_COCO_IND))
+        a = 1
 
     # RPN Match: 1 = positive anchor, -1 = negative anchor, 0 = neutral
     target_rpn_match = Variable(torch.zeros(anchors.size(0)).cuda(), requires_grad=False)
@@ -538,9 +542,12 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         _neg_set_to_zero = -1
     # ======= ABOVE DONE =======
     # TODO: bug this line. RuntimeError: cuda runtime error (59) : device-side assert triggered at
-    _pos_num = torch.sum((target_rpn_match == 1).long()).data[0]
-    _neg_num = torch.sum((target_rpn_match == -1).long()).data[0]
-    _neutral_num = torch.sum((target_rpn_match == 0).long()).data[0]
+    _temp = target_rpn_match == 1
+    _pos_num = torch.sum(_temp.long()).data[0]
+    _temp = target_rpn_match == -1
+    _neg_num = torch.sum(_temp.long()).data[0]
+    _temp = target_rpn_match == 0
+    _neutral_num = torch.sum(_temp.long()).data[0]
 
     if _pos_num + _neg_num != config.RPN.TRAIN_ANCHORS_PER_IMAGE:
         curr_im_name = coco_im_id[curr_sample_id]
