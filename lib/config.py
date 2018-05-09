@@ -130,7 +130,7 @@ class Config(object):
     # Number of Python threads to use for the data loader (warning: using too many
     # threads can cause GIL-based interference with Python Ops leading to *slower*
     # training; 4 seems to be the sweet spot in our experience)
-    DATA.LOADER_WORKER_NUM = 4
+    DATA.LOADER_WORKER_NUM = 32
 
     # ==================================
     ROIS = AttrDict()
