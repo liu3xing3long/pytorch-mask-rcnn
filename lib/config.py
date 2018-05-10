@@ -194,7 +194,7 @@ class Config(object):
     DEV.EFFECT_AFER_EP_PERCENT = 0.
     DEV.UPSAMPLE_FAC = 2.
     DEV.LOSS_CHOICE = 'l1'
-    DEV.OT_ONE_DIM_FORM = 'fc'   # 'conv'
+    DEV.OT_ONE_DIM_FORM = 'conv'
     DEV.LOSS_FAC = 0.5
     # set to 1 if use all historic data
     DEV.BUFFER_SIZE = 1000
@@ -330,6 +330,8 @@ class Config(object):
             del self.DEV['BIG_FC_INIT']
             del self.DEV['BIG_LOSS_CHOICE']
             del self.DEV['BIG_FC_INIT_LIST']
+        if self.DEV.LOSS_CHOICE != 'ot':
+            del self.DEV['OT_ONE_DIM_FORM']
 
 
 class CocoConfig(Config):
