@@ -11,8 +11,7 @@ class MaskRCNN(nn.Module):
         super(MaskRCNN, self).__init__()
         self.config = config
         self._build(config=config)
-        self._initialize_weights()
-
+        self.initialize_weights()
     @property
     def epoch(self):
         return self._epoch
@@ -74,7 +73,7 @@ class MaskRCNN(nn.Module):
         #                 p.requires_grad = False
         #     self.apply(set_bn_fix)
 
-    def _initialize_weights(self):
+    def initialize_weights(self):
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv1d):
@@ -95,7 +94,7 @@ class MaskRCNN(nn.Module):
                 m.bias.data.zero_()
 
     def initialize_buffer(self, log_file):
-        # called in 'utils.py'
+        """ called in 'utils.py' """
         if self.config.DEV.INIT_BUFFER_WEIGHT == 'scratch':
             print_log('init buffer from scratch ...', log_file)
             self.buffer = torch.zeros(self.config.DEV.BUFFER_SIZE, 1024, self.config.DATASET.NUM_CLASSES).cuda()

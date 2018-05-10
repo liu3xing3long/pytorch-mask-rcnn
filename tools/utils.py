@@ -12,6 +12,7 @@ from ast import literal_eval
 import datetime
 import time
 from torch.nn.parameter import Parameter
+import torch.nn as nn
 
 
 ############################################################
@@ -585,3 +586,51 @@ def save_model(model, **args):
         'buffer_cnt':   buffer_cnt,
         'loss_data':    loss_data
     }, model_file)
+
+
+def check_max_mem(input_model, data_loader):
+
+    if isinstance(input_model, nn.DataParallel):
+        model = input_model.module
+    else:
+        # single-gpu
+        model = input_model
+    config = model.config
+
+    # set optimizer
+    optimizer = set_optimizer(model, config.TRAIN)
+
+    for iter_ind, inputs in zip(range(1, 11), data_loader):
+        images = Variable(inputs[0].cuda())
+        image_metas = Variable(inputs[-1].cuda())
+        gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
+        merged_loss, big_feat, big_cnt, small_feat, small_cnt, big_loss = \
+            input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
+        detailed_loss = torch.mean(merged_loss, dim=0)
+
+        if config.DEV.SWITCH and not config.DEV.BASELINE:
+            # big_feat: gpu_num x scale_num x 1024 x 81; also update the buffer
+            meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt])
+            meta_loss *= config.DEV.LOSS_FAC
+        else:
+            meta_loss = 0
+
+        # big-loss
+        if config.DEV.SWITCH and config.DEV.BIG_SUPERVISE:
+            # big loss: gpu_num x scale_num x 1
+            big_loss = torch.mean(big_loss)
+            big_loss *= config.DEV.BIG_LOSS_FAC
+        else:
+            big_loss = 0
+
+        loss = torch.sum(detailed_loss) + meta_loss + big_loss
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    del optimizer
+    print_log('passed maximum GPU mem test!', config.MISC.LOG_FILE)
+    # set optimizer
+    optimizer = set_optimizer(model, config.TRAIN)
+    model.initialize_weights()    # TODO (check if weights been initialized after checking mem)
+    return optimizer

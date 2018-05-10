@@ -452,6 +452,7 @@ class Visualizer(object):
             self.start_iter = model.start_iter
             self.mAP_msg = 'Config name:' \
                            '<br/>&emsp;{:s}<br/><br/>'.format(self.opt.CTRL.CONFIG_NAME)
+            self.msg = ''  # dynamic info
 
             self._show_config()
 
@@ -510,30 +511,36 @@ class Visualizer(object):
 
     def show_dynamic_info(self, **args):
         """show dynamic info on visdom console"""
-        curr_iter_time_start = args['curr_iter_time_start']
-        curr_ep, iter_ind, total_iter = args['curr_ep'], args['iter_ind'], args['total_iter']
-        stage_name, epoch_str = args['stage_name'], args['epoch_str']
+        try:
+            curr_iter_time_start = args['curr_iter_time_start']   # error msg does not have this key
+            curr_ep, iter_ind, total_iter = args['curr_ep'], args['iter_ind'], args['total_iter']
+            stage_name, epoch_str = args['stage_name'], args['epoch_str']
 
-        iter_time = time.time() - curr_iter_time_start
-        days, hrs = compute_left_time(
-            iter_time, curr_ep, sum(self.opt.TRAIN.SCHEDULE), iter_ind, total_iter)
+            iter_time = time.time() - curr_iter_time_start
+            days, hrs = compute_left_time(
+                iter_time, curr_ep, sum(self.opt.TRAIN.SCHEDULE), iter_ind, total_iter)
 
-        status = 'RUNNING' if sum([days, hrs]) > 0 else 'DONE'
-        msg = 'Phase: {:s}<br/>Status: <b>{:s}</b><br/>'.format(self.opt.CTRL.PHASE, status)
-        dynamic = 'Start epoch: {:d}, iter: {:d}<br/>' \
-                  'Current lr: {:.8f}<br/>' \
-                  'Progress: <br/>&emsp;[stage {:s}]<b>{:s} {:06d}/{}</b><br/><br/>' \
-                  'est. left time: {:d} days, {:.2f} hrs<br/>' \
-                  'time per image (iter/bs): {:.4f} sec<br/>'.format(
-                    self.start_epoch, self.start_iter,
-                    args['lr'],
-                    stage_name, epoch_str, iter_ind, total_iter,
-                    days, hrs,
-                    iter_time / self.opt.TRAIN.BATCH_SIZE)
+            status = 'RUNNING' if sum([days, hrs]) > 0 else 'DONE'
+            msg = 'Phase: {:s}<br/>Status: <b>{:s}</b><br/>'.format(self.opt.CTRL.PHASE, status)
+            dynamic = 'Start epoch: {:d}, iter: {:d}<br/>' \
+                      'Current lr: {:.8f}<br/>' \
+                      'Progress: <br/>&emsp;[stage {:s}]<b>{:s} {:06d}/{}</b><br/><br/>' \
+                      'est. left time: {:d} days, {:.2f} hrs<br/>' \
+                      'time per image (iter/bs): {:.4f} sec<br/>'.format(
+                        self.start_epoch, self.start_iter,
+                        args['lr'],
+                        stage_name, epoch_str, iter_ind, total_iter,
+                        days, hrs,
+                        iter_time / self.opt.TRAIN.BATCH_SIZE)
+            self.msg = msg + dynamic
+            curr_msg = self.msg
+        except KeyError:
+            error_str = '<br/><br/><b>ERROR OCCURS at epoch {:d}, iter {:d} !!!</b>'\
+                .format(args['curr_ep'], args['iter_ind'])
+            curr_msg = self.msg + error_str
 
-        msg += dynamic
         self.vis.text(
-            msg,
+            curr_msg,
             opts={
                 'title': 'Train dynamics',
                 'height': self.txt['height']-150,

@@ -185,11 +185,18 @@ def train_epoch(input_model, data_loader, optimizer, **args):
                 print('\ncurr_iter: ', iter_ind)
                 print('fetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
                 t = time.time()
-
-            # FORWARD PASS
-            # the loss shape: gpu_num x 5; meta_loss *NOT* included
-            merged_loss, big_feat, big_cnt, small_feat, small_cnt, big_loss = \
-                input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
+            try:
+                # FORWARD PASS
+                # the loss shape: gpu_num x 5; meta_loss *NOT* included
+                merged_loss, big_feat, big_cnt, small_feat, small_cnt, big_loss = \
+                    input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
+            except Exception:
+                info_pass = {
+                    'curr_ep': curr_ep,
+                    'iter_ind': iter_ind,
+                }
+                vis.show_dynamic_info(**info_pass)
+                raise RuntimeError('whoops, some error pops up...')
 
         detailed_loss = torch.mean(merged_loss, dim=0)
 

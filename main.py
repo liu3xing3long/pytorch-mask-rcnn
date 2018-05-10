@@ -2,7 +2,7 @@ import argparse
 import lib.model as network
 from lib.config import CocoConfig
 from lib.workflow import *
-from tools.utils import update_config_and_load_model, set_optimizer
+from tools.utils import update_config_and_load_model, set_optimizer, check_max_mem
 from datasets.dataset_coco import get_data
 from tools.visualize import Visualizer
 
@@ -17,8 +17,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--config_name',
                         required=False,
-                        default='')
-                        # default='local_pc')
+                        # default='')
+                        default='local_pc')
                         # default='base_101_quick')
 
     parser.add_argument('--config_file',
@@ -45,13 +45,24 @@ if __name__ == '__main__':
 
     # Configuration
     config = CocoConfig(args)
+    # Get data
+    train_data, val_data, val_api = get_data(config)
 
     # Create model
     print('building network ...\n')
     model = network.MaskRCNN(config)
+    if config.MISC.GPU_COUNT < 1:
+        print('cpu mode ...')
+    elif config.MISC.GPU_COUNT == 1:
+        print('single gpu mode ...')
+        model = model.cuda()
+    else:
+        print('multi-gpu mode ...')
+        model = torch.nn.DataParallel(model).cuda()
 
-    # Get data
-    train_data, val_data, val_api = get_data(config)
+    if args.phase == 'train':
+        optimizer = set_optimizer(model, config.TRAIN) if config.CTRL.DEBUG \
+            else check_max_mem(model, train_data)
 
     # Select weights file to load (MUST be put at the end)
     # update start epoch and iter if resume
@@ -63,20 +74,8 @@ if __name__ == '__main__':
     print_log('print network structure in log file [NOT shown in terminal] ...', config.MISC.LOG_FILE)
     print_log(model, config.MISC.LOG_FILE, quiet_termi=True)
 
-    if config.MISC.GPU_COUNT < 1:
-        print('cpu mode ...')
-    elif config.MISC.GPU_COUNT == 1:
-        print('single gpu mode ...')
-        model = model.cuda()
-    else:
-        print('multi-gpu mode ...')
-        model = torch.nn.DataParallel(model).cuda()
-
     # Train or inference
     if args.phase == 'train':
-
-        # set optimizer
-        optimizer = set_optimizer(model, config.TRAIN)
 
         # Training - Stage 1
         print("\nTraining network heads")
