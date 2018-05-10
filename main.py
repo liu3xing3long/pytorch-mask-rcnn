@@ -52,11 +52,11 @@ if __name__ == '__main__':
     print('building network ...\n')
     model = MaskRCNN(config)
 
-    if args.phase == 'train':
-        if config.CTRL.DEBUG:
-            optimizer = set_optimizer(model, config.TRAIN)
-        else:
-            optimizer, model = check_max_mem(model, train_data, MaskRCNN)
+    # if args.phase == 'train':
+    #     if config.CTRL.DEBUG:
+    optimizer = set_optimizer(model, config.TRAIN)
+    # else:
+    #     optimizer, model = check_max_mem(model, train_data, MaskRCNN)
 
     # Select weights file to load (MUST be put at the end)
     # update start epoch and iter if resume
