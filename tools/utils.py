@@ -596,9 +596,11 @@ def check_max_mem(input_model, data_loader):
         # single-gpu
         model = input_model
     config = model.config
-
+    print_log('checking max mem cost ...', config.MISC.LOG_FILE)
     # set optimizer
     optimizer = set_optimizer(model, config.TRAIN)
+    model.buffer = torch.zeros(model.config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES).cuda()
+    model.buffer_cnt = torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES).cuda()
 
     for iter_ind, inputs in zip(range(1, 11), data_loader):
         images = Variable(inputs[0].cuda())
