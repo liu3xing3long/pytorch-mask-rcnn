@@ -505,9 +505,12 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         print('\t\t[sample_id {}, im {}] 1. passed initial assignment in generate_rpn_target'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
 
-    _pos_num_before = torch.sum((target_rpn_match == 1).long()).data[0]
-    _neg_num_before = torch.sum((target_rpn_match == -1).long()).data[0]
-    _neutral_num_before = torch.sum((target_rpn_match == 0).long()).data[0]
+    _tmp = target_rpn_match == 1
+    _pos_num_before = torch.sum(_tmp.long()).data[0]
+    _tmp = target_rpn_match == -1
+    _neg_num_before = torch.sum(_tmp.long()).data[0]
+    _tmp = target_rpn_match == 0
+    _neutral_num_before = torch.sum(_tmp.long()).data[0]
     # 4. Subsample to balance positive and negative anchors
     # Don't let positives be more than half the anchors
     pos_ids = torch.nonzero(target_rpn_match == 1).squeeze()

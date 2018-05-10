@@ -11,6 +11,7 @@ import numpy as np
 from ast import literal_eval
 import datetime
 import time
+from torch.nn.parameter import Parameter
 
 
 ############################################################
@@ -290,7 +291,7 @@ def update_config_and_load_model(config, model, train_generator=None):
     choice = config.MODEL.INIT_FILE_CHOICE
     phase = config.CTRL.PHASE
 
-    # determine model_path to load model
+    # 1. determine model_path to load model
     use_pretrain = False
     if phase == 'train':
         if os.path.exists(choice):
@@ -342,15 +343,14 @@ def update_config_and_load_model(config, model, train_generator=None):
     # set MODEL.INIT_MODEL
     config.MODEL.INIT_MODEL = model_path
 
-    # load model (resumed or pretrain)
-    # TODO (mid): peek over which weights in pretrain are loaded into the network
+    # 2. LOAD MODEL (resumed or pretrain)
     checkpoints = torch.load(model_path)
     try:
         model.load_state_dict(checkpoints['state_dict'], strict=False)
     except KeyError:
         model.load_state_dict(checkpoints, strict=False)  # legacy reason or pretrain model
 
-    # determine start_iter and epoch for resume
+    # 3. determine start_iter and epoch for resume
     # update network.start_epoch, network.start_iter
     if phase == 'train':
         try:
@@ -373,7 +373,7 @@ def update_config_and_load_model(config, model, train_generator=None):
         model.epoch = model.start_epoch
         model.iter = model.start_iter
 
-        # load previous loss data in Visdom
+        # 3.1 load previous loss data in Visdom
         try:
             loss_data = checkpoints['loss_data']  # could be empty list [] or dict()
             # resumed model
@@ -384,7 +384,7 @@ def update_config_and_load_model(config, model, train_generator=None):
             pass
 
     now = datetime.datetime.now()
-    # set MISC.LOG_FILE;
+    # 4. set MISC.LOG_FILE;
     # for inference, set also MISC.DET_RESULT_FILE, MISC.SAVE_IMAGE_DIR
     if phase == 'train':
         config.MISC.LOG_FILE = os.path.join(
@@ -396,7 +396,7 @@ def update_config_and_load_model(config, model, train_generator=None):
             # update: we no longer save_im when TRAIN.DO_VALIDATION=True
             config.TEST.SAVE_IM = True
 
-        # set up buffer for meta-loss
+        # 4.1 set up buffer for meta-loss
         if config.DEV.SWITCH and not config.DEV.BASELINE:
             try:
                 # indicate this is a resumed model
@@ -412,8 +412,8 @@ def update_config_and_load_model(config, model, train_generator=None):
                     print_log('load existent buffer from previous model ...', config.MISC.LOG_FILE)
 
             except KeyError:
-                # indicate this is a pretrain model; init buffer as instructed in config
                 model.initialize_buffer(config.MISC.LOG_FILE)
+                # indicate this is a pretrain model; init buffer as instructed in config
 
     elif phase == 'inference':
         model_name = os.path.basename(model_path).replace('.pth', '')   # mask_rcnn_ep_0053_iter_001234
@@ -428,20 +428,51 @@ def update_config_and_load_model(config, model, train_generator=None):
             if not os.path.exists(config.MISC.SAVE_IMAGE_DIR):
                 os.makedirs(config.MISC.SAVE_IMAGE_DIR)
 
+    # 5. show pretrain details
     if use_pretrain:
         print_log('\tuse pretrain_model; pretrain weights detail in log file; NOT shown in terminal',
                   config.MISC.LOG_FILE)
-        for key, value in checkpoints.items():
+        for key, value in sorted(checkpoints.items()):
             print_log('\t\t{}, size: {}'.format(key, value.size()), config.MISC.LOG_FILE, quiet_termi=True)
+
+        missing = set(model.state_dict().keys()) - set(checkpoints.keys())
+        if len(missing) > 0:
+            print_log('\tsome layers are trained from scratch; NO weights available in pretrain model. They are:',
+                      config.MISC.LOG_FILE)
+            for key in sorted(missing):
+                print_log('\t\t{:s}, {}'.format(key, model.state_dict()[key].size()), config.MISC.LOG_FILE)
+
+        # 5.1 use some layer weights from pretrain to the new model even their names are different
+        if config.DEV.BIG_SUPERVISE and config.DEV.BIG_FC_INIT == 'coco_pretrain':
+            _load_state_dict_anyway(model, checkpoints, config.DEV.BIG_FC_INIT_LIST, config.MISC.LOG_FILE)
 
     if config.MISC.USE_VISDOM:
         print_log('see configurations in Visdom or log file; NOT shown in terminal.', config.MISC.LOG_FILE)
         config.display(config.MISC.LOG_FILE, quiet=True)
     else:
         config.display(config.MISC.LOG_FILE)
-    model.config = config
 
+    model.config = config
     return config, model
+
+
+def _load_state_dict_anyway(model, state_dict, map_list, log_file=None):
+    # referenced from load_state_dict() in module.py
+    own_state = model.state_dict()
+    for target_name, pretrain_name in map_list.items():
+        pretrain_param = state_dict[pretrain_name]
+        if isinstance(pretrain_param, Parameter):
+            # backwards compatibility for serialized parameters
+            pretrain_param = pretrain_param.data
+        try:
+            own_state[target_name].copy_(pretrain_param)
+            print_log('\t[DELIBERATE COPY] weights in pretrain layer [{:s}] to layer [{:s}]'
+                      .format(pretrain_name, target_name), log_file)
+        except Exception:
+            raise RuntimeError('While copying the parameter named {}, '
+                               'whose dimensions in the model are {} and '
+                               'whose dimensions in the checkpoint are {}.'
+                               .format(pretrain_name, own_state[target_name].size(), pretrain_param.size()))
 
 
 def set_optimizer(net, opt):

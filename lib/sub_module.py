@@ -305,7 +305,7 @@ class Dev(nn.Module):
                     nn.ReLU(inplace=True),
                     # nn.Conv2d(1024, 1024, kernel_size=1, stride=1),
                 ]
-                # shape: say 20, 1024, 1, 1
+                # shape: say 40, 1024, 1, 1
                 self.feat_extract = nn.Sequential(*_layer_list)
                 if config.DEV.LOSS_CHOICE == 'l2' or config.DEV.LOSS_CHOICE == 'l1':
                     self.last_op = nn.Sigmoid()
@@ -436,7 +436,10 @@ class Dev(nn.Module):
                             self.feat_pool_size, self.feat_pool_size)(curr_feat_maps, big_boxes, big_box_ind)
                         # shape: say 20, 1024, 1, 1
                         _big_out_before_last = self.feat_extract(big_feat_pooled)
-                        big_output = self.last_op(_big_out_before_last)
+                        if self.config.DEV.LOSS_CHOICE != 'ot':
+                            big_output = self.last_op(_big_out_before_last)
+                        else:
+                            big_output = _big_out_before_last
                         # shape: always 1024 x 81 (cls_num)
                         _b_feat, _b_cnt = self._assign_feat2cls([big_box_gt, big_output])
                         big_feat.append(_b_feat)
@@ -486,7 +489,8 @@ class Dev(nn.Module):
                     # process big-small-supervise (small part)
                     small_box_gt = roi_cls_gt[small_index[:, 0].data, small_index[:, 1].data]
                     small_output = self.feat_extract(mask_and_feat)
-                    small_output = self.last_op(small_output)
+                    if self.config.DEV.LOSS_CHOICE != 'ot':
+                        small_output = self.last_op(small_output)
                     _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
                     small_feat.append(_s_feat)
                     small_cnt.append(_s_cnt)
@@ -498,7 +502,7 @@ class Dev(nn.Module):
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
             if train_phase and not self.config.DEV.BASELINE:
                 feat_out = [
-                    torch.stack(big_feat).detach().unsqueeze(dim=0),
+                    torch.stack(big_feat).detach().unsqueeze(dim=0),   # do *NOT* pass gradient of big_feat
                     torch.stack(big_cnt).unsqueeze(dim=0),
                     torch.stack(small_feat).unsqueeze(dim=0),
                     torch.stack(small_cnt).unsqueeze(dim=0),

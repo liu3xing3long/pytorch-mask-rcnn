@@ -12,6 +12,7 @@ DEV:
   BUFFER_SIZE: 1  # use all history
   LOSS_CHOICE: 'kl'
   LOSS_FAC: 20.
+  ASSIGN_BOX_ON_ALL_SCALE: True
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:
