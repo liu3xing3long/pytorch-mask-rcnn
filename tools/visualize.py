@@ -505,7 +505,7 @@ class Visualizer(object):
 
     def show_dynamic_info(self, **args):
         """show dynamic info on visdom console"""
-        try:
+        if args['type'] == 'Regular':
             curr_iter_time_start = args['curr_iter_time_start']   # error msg does not have this key
             curr_ep, iter_ind, total_iter = args['curr_ep'], args['iter_ind'], args['total_iter']
             stage_name, epoch_str = args['stage_name'], args['epoch_str']
@@ -528,9 +528,13 @@ class Visualizer(object):
                         iter_time / self.opt.TRAIN.BATCH_SIZE)
             self.msg = msg + dynamic
             curr_msg = self.msg
-        except KeyError:
+        elif args['type'] == 'Runtime Error':
             error_str = '<br/><br/><b>ERROR OCCURS at epoch {:d}, iter {:d} !!!</b>'\
                 .format(args['curr_ep'], args['iter_ind'])
+            curr_msg = self.msg + error_str
+        elif args['type'] == 'Keyboard Interrupt':
+            error_str = '<br/><br/><b>KEYBOARD INTERRUPT at epoch {:d} !!!</b>'\
+                .format(args['curr_ep'])
             curr_msg = self.msg + error_str
 
         self.vis.text(

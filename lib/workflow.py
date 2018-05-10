@@ -79,10 +79,18 @@ def train_model(input_model, train_generator, valset, optimizer, layers, vis=Non
         epoch_str = "[Ep {:03d}/{}]".format(ep, total_ep_till_now)
         print_log(epoch_str, model.config.MISC.LOG_FILE)
         # Training
+        # try:
         loss_data = train_epoch(input_model, train_generator, optimizer,
                                 stage_name=stage_name, epoch_str=epoch_str,
                                 epoch=ep, start_iter=model.iter, total_iter=iter_per_epoch,
                                 valset=valset, coco_api=coco_api, vis=vis)
+        # except Exception:
+        #     info_pass = {
+        #         'type': 'Keyboard Interrupt',
+        #         'curr_ep': ep,
+        #     }
+        #     vis.show_dynamic_info(**info_pass)
+        #     raise KeyboardInterrupt()
 
         # model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
@@ -185,6 +193,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
                     input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
             except Exception:
                 info_pass = {
+                    'type': 'Runtime Error',
                     'curr_ep': curr_ep,
                     'iter_ind': iter_ind,
                 }
@@ -245,6 +254,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
         if iter_ind % config.CTRL.SHOW_INTERVAL == 0 \
                 or iter_ind == args['start_iter'] or iter_ind == total_iter:
             info_pass = {
+                'type': 'Regular',
                 'curr_iter_time_start': curr_iter_time_start,
                 'curr_ep': curr_ep,
                 'iter_ind': iter_ind,
