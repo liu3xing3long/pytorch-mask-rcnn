@@ -1,12 +1,9 @@
-__author__ = 'not_tylin'
-
-import numpy as np
-import datetime
-import time
 from collections import defaultdict
 from . import mask as maskUtils
-import copy
-from tools.utils import print_log
+from tools.utils import *
+
+# THE "OFFICIAL" COCO eval package SUCKS.
+
 
 class COCOeval:
     # Interface for evaluating detection on the Microsoft COCO dataset.
@@ -498,10 +495,9 @@ class COCOeval:
     def __str__(self):
         self.summarize()
 
+
 class Params:
-    '''
-    Params for coco evaluation api
-    '''
+    """Params for coco evaluation api"""
     def setDetParams(self):
         self.imgIds = []
         self.catIds = []

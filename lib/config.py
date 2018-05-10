@@ -1,7 +1,12 @@
-from tools.utils import *
-from tools.collections import AttrDict
 import random
+import os
+from tools.utils import merge_cfg_from_file, merge_cfg_from_list, print_log
+import math
+from tools.collections import AttrDict
+import torch
+import numpy as np
 
+# TODO (super important): when you make a new layer, add it to the following; super tedious.
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
     # all layers but the backbone

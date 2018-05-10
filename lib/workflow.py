@@ -1,23 +1,15 @@
-import os
-from tools import visualize
-import time
+import matplotlib.pyplot as plt
 from datasets.eval.PythonAPI.pycocotools import mask as maskUtils
 from datasets.eval.PythonAPI.pycocotools.cocoeval import COCOeval
-from tools.utils import print_log, show_loss_terminal, save_model, adjust_lr
-from torch.autograd import Variable
-import torch
-import torch.nn as nn
-import math
-import matplotlib.pyplot as plt
+from tools.visualize import display_instances
 from tools.image_utils import *
-import datetime
-from lib.config import LAYER_REGEX, CLASS_NAMES, TEMP
+from tools.utils import *
+import torch.nn as nn
 
 # set CTRL.QUICK_VERIFY=False and DEBUG=False if you want to see one particular sample
 SEE_ONE_EXAMPLE = False
 # EXAMPLE_COCO_IND = 510033
 EXAMPLE_COCO_IND = 287305
-
 # TODO (mid, general): show warning message in Visdom
 
 
@@ -41,6 +33,7 @@ def train_model(input_model, train_generator, valset, optimizer, layers, vis=Non
         vis:
         coco_api:            validation api
     """
+    from lib.config import LAYER_REGEX, TEMP
     stage_name = layers.upper()
     if isinstance(input_model, nn.DataParallel):
         model = input_model.module
@@ -300,6 +293,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
             limit:          the number of images to use for evaluation
             image_ids:      a certain image
     """
+    from lib.config import CLASS_NAMES
     if isinstance(input_model, nn.DataParallel):
         model = input_model.module
     else:
@@ -402,7 +396,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
                 # visualize result if necessary
                 if model.config.TEST.SAVE_IM:
                     plt.close()
-                    visualize.display_instances(
+                    display_instances(
                         image, final_rois, final_masks, final_class_ids, CLASS_NAMES, final_scores)
 
                     im_file = os.path.join(save_im_folder, 'coco_im_id_{:d}.png'.format(curr_coco_id))

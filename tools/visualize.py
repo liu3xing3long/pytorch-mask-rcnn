@@ -6,25 +6,18 @@ Copyright (c) 2017 Matterport, Inc.
 Licensed under the MIT License (see LICENSE for details)
 Written by Waleed Abdulla
 """
-
 import colorsys
 import itertools
-import os
 import random
 import matplotlib.pyplot as plt
-import numpy as np
 from skimage.measure import find_contours
 import matplotlib.patches as patches
 import matplotlib.lines as lines
 from matplotlib.patches import Polygon
-from tools import utils
 from scipy.misc import imread
-from tools.utils import print_log, mkdirs
-from lib.config import CLASS_NAMES
-import torch
-from tools.collections import AttrDict
-import time
-from tools.utils import compute_left_time
+
+from tools.image_utils import unmold_mask
+from tools.utils import *
 
 if "DISPLAY" not in os.environ:
     plt.switch_backend('agg')
@@ -200,7 +193,7 @@ def draw_rois(image, rois, refined_rois, mask, class_ids, class_names, limit=10)
                     color='w', size=11, backgroundcolor="none")
 
             # Mask
-            m = utils.unmold_mask(mask[id], rois[id]
+            m = unmold_mask(mask[id], rois[id]
                                   [:4].astype(np.int32), image.shape)
             masked_image = apply_mask(masked_image, m, color)
 
@@ -426,6 +419,7 @@ class Visualizer(object):
         self.opt = opt
 
         if self.opt.MISC.USE_VISDOM:
+            from lib.config import CLASS_NAMES
             import visdom
             self.vis = visdom.Visdom(port=opt.MISC.VIS.PORT, env=opt.CTRL.CONFIG_NAME)
             self.dis_im_cnt, self.dis_im_cycle = 0, 4

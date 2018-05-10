@@ -1,11 +1,9 @@
-import tools.utils as utils
 from lib.roialign.roi_align.crop_and_resize import CropAndResizeFunction
 from lib.nms.nms_wrapper import nms
-import torch.nn.functional as F
-from tools.box_utils import *
-from tools.image_utils import *
-from tools.utils import print_log
 from lib.workflow import SEE_ONE_EXAMPLE, EXAMPLE_COCO_IND
+from tools.box_utils import *
+from tools.utils import *
+import torch.nn.functional as F
 
 
 def generate_priors(scales, ratios, shape, feature_stride, anchor_stride):
@@ -177,7 +175,7 @@ def pyramid_roi_align(inputs, pool_size, image_shape, base=224.):
     image_area = Variable(torch.FloatTensor([float(image_shape[0]*image_shape[1])]), requires_grad=False)
     if boxes.is_cuda:
         image_area = image_area.cuda()
-    roi_level = 4 + utils.log2(torch.sqrt(h*w)/(base/torch.sqrt(image_area)))
+    roi_level = 4 + log2(torch.sqrt(h*w)/(base/torch.sqrt(image_area)))
     roi_level = roi_level.round().int()
     # in case batch size =1, we keep that dim
     roi_level = roi_level.clamp(2, 5).squeeze(dim=-1)   # size: [bs, num_roi], say [3, 1000 or 2000]
@@ -641,7 +639,7 @@ def conduct_nms(class_ids, refined_rois, class_scores, keep, config):
     _indx = torch.nonzero(keep).squeeze()
 
     # conduct nms per CLASS
-    for i, class_id in enumerate(utils.unique1d(pre_nms_class_ids)):
+    for i, class_id in enumerate(unique1d(pre_nms_class_ids)):
 
         # Pick detections of this class
         ixs = torch.nonzero(class_id == pre_nms_class_ids).squeeze()
@@ -662,9 +660,9 @@ def conduct_nms(class_ids, refined_rois, class_scores, keep, config):
         if i == 0:
             nms_keep = class_keep
         else:
-            nms_keep = utils.unique1d(torch.cat((nms_keep, class_keep)))
+            nms_keep = unique1d(torch.cat((nms_keep, class_keep)))
 
-    nms_indx = utils.intersect1d(_indx, nms_keep)
+    nms_indx = intersect1d(_indx, nms_keep)
 
     # Keep top detections
     roi_count = config.TEST.DET_MAX_INSTANCES

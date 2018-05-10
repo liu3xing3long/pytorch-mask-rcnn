@@ -1,11 +1,7 @@
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from lib.layers import pyramid_roi_align
 from lib.roialign.roi_align.crop_and_resize import CropAndResizeFunction
-import tools.utils as utils
-from torch.autograd import Variable
+import torch.nn.functional as F
+from tools.utils import *
 
 
 class SamePad2d(nn.Module):
@@ -350,7 +346,7 @@ class Dev(nn.Module):
                 # original plan
                 _image_area = Variable(torch.FloatTensor(
                     [float(self.image_shape[0]*self.image_shape[1])]), requires_grad=False).cuda()
-                roi_level = 4 + utils.log2(torch.sqrt(area)/(base/torch.sqrt(_image_area)))
+                roi_level = 4 + log2(torch.sqrt(area)/(base/torch.sqrt(_image_area)))
                 roi_level = roi_level.round().int()
                 # in case batch size =1, we keep that dim
                 roi_level = roi_level.clamp(2, 5).squeeze(dim=-1)   # size: [bs, num_roi], say [3, 200]
@@ -545,7 +541,7 @@ class Dev(nn.Module):
         feat = Variable(torch.zeros(1024, self.num_classs).cuda())
         cnt = Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False)
 
-        for cls_ind in utils.unique1d(box_gt).data:
+        for cls_ind in unique1d(box_gt).data:
             if cls_ind == 0:
                 continue  # skip background
             else:

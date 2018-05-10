@@ -1,10 +1,10 @@
 import argparse
-import lib.model as network
 from lib.config import CocoConfig
-from lib.workflow import *
-from tools.utils import update_config_and_load_model, set_optimizer, check_max_mem
+from lib.workflow import train_model, test_model
 from datasets.dataset_coco import get_data
 from tools.visualize import Visualizer
+from lib.model import MaskRCNN
+from tools.utils import *
 
 if __name__ == '__main__':
 
@@ -50,19 +50,13 @@ if __name__ == '__main__':
 
     # Create model
     print('building network ...\n')
-    model = network.MaskRCNN(config)
-    if config.MISC.GPU_COUNT < 1:
-        print('cpu mode ...')
-    elif config.MISC.GPU_COUNT == 1:
-        print('single gpu mode ...')
-        model = model.cuda()
-    else:
-        print('multi-gpu mode ...')
-        model = torch.nn.DataParallel(model).cuda()
+    model = MaskRCNN(config)
 
     if args.phase == 'train':
-        optimizer = set_optimizer(model, config.TRAIN) if config.CTRL.DEBUG \
-            else check_max_mem(model, train_data)
+        if config.CTRL.DEBUG:
+            optimizer = set_optimizer(model, config.TRAIN)
+        else:
+            optimizer, model = check_max_mem(model, train_data, MaskRCNN)
 
     # Select weights file to load (MUST be put at the end)
     # update start epoch and iter if resume
@@ -74,6 +68,7 @@ if __name__ == '__main__':
     print_log('print network structure in log file [NOT shown in terminal] ...', config.MISC.LOG_FILE)
     print_log(model, config.MISC.LOG_FILE, quiet_termi=True)
 
+    model = set_model(config.MISC.GPU_COUNT, model)
     # Train or inference
     if args.phase == 'train':
 

@@ -1,8 +1,20 @@
 import re
-from lib.sub_module import *
+import numpy as np
+from lib.sub_module import RPN, Classifier, FPN, ResNet, Dev, Mask
+from lib.layers import proposal_layer, compute_mrcnn_bbox_loss, \
+    compute_mrcnn_mask_loss, compute_rpn_class_loss, compute_rpn_bbox_loss, compute_mrcnn_class_loss, \
+    detection_layer, prepare_rpn_target, prepare_det_target, generate_pyramid_priors
+
 import torch.nn as nn
-from lib.layers import *
+import torch.nn.functional as F
+import torch
+from torch.autograd import Variable
+
+import tools.utils as utils
 from lib.OT_module import OptTrans
+from tools.image_utils import parse_image_meta
+
+
 EPS = 1e-20
 
 
@@ -11,7 +23,7 @@ class MaskRCNN(nn.Module):
         super(MaskRCNN, self).__init__()
         self.config = config
         self._build(config=config)
-        self.initialize_weights()
+        self._initialize_weights()
     @property
     def epoch(self):
         return self._epoch
@@ -73,7 +85,7 @@ class MaskRCNN(nn.Module):
         #                 p.requires_grad = False
         #     self.apply(set_bn_fix)
 
-    def initialize_weights(self):
+    def _initialize_weights(self):
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d) or isinstance(m, nn.Conv1d):
@@ -96,13 +108,13 @@ class MaskRCNN(nn.Module):
     def initialize_buffer(self, log_file):
         """ called in 'utils.py' """
         if self.config.DEV.INIT_BUFFER_WEIGHT == 'scratch':
-            print_log('init buffer from scratch ...', log_file)
+            utils.print_log('init buffer from scratch ...', log_file)
             self.buffer = torch.zeros(self.config.DEV.BUFFER_SIZE, 1024, self.config.DATASET.NUM_CLASSES).cuda()
             self.buffer_cnt = torch.zeros(self.config.DEV.BUFFER_SIZE, 1, self.config.DATASET.NUM_CLASSES).cuda()
 
         elif self.config.DEV.INIT_BUFFER_WEIGHT == 'coco_pretrain':
             # TODO: init buffer
-            print_log('init buffer from pretrain model ...', log_file)
+            utils.print_log('init buffer from pretrain model ...', log_file)
             NotImplementedError()
 
     def set_trainable(self, layer_regex, log_file):
@@ -128,7 +140,7 @@ class MaskRCNN(nn.Module):
             else:
                 param[1].requires_grad = True
         for name, param in self.named_parameters():
-            print_log('\tlayer name: {}\t\treguires_grad: {}'.format(name, param.requires_grad),
+            utils.print_log('\tlayer name: {}\t\treguires_grad: {}'.format(name, param.requires_grad),
                       log_file, quiet_termi=True)
 
     def meta_loss(self, feat_input):
