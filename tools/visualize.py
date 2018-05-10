@@ -543,7 +543,7 @@ class Visualizer(object):
 
     def show_mAP(self, **args):
         curr = 'Model file:' \
-               '<br/>&emsp;{:s}<br/>&emsp;mAP is {:.4f}<br/><br/>'.format(args['model_file'], args['mAP'])
+               '<br/>&emsp;{:s}<br/>&emsp;mAP is {:.4f}<br/>'.format(args['model_file'], args['mAP'])
         self.mAP_msg += curr
         self.vis.text(
             self.mAP_msg,

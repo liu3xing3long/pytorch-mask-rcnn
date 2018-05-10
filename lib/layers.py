@@ -505,12 +505,9 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         print('\t\t[sample_id {}, im {}] 1. passed initial assignment in generate_rpn_target'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
 
-    _tmp = target_rpn_match == 1
-    _pos_num_before = torch.sum(_tmp.long()).data[0]
-    _tmp = target_rpn_match == -1
-    _neg_num_before = torch.sum(_tmp.long()).data[0]
-    _tmp = target_rpn_match == 0
-    _neutral_num_before = torch.sum(_tmp.long()).data[0]
+    _pos_num_before = torch.sum((target_rpn_match == 1).long()).data[0]
+    _neg_num_before = torch.sum((target_rpn_match == -1).long()).data[0]
+    _neutral_num_before = torch.sum((target_rpn_match == 0).long()).data[0]
     # 4. Subsample to balance positive and negative anchors
     # Don't let positives be more than half the anchors
     pos_ids = torch.nonzero(target_rpn_match == 1).squeeze()
@@ -544,14 +541,13 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
     else:
         _neg_set_to_zero = -1
     # ======= ABOVE DONE =======
-    # TODO: bug this line. RuntimeError: cuda runtime error (59) : device-side assert triggered at
-    _temp = target_rpn_match == 1
-    _pos_num = torch.sum(_temp.long()).data[0]
-    _temp = target_rpn_match == -1
-    _neg_num = torch.sum(_temp.long()).data[0]
-    _temp = target_rpn_match == 0
-    _neutral_num = torch.sum(_temp.long()).data[0]
 
+    # TODO: bug this line. RuntimeError: cuda runtime error (59) : device-side assert triggered at
+    # see issue here: https://github.com/pytorch/pytorch/issues/4144
+    _pos_num = torch.sum((target_rpn_match == 1).long()).data[0]
+    _neg_num = torch.sum((target_rpn_match == -1).long()).data[0]
+    _neutral_num = torch.sum((target_rpn_match == 0).long()).data[0]
+    # check total number of anchor
     if _pos_num + _neg_num != config.RPN.TRAIN_ANCHORS_PER_IMAGE:
         curr_im_name = coco_im_id[curr_sample_id]
         print_log('\n[im: {}][WARNING!!!]'

@@ -17,13 +17,13 @@ if __name__ == '__main__':
 
     parser.add_argument('--config_name',
                         required=False,
-                        # default='')
-                        default='local_pc')
+                        default='')
+                        # default='local_pc')
                         # default='base_101_quick')
 
     parser.add_argument('--config_file',
                         default=None)
-                        # default='configs/meta_102_quick_1.yaml')
+                        # default='configs/meta_101_quick_3_l1_sig_multi.yaml')
                         # default='configs/meta_101_quick_3.yaml')
 
     # debug mode: set train_data to val_data for faster data loading.
