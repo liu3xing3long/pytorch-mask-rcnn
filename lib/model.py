@@ -1,8 +1,17 @@
 import re
 from lib.sub_module import *
-import torch.nn as nn
 from lib.layers import *
+
+import torch.nn as nn
+import torch.nn.functional as F
+import torch
+from torch.autograd import Variable
+
+import tools.utils as utils
 from lib.OT_module import OptTrans
+from tools.image_utils import parse_image_meta
+
+
 EPS = 1e-20
 
 
@@ -12,7 +21,6 @@ class MaskRCNN(nn.Module):
         self.config = config
         self._build(config=config)
         self._initialize_weights()
-
     @property
     def epoch(self):
         return self._epoch
@@ -95,15 +103,15 @@ class MaskRCNN(nn.Module):
                 m.bias.data.zero_()
 
     def initialize_buffer(self, log_file):
-        # called in 'utils.py'
+        """ called in 'utils.py' """
         if self.config.DEV.INIT_BUFFER_WEIGHT == 'scratch':
-            print_log('init buffer from scratch ...', log_file)
+            utils.print_log('init buffer from scratch ...', log_file)
             self.buffer = torch.zeros(self.config.DEV.BUFFER_SIZE, 1024, self.config.DATASET.NUM_CLASSES).cuda()
             self.buffer_cnt = torch.zeros(self.config.DEV.BUFFER_SIZE, 1, self.config.DATASET.NUM_CLASSES).cuda()
 
         elif self.config.DEV.INIT_BUFFER_WEIGHT == 'coco_pretrain':
             # TODO: init buffer
-            print_log('init buffer from pretrain model ...', log_file)
+            utils.print_log('init buffer from pretrain model ...', log_file)
             NotImplementedError()
 
     def set_trainable(self, layer_regex, log_file):
@@ -129,7 +137,7 @@ class MaskRCNN(nn.Module):
             else:
                 param[1].requires_grad = True
         for name, param in self.named_parameters():
-            print_log('\tlayer name: {}\t\treguires_grad: {}'.format(name, param.requires_grad),
+            utils.print_log('\tlayer name: {}\t\treguires_grad: {}'.format(name, param.requires_grad),
                       log_file, quiet_termi=True)
 
     def meta_loss(self, feat_input):

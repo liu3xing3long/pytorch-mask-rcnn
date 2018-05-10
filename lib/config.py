@@ -1,22 +1,27 @@
-from tools.utils import *
-from tools.collections import AttrDict
 import random
+import os
+from tools.utils import merge_cfg_from_file, merge_cfg_from_list, print_log
+import math
+from tools.collections import AttrDict
+import torch
+import numpy as np
 
+# TODO (super important): when you make a new layer, add it to the following; super tedious.
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
-    # all layers but the backbone
+    # only heads
     "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
-             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
 
     # From a specific resnet stage and up
     "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
 
     "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
 
     "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
-          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
     # All layers
     "all": ".*",
 }
@@ -194,7 +199,7 @@ class Config(object):
     DEV.EFFECT_AFER_EP_PERCENT = 0.
     DEV.UPSAMPLE_FAC = 2.
     DEV.LOSS_CHOICE = 'l1'
-    DEV.OT_ONE_DIM_FORM = 'fc'   # 'conv'
+    DEV.OT_ONE_DIM_FORM = 'conv'
     DEV.LOSS_FAC = 0.5
     # set to 1 if use all historic data
     DEV.BUFFER_SIZE = 1000
@@ -330,6 +335,8 @@ class Config(object):
             del self.DEV['BIG_FC_INIT']
             del self.DEV['BIG_LOSS_CHOICE']
             del self.DEV['BIG_FC_INIT_LIST']
+        if self.DEV.LOSS_CHOICE != 'ot':
+            del self.DEV['OT_ONE_DIM_FORM']
 
 
 class CocoConfig(Config):
@@ -359,7 +366,7 @@ class CocoConfig(Config):
             self.DEV.BUFFER_SIZE = 1
             self.DEV.LOSS_FAC = 1.
             self.DEV.LOSS_CHOICE = 'ot'
-            self.TRAIN.BATCH_SIZE = 4
+            self.TRAIN.BATCH_SIZE = 16
             # self.DEV.DIS_REG_LOSS = True
             self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
             # self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True

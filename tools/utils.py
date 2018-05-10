@@ -1,22 +1,21 @@
 import torch
 from torch.autograd import Variable
 import torch.optim as optim
+from torch.nn.parameter import Parameter
+import torch.nn as nn
+import datetime
+import time
+
 import os
 import math
-from tools.collections import AttrDict
 import yaml
 import copy
+from tools.collections import AttrDict
 from past.builtins import basestring
 import numpy as np
 from ast import literal_eval
-import datetime
-import time
-from torch.nn.parameter import Parameter
 
 
-############################################################
-#  Pytorch Utility Functions
-############################################################
 def unique1d(variable):
     variable = variable.squeeze()
     assert variable.dim() == 1
@@ -43,42 +42,6 @@ def log2(x):
     if x.is_cuda:
         ln2 = ln2.cuda()
     return torch.log(x) / ln2
-
-############################################################
-#  Logging Utility Functions
-############################################################
-# def log(text, array=None):
-#     """Prints a text message. And, optionally, if a Numpy array is provided it
-#     prints it's shape, min, and max values.
-#     """
-#     if array is not None:
-#         text = text.ljust(25)
-#         text += ("shape: {:20}  min: {:10.5f}  max: {:10.5f}".format(
-#             str(array.shape),
-#             array.min() if array.size else "",
-#             array.max() if array.size else ""))
-#     print(text)
-#
-#
-# def printProgressBar(iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = ''):
-#     """
-#     Call in a loop to create terminal progress bar
-#     @params:
-#         iteration   - Required  : current iteration (Int)
-#         total       - Required  : total iterations (Int)
-#         prefix      - Optional  : prefix string (Str)
-#         suffix      - Optional  : suffix string (Str)
-#         decimals    - Optional  : positive number of decimals in percent complete (Int)
-#         length      - Optional  : character length of bar (Int)
-#         fill        - Optional  : bar fill character (Str)
-#     """
-#     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
-#     filledLength = int(length * iteration // total)
-#     bar = fill * filledLength + '-' * (length - filledLength)
-#     print('\r%s |%s| %s%% %s' % (prefix, bar, percent, suffix), end = '\n')
-#     # Print New Line on Complete
-#     if iteration == total:
-#         print()
 
 
 def mkdirs(paths):
@@ -287,7 +250,7 @@ def _find_last(config):
 
 
 def update_config_and_load_model(config, model, train_generator=None):
-
+    """model should not be DataParallel"""
     choice = config.MODEL.INIT_FILE_CHOICE
     phase = config.CTRL.PHASE
 
@@ -585,3 +548,71 @@ def save_model(model, **args):
         'buffer_cnt':   buffer_cnt,
         'loss_data':    loss_data
     }, model_file)
+
+
+def check_max_mem(input_model, data_loader, MaskRCNN):
+
+    config = input_model.config
+    input_model = set_model(config.MISC.GPU_COUNT, input_model)
+
+    if isinstance(input_model, nn.DataParallel):
+        model = input_model.module
+    else:
+        # single-gpu
+        model = input_model
+
+    print_log('\nchecking possibly MAX mem cost ...', config.MISC.LOG_FILE)
+    # set optimizer
+    optimizer = set_optimizer(model, config.TRAIN)
+    model.buffer = torch.zeros(model.config.DEV.BUFFER_SIZE, 1024, config.DATASET.NUM_CLASSES).cuda()
+    model.buffer_cnt = torch.zeros(config.DEV.BUFFER_SIZE, 1, config.DATASET.NUM_CLASSES).cuda()
+
+    for iter_ind, inputs in zip(range(1, 11), data_loader):
+        images = Variable(inputs[0].cuda())
+        image_metas = Variable(inputs[-1].cuda())
+        gt_class_ids, gt_boxes, gt_masks, _ = model.adjust_input_gt(inputs[1], inputs[2], inputs[3])
+        merged_loss, big_feat, big_cnt, small_feat, small_cnt, big_loss = \
+            input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
+        detailed_loss = torch.mean(merged_loss, dim=0)
+
+        if config.DEV.SWITCH and not config.DEV.BASELINE:
+            # big_feat: gpu_num x scale_num x 1024 x 81; also update the buffer
+            meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt])
+            meta_loss *= config.DEV.LOSS_FAC
+        else:
+            meta_loss = 0
+
+        # big-loss
+        if config.DEV.SWITCH and config.DEV.BIG_SUPERVISE:
+            # big loss: gpu_num x scale_num x 1
+            big_loss = torch.mean(big_loss)
+            big_loss *= config.DEV.BIG_LOSS_FAC
+        else:
+            big_loss = 0
+
+        loss = torch.sum(detailed_loss) + meta_loss + big_loss
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+    print_log('passed maximum GPU mem test!', config.MISC.LOG_FILE)
+    del optimizer, model
+
+    # set optimizer
+    model = MaskRCNN(config)
+    optimizer = set_optimizer(model, config.TRAIN)
+    print_log('set back to original model weights ...\n', config.MISC.LOG_FILE)
+
+    return optimizer, model
+
+
+def set_model(gpu_cnt, model):
+    if gpu_cnt < 1:
+        print('cpu mode ...')
+    elif gpu_cnt == 1:
+        print('single gpu mode ...')
+        model = model.cuda()
+    else:
+        print('multi-gpu mode ...')
+        model = nn.DataParallel(model).cuda()
+    return model

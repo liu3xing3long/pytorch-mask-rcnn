@@ -6,25 +6,18 @@ Copyright (c) 2017 Matterport, Inc.
 Licensed under the MIT License (see LICENSE for details)
 Written by Waleed Abdulla
 """
-
 import colorsys
 import itertools
-import os
 import random
 import matplotlib.pyplot as plt
-import numpy as np
 from skimage.measure import find_contours
 import matplotlib.patches as patches
 import matplotlib.lines as lines
 from matplotlib.patches import Polygon
-from tools import utils
 from scipy.misc import imread
-from tools.utils import print_log, mkdirs
-from lib.config import CLASS_NAMES
-import torch
-from tools.collections import AttrDict
-import time
-from tools.utils import compute_left_time
+
+from tools.image_utils import unmold_mask
+from tools.utils import *
 
 if "DISPLAY" not in os.environ:
     plt.switch_backend('agg')
@@ -200,7 +193,7 @@ def draw_rois(image, rois, refined_rois, mask, class_ids, class_names, limit=10)
                     color='w', size=11, backgroundcolor="none")
 
             # Mask
-            m = utils.unmold_mask(mask[id], rois[id]
+            m = unmold_mask(mask[id], rois[id]
                                   [:4].astype(np.int32), image.shape)
             masked_image = apply_mask(masked_image, m, color)
 
@@ -426,6 +419,7 @@ class Visualizer(object):
         self.opt = opt
 
         if self.opt.MISC.USE_VISDOM:
+            from lib.config import CLASS_NAMES
             import visdom
             self.vis = visdom.Visdom(port=opt.MISC.VIS.PORT, env=opt.CTRL.CONFIG_NAME)
             self.dis_im_cnt, self.dis_im_cycle = 0, 4
@@ -452,6 +446,7 @@ class Visualizer(object):
             self.start_iter = model.start_iter
             self.mAP_msg = 'Config name:' \
                            '<br/>&emsp;{:s}<br/><br/>'.format(self.opt.CTRL.CONFIG_NAME)
+            self.msg = ''  # dynamic info
 
             self._show_config()
 
@@ -510,30 +505,40 @@ class Visualizer(object):
 
     def show_dynamic_info(self, **args):
         """show dynamic info on visdom console"""
-        curr_iter_time_start = args['curr_iter_time_start']
-        curr_ep, iter_ind, total_iter = args['curr_ep'], args['iter_ind'], args['total_iter']
-        stage_name, epoch_str = args['stage_name'], args['epoch_str']
+        if args['type'] == 'Regular':
+            curr_iter_time_start = args['curr_iter_time_start']   # error msg does not have this key
+            curr_ep, iter_ind, total_iter = args['curr_ep'], args['iter_ind'], args['total_iter']
+            stage_name, epoch_str = args['stage_name'], args['epoch_str']
 
-        iter_time = time.time() - curr_iter_time_start
-        days, hrs = compute_left_time(
-            iter_time, curr_ep, sum(self.opt.TRAIN.SCHEDULE), iter_ind, total_iter)
+            iter_time = time.time() - curr_iter_time_start
+            days, hrs = compute_left_time(
+                iter_time, curr_ep, sum(self.opt.TRAIN.SCHEDULE), iter_ind, total_iter)
 
-        status = 'RUNNING' if sum([days, hrs]) > 0 else 'DONE'
-        msg = 'Phase: {:s}<br/>Status: <b>{:s}</b><br/>'.format(self.opt.CTRL.PHASE, status)
-        dynamic = 'Start epoch: {:d}, iter: {:d}<br/>' \
-                  'Current lr: {:.8f}<br/>' \
-                  'Progress: <br/>&emsp;[stage {:s}]<b>{:s} {:06d}/{}</b><br/><br/>' \
-                  'est. left time: {:d} days, {:.2f} hrs<br/>' \
-                  'time per image (iter/bs): {:.4f} sec<br/>'.format(
-                    self.start_epoch, self.start_iter,
-                    args['lr'],
-                    stage_name, epoch_str, iter_ind, total_iter,
-                    days, hrs,
-                    iter_time / self.opt.TRAIN.BATCH_SIZE)
+            status = 'RUNNING' if sum([days, hrs]) > 0 else 'DONE'
+            msg = 'Phase: {:s}<br/>Status: <b>{:s}</b><br/>'.format(self.opt.CTRL.PHASE, status)
+            dynamic = 'Start epoch: {:d}, iter: {:d}<br/>' \
+                      'Current lr: {:.8f}<br/>' \
+                      'Progress: <br/>&emsp;[stage {:s}]<b>{:s} {:06d}/{}</b><br/><br/>' \
+                      'est. left time: {:d} days, {:.2f} hrs<br/>' \
+                      'time per image (iter/bs): {:.4f} sec<br/>'.format(
+                        self.start_epoch, self.start_iter,
+                        args['lr'],
+                        stage_name, epoch_str, iter_ind, total_iter,
+                        days, hrs,
+                        iter_time / self.opt.TRAIN.BATCH_SIZE)
+            self.msg = msg + dynamic
+            curr_msg = self.msg
+        elif args['type'] == 'Runtime Error':
+            error_str = '<br/><br/><b>ERROR OCCURS at epoch {:d}, iter {:d} !!!</b>'\
+                .format(args['curr_ep'], args['iter_ind'])
+            curr_msg = self.msg + error_str
+        elif args['type'] == 'Keyboard Interrupt':
+            error_str = '<br/><br/><b>KEYBOARD INTERRUPT at epoch {:d} !!!</b>'\
+                .format(args['curr_ep'])
+            curr_msg = self.msg + error_str
 
-        msg += dynamic
         self.vis.text(
-            msg,
+            curr_msg,
             opts={
                 'title': 'Train dynamics',
                 'height': self.txt['height']-150,

@@ -1,23 +1,16 @@
-import os
-from tools import visualize
-import time
+import matplotlib.pyplot as plt
 from datasets.eval.PythonAPI.pycocotools import mask as maskUtils
 from datasets.eval.PythonAPI.pycocotools.cocoeval import COCOeval
-from tools.utils import print_log, show_loss_terminal, save_model, adjust_lr
-from torch.autograd import Variable
-import torch
-import torch.nn as nn
-import math
-import matplotlib.pyplot as plt
+from tools.visualize import display_instances
 from tools.image_utils import *
-import datetime
-from lib.config import LAYER_REGEX, CLASS_NAMES, TEMP
+from tools.utils import *
+import torch.nn as nn
+from lib.config import LAYER_REGEX, TEMP, CLASS_NAMES
 
 # set CTRL.QUICK_VERIFY=False and DEBUG=False if you want to see one particular sample
 SEE_ONE_EXAMPLE = False
 # EXAMPLE_COCO_IND = 510033
 EXAMPLE_COCO_IND = 287305
-
 # TODO (mid, general): show warning message in Visdom
 
 
@@ -86,10 +79,18 @@ def train_model(input_model, train_generator, valset, optimizer, layers, vis=Non
         epoch_str = "[Ep {:03d}/{}]".format(ep, total_ep_till_now)
         print_log(epoch_str, model.config.MISC.LOG_FILE)
         # Training
+        # try:
         loss_data = train_epoch(input_model, train_generator, optimizer,
                                 stage_name=stage_name, epoch_str=epoch_str,
                                 epoch=ep, start_iter=model.iter, total_iter=iter_per_epoch,
                                 valset=valset, coco_api=coco_api, vis=vis)
+        # except Exception:
+        #     info_pass = {
+        #         'type': 'Keyboard Interrupt',
+        #         'curr_ep': ep,
+        #     }
+        #     vis.show_dynamic_info(**info_pass)
+        #     raise KeyboardInterrupt()
 
         # model.loss_history.append(loss)
         # model.val_loss_history.append(val_loss)
@@ -185,11 +186,19 @@ def train_epoch(input_model, data_loader, optimizer, **args):
                 print('\ncurr_iter: ', iter_ind)
                 print('fetch data time: {:.4f}'.format(time.time() - curr_iter_time_start))
                 t = time.time()
-
-            # FORWARD PASS
-            # the loss shape: gpu_num x 5; meta_loss *NOT* included
-            merged_loss, big_feat, big_cnt, small_feat, small_cnt, big_loss = \
-                input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
+            try:
+                # FORWARD PASS
+                # the loss shape: gpu_num x 5; meta_loss *NOT* included
+                merged_loss, big_feat, big_cnt, small_feat, small_cnt, big_loss = \
+                    input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
+            except Exception:
+                info_pass = {
+                    'type': 'Runtime Error',
+                    'curr_ep': curr_ep,
+                    'iter_ind': iter_ind,
+                }
+                vis.show_dynamic_info(**info_pass)
+                raise RuntimeError('whoops, some error pops up...')
 
         detailed_loss = torch.mean(merged_loss, dim=0)
 
@@ -245,6 +254,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
         if iter_ind % config.CTRL.SHOW_INTERVAL == 0 \
                 or iter_ind == args['start_iter'] or iter_ind == total_iter:
             info_pass = {
+                'type': 'Regular',
                 'curr_iter_time_start': curr_iter_time_start,
                 'curr_ep': curr_ep,
                 'iter_ind': iter_ind,
@@ -395,7 +405,7 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
                 # visualize result if necessary
                 if model.config.TEST.SAVE_IM:
                     plt.close()
-                    visualize.display_instances(
+                    display_instances(
                         image, final_rois, final_masks, final_class_ids, CLASS_NAMES, final_scores)
 
                     im_file = os.path.join(save_im_folder, 'coco_im_id_{:d}.png'.format(curr_coco_id))

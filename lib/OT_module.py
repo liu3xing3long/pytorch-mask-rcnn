@@ -99,7 +99,7 @@ class OptTrans(nn.Module):
             x /= (torch.norm(x, p=2, dim=1, keepdim=True) + EPS)
             y /= (torch.norm(y, p=2, dim=1, keepdim=True) + EPS)
             C = 1 - torch.mm(x, y.permute(1, 0))
-            # TODO (from capsule project): warning: C is slightly negative for some i, j
+            # TODO (low, from capsule project): warning: C is slightly negative for some i, j
 
         K = torch.exp(-self.epsilon*C)
 
