@@ -5,6 +5,7 @@ from tools.visualize import display_instances
 from tools.image_utils import *
 from tools.utils import *
 import torch.nn as nn
+from lib.config import LAYER_REGEX, TEMP, CLASS_NAMES
 
 # set CTRL.QUICK_VERIFY=False and DEBUG=False if you want to see one particular sample
 SEE_ONE_EXAMPLE = False
@@ -33,7 +34,6 @@ def train_model(input_model, train_generator, valset, optimizer, layers, vis=Non
         vis:
         coco_api:            validation api
     """
-    from lib.config import LAYER_REGEX, TEMP
     stage_name = layers.upper()
     if isinstance(input_model, nn.DataParallel):
         model = input_model.module
@@ -293,7 +293,6 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
             limit:          the number of images to use for evaluation
             image_ids:      a certain image
     """
-    from lib.config import CLASS_NAMES
     if isinstance(input_model, nn.DataParallel):
         model = input_model.module
     else:

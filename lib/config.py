@@ -9,19 +9,19 @@ import numpy as np
 # TODO (super important): when you make a new layer, add it to the following; super tedious.
 # Pre-defined layer regular expressions
 LAYER_REGEX = {
-    # all layers but the backbone
+    # only heads
     "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
-             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
 
     # From a specific resnet stage and up
     "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
 
     "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
 
     "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
-          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)",
+          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
     # All layers
     "all": ".*",
 }
