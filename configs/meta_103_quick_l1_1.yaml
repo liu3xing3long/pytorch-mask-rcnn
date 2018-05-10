@@ -10,9 +10,17 @@ DATA:
 DEV:
   SWITCH: True
   BUFFER_SIZE: 1  # use all history
-  LOSS_CHOICE: 'kl'
-  LOSS_FAC: 20.
+  LOSS_CHOICE: 'l1'
+  LOSS_FAC: 10.0
+  ASSIGN_BOX_ON_ALL_SCALE: True
+  BIG_SUPERVISE: True
+  BIG_LOSS_FAC: .1
+  BIG_FC_INIT: 'coco_pretrain'
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:
   QUICK_VERIFY: True
+MISC:
+  USE_VISDOM: True
+  VIS:
+    PORT: 2042

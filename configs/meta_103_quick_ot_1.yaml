@@ -11,12 +11,12 @@ DEV:
   SWITCH: True
   BUFFER_SIZE: 1  # use all history
   LOSS_CHOICE: 'ot'
-  OT_ONE_DIM_FORM: 'fc'
-  LOSS_FAC: 50.
+  OT_ONE_DIM_FORM: 'conv'
+  LOSS_FAC: 1.
   ASSIGN_BOX_ON_ALL_SCALE: False
-  BIG_SUPERVISE: False
+  BIG_SUPERVISE: True
   BIG_LOSS_FAC: 1.
-  BIG_FC_INIT: 'coco_pretrain'
+  BIG_FC_INIT: 'scratch'
   MULTI_UPSAMPLER: False
 ROIS:
   ASSIGN_ANCHOR_BASE: 224.  # default
@@ -27,4 +27,4 @@ CTRL:
 MISC:
   USE_VISDOM: True
   VIS:
-    PORT: 2199
+    PORT: 2176

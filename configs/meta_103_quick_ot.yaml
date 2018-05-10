@@ -14,7 +14,7 @@ DEV:
   OT_ONE_DIM_FORM: 'conv'
   LOSS_FAC: 1.
   ASSIGN_BOX_ON_ALL_SCALE: False
-  BIG_SUPERVISE: False
+  BIG_SUPERVISE: True
   BIG_LOSS_FAC: 1.
   BIG_FC_INIT: 'coco_pretrain'
   MULTI_UPSAMPLER: False
@@ -27,4 +27,4 @@ CTRL:
 MISC:
   USE_VISDOM: True
   VIS:
-    PORT: 2035
+    PORT: 2176

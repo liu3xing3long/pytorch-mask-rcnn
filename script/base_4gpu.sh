@@ -23,7 +23,7 @@ fi
 echo "device id:"
 echo $DEVICE_ID
 
-CUDA_VISIBLE_DEVICES=$DEVICE_ID python main.py \
+CUDA_VISIBLE_DEVICES=$DEVICE_ID CUDA_LAUNCH_BLOCKING=1 python main.py \
     --device_id=$DEVICE_ID \
     --phase=train \
     --config_name=None \

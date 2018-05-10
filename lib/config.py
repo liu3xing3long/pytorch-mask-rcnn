@@ -211,6 +211,7 @@ class Config(object):
     DEV.BIG_LOSS_CHOICE = 'ce'    # default setting (currently only support this)
     DEV.BIG_FC_INIT = 'scratch'  # or 'coco_pretrain'
     DEV.BIG_LOSS_FAC = 1.
+    DEV.BIG_FC_INIT_LIST = dict()
 
     # ==============================
     CTRL = AttrDict()

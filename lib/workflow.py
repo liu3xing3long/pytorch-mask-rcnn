@@ -242,7 +242,8 @@ def train_epoch(input_model, data_loader, optimizer, **args):
             t = time.time()
 
         # Progress
-        if iter_ind % config.CTRL.SHOW_INTERVAL == 0 or iter_ind == args['start_iter']:
+        if iter_ind % config.CTRL.SHOW_INTERVAL == 0 \
+                or iter_ind == args['start_iter'] or iter_ind == total_iter:
             info_pass = {
                 'curr_iter_time_start': curr_iter_time_start,
                 'curr_ep': curr_ep,

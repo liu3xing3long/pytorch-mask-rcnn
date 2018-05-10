@@ -292,7 +292,7 @@ class MaskRCNN(nn.Module):
             # output is [batch, num_detections (say 100), (y1, x1, y2, x2, class_id, score)] in image coordinates
             detections = detection_layer(_proposals, mrcnn_class, mrcnn_bbox, windows, self.config)
 
-            assert detections.sum().data[0] != 0
+            # assert detections.sum().data[0] != 0   # update: allow zero detection
             # Convert boxes to normalized coordinates
             normalize_boxes = detections[:, :, :4] / scale
             # Create masks for detections
