@@ -2,7 +2,7 @@ TRAIN:
   LR_WARM_UP: False
   CLIP_GRAD: True
   END2END: False
-  BATCH_SIZE: 4
+  BATCH_SIZE: 8  # 8gpu
   DO_VALIDATION: True
 DEV:
   SWITCH: True
