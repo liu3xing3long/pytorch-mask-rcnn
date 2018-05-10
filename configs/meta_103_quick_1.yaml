@@ -14,6 +14,7 @@ DEV:
   LOSS_FAC: 500.
   BIG_SUPERVISE: True
   BIG_LOSS_FAC: .5
+  BIG_FC_INIT: 'coco_pretrain'
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:
