@@ -10,21 +10,15 @@ DATA:
 DEV:
   SWITCH: True
   BUFFER_SIZE: 1  # use all history
-  LOSS_CHOICE: 'ot'
-  OT_ONE_DIM_FORM: 'conv'
-  LOSS_FAC: 5.
-  ASSIGN_BOX_ON_ALL_SCALE: False
-  BIG_SUPERVISE: False
+  LOSS_CHOICE: 'l2'
+  LOSS_FAC: 100.
+  BIG_SUPERVISE: True
   BIG_LOSS_FAC: 1.
-  BIG_FC_INIT: 'coco_pretrain'
-  MULTI_UPSAMPLER: False
-ROIS:
-  ASSIGN_ANCHOR_BASE: 40.  # default 224.
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:
-  QUICK_VERIFY: True
+  QUICK_VERIFY: False
 MISC:
   USE_VISDOM: True
   VIS:
-    PORT: 2042
+    PORT: 2035
