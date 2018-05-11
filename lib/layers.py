@@ -438,6 +438,7 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
 def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
     """per sample op."""
     # sample_id is the id within each GPU
+
     curr_sample_id = args[0]
     coco_im_id = args[1].data.cpu().numpy()
 
@@ -527,6 +528,7 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         pos_set_to_zero = -1
 
     # Same for negative proposals
+    # TODO: bug here
     neg_ids = torch.nonzero(target_rpn_match == -1).squeeze()
     neg_extra = neg_ids.size(0) - (config.RPN.TRAIN_ANCHORS_PER_IMAGE -
                                torch.sum((target_rpn_match == 1).long()).data[0])
@@ -601,6 +603,22 @@ def prepare_rpn_target(anchors, gt_class_ids, gt_boxes, config, curr_coco_im_id=
                                 1 = positive anchor, -1 = negative anchor, 0 = neutral
         target_rpn_bbox:    [bs, TRAIN_ANCHORS_PER_IMAGE, (dy, dx, log(dh), log(dw))] Anchor bbox deltas.
     """
+    # var_debug = {
+    #     'anchors': anchors,
+    #     'gt_class_ids': gt_class_ids,
+    #     'gt_boxes': gt_boxes,
+    #     'config': config,
+    #     'curr_coco_im_id': curr_coco_im_id,
+    # }
+    # torch.save(var_debug, 'var_debug')
+
+    # my_vars = torch.load('var_debug')
+    # anchors = my_vars['anchors']
+    # gt_class_ids = my_vars['gt_class_ids']
+    # gt_boxes = my_vars['gt_boxes']
+    # config = my_vars['config']
+    # curr_coco_im_id = my_vars['curr_coco_im_id']
+
     bs = gt_class_ids.size(0)
     anchors = Variable(anchors.cuda(), requires_grad=False)
 

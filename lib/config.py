@@ -366,7 +366,7 @@ class CocoConfig(Config):
             self.DEV.BUFFER_SIZE = 1
             self.DEV.LOSS_FAC = 1.
             self.DEV.LOSS_CHOICE = 'ot'
-            self.TRAIN.BATCH_SIZE = 16
+            self.TRAIN.BATCH_SIZE = 4
             # self.DEV.DIS_REG_LOSS = True
             self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
             # self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
