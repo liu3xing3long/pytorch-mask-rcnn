@@ -60,7 +60,8 @@ def generate_pyramid_priors(scales, ratios, feature_shapes, feature_strides, anc
     # [anchor_count, (y1, x1, y2, x2)]
     anchors = []
     for i in range(len(scales)):
-        anchors.append(generate_priors(scales[i], ratios, feature_shapes[i], feature_strides[i], anchor_stride))
+        anchors.append(generate_priors(
+            scales[i], ratios, feature_shapes[i], feature_strides[i], anchor_stride))
     return np.concatenate(anchors, axis=0)
 
 
@@ -247,11 +248,11 @@ def generate_roi(config, proposals, gt_class_ids, gt_boxes, gt_masks):
         no_crowd_bool[:] = True
 
     # Compute overlaps matrix [bs, proposals, gt_boxes]
-    try:
-        overlaps = bbox_overlaps(proposals, gt_boxes)   # TODO: gt_boxes might be empty
-    except:
-        print('proposals size: ', proposals.size())
-        print('gt_boxes size: ', gt_boxes.size())
+    # try:
+    overlaps = bbox_overlaps(proposals, gt_boxes)   # gt_boxes might be empty
+    # except:
+    #     print('proposals size: ', proposals.size())
+    #     print('gt_boxes size: ', gt_boxes.size())
 
     # Determine positive and negative ROIs
     # shape [bs, N], means the maximum overlap for each RoI (N) with GTs
@@ -438,9 +439,10 @@ def prepare_det_target(proposals, gt_class_ids, gt_boxes, gt_masks, config):
 def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
     """per sample op."""
     # sample_id is the id within each GPU
-
+    RARE_CASE = False
     curr_sample_id = args[0]
     coco_im_id = args[1].data.cpu().numpy()
+    curr_im_name = coco_im_id[curr_sample_id]
 
     if SEE_ONE_EXAMPLE and EXAMPLE_COCO_IND == coco_im_id[curr_sample_id]:
         print('this is the image you want to see: {}'.format(EXAMPLE_COCO_IND))
@@ -503,10 +505,15 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
     if config.CTRL.PROFILE_ANALYSIS:
         print('\t\t[sample_id {}, im {}] 1. passed initial assignment in generate_rpn_target'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
+    try:
+        _pos_num_before = torch.sum((target_rpn_match == 1).long()).data[0]
+        _neg_num_before = torch.sum((target_rpn_match == -1).long()).data[0]
+        _neutral_num_before = torch.sum((target_rpn_match == 0).long()).data[0]
+    except RuntimeError:
+        # import pdb
+        # pdb.set_trace()
+        a = 1
 
-    _pos_num_before = torch.sum((target_rpn_match == 1).long()).data[0]
-    _neg_num_before = torch.sum((target_rpn_match == -1).long()).data[0]
-    _neutral_num_before = torch.sum((target_rpn_match == 0).long()).data[0]
     # 4. Subsample to balance positive and negative anchors
     # Don't let positives be more than half the anchors
     pos_ids = torch.nonzero(target_rpn_match == 1).squeeze()
@@ -529,9 +536,15 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
 
     # Same for negative proposals
     # TODO: bug here
-    neg_ids = torch.nonzero(target_rpn_match == -1).squeeze()
-    neg_extra = neg_ids.size(0) - (config.RPN.TRAIN_ANCHORS_PER_IMAGE -
-                               torch.sum((target_rpn_match == 1).long()).data[0])
+    try:
+        neg_ids = torch.nonzero(target_rpn_match == -1).squeeze()
+        neg_extra = neg_ids.size(0) - (config.RPN.TRAIN_ANCHORS_PER_IMAGE -
+                                   torch.sum((target_rpn_match == 1).long()).data[0])
+    except RuntimeError:
+        import pdb
+        pdb.set_trace()
+        a = 1
+
     if neg_extra > 0:
         # Reset the extra ones to neutral
         _tmp = torch.from_numpy(np.random.permutation(neg_ids.size(0))).cuda()
@@ -540,18 +553,31 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         target_rpn_match[_ids] = 0
     else:
         _neg_set_to_zero = -1
+        RARE_CASE = True
+        _pos_num = torch.sum((target_rpn_match == 1).long()).data[0]
+        _neg_num = torch.sum((target_rpn_match == -1).long()).data[0]
+        _neutral_num = torch.sum((target_rpn_match == 0).long()).data[0]
+        print_log('\n[im: {}][WARNING!!!], neg ids is smaller!'
+                  '\t\tpos_num: {}, neg_num: {}, neutral_num: {}, anchors_num: {}\n'
+                  .format(curr_im_name,
+                          _pos_num, _neg_num, _neutral_num, anchors.size(0)), config.MISC.LOG_FILE)
     # ======= ABOVE DONE =======
 
     # TODO: bug this line. RuntimeError: cuda runtime error (59) : device-side assert triggered at
     # see issue here: https://github.com/pytorch/pytorch/issues/4144
-    _pos_num = torch.sum((target_rpn_match == 1).long()).data[0]
-    _neg_num = torch.sum((target_rpn_match == -1).long()).data[0]
-    _neutral_num = torch.sum((target_rpn_match == 0).long()).data[0]
+    try:
+        _pos_num = torch.sum((target_rpn_match == 1).long()).data[0]
+        _neg_num = torch.sum((target_rpn_match == -1).long()).data[0]
+        _neutral_num = torch.sum((target_rpn_match == 0).long()).data[0]
+    except RuntimeError:
+        a = 1
+
     # check total number of anchor
-    if _pos_num + _neg_num != config.RPN.TRAIN_ANCHORS_PER_IMAGE:
-        curr_im_name = coco_im_id[curr_sample_id]
+    if _pos_num + _neg_num != config.RPN.TRAIN_ANCHORS_PER_IMAGE and not RARE_CASE:
+        a = 1
+        # import pdb
+        # pdb.set_trace()
         print_log('\n[im: {}][WARNING!!!]'
-                  '\tactual_rpn_pos_and_neg_num is {}, config num is {}\n'
                   '\t\tpos_num: {}, neg_num: {}, neutral_num: {}, anchors_num: {}\n'
                   '\t\toriginal_gt_num: {}, actual_gt_num (after crowd): {}, original_gt_full_size: {}\n'
                   '\t\tpos_ids size: {}, neg_ids size: {}\n'
@@ -559,7 +585,6 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
                   '\t\tpos_set_to_zero size: {}, neg_set_to_zero size: {}\n'
                   '\t\tbefore sub-sample: pos {}, neg {}, neutral {}'.
                   format(curr_im_name,
-                         _pos_num + _neg_num, config.RPN.TRAIN_ANCHORS_PER_IMAGE,
                          _pos_num, _neg_num, _neutral_num, anchors.size(0),
                          original_gt_num, actual_gt_num, original_gt_full_size,
                          pos_ids.size(0), neg_ids.size(0),
@@ -571,7 +596,8 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
     if config.CTRL.PROFILE_ANALYSIS:
         print('\t\t[sample_id {}, im {}] 2. passed rpn_target_match'.
               format(curr_sample_id, coco_im_id[curr_sample_id]))
-    # For positive anchors, compute shift and scale needed to transform them
+
+    # For *positive* anchors, compute shift and scale needed to transform them
     # to match the corresponding GT boxes.
     ix = 0
     pos_ids = torch.nonzero(target_rpn_match == 1).squeeze()

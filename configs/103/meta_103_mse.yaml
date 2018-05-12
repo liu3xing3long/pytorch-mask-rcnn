@@ -2,7 +2,7 @@ TRAIN:
   LR_WARM_UP: False
   CLIP_GRAD: True
   END2END: False
-  BATCH_SIZE: 4
+  BATCH_SIZE: 8
   DO_VALIDATION: True
 DATA:
   IMAGE_MIN_DIM: 800
@@ -11,9 +11,10 @@ DEV:
   SWITCH: True
   BUFFER_SIZE: 1  # use all history
   LOSS_CHOICE: 'l2'
-  LOSS_FAC: 100.
+  LOSS_FAC: 10.
   BIG_SUPERVISE: True
-  BIG_LOSS_FAC: 1.
+  BIG_LOSS_FAC: .1
+  BIG_FC_INIT: 'coco_pretrain'
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:
@@ -21,4 +22,4 @@ CTRL:
 MISC:
   USE_VISDOM: True
   VIS:
-    PORT: 2035
+    PORT: 2042
