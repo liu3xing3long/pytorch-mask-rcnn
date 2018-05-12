@@ -447,9 +447,10 @@ def detection_collate(batch):
         gt_boxes.append(sample[2])
         gt_masks.append(sample[3])
         imgs_metas.append(sample[4])
-    return torch.stack(imgs, 0), gt_class_ids, gt_boxes, gt_masks, \
+
+    return torch.stack(imgs, 0), \
+           gt_class_ids, gt_boxes, gt_masks, \
            torch.stack(imgs_metas, 0)
-           # torch.stack(rpn_match, 0), torch.stack(rpn_bbox, 0), \
 
 
 def get_data(config):

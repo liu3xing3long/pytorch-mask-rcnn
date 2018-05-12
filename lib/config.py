@@ -361,12 +361,16 @@ class CocoConfig(Config):
             # debug mode on local pc
             # self.CTRL.PROFILE_ANALYSIS = True
             self.MISC.USE_VISDOM = True
-            self.CTRL.QUICK_VERIFY = True
+            self.MISC.VIS.PORT = 8097  # debug
+
+            self.DATA.IMAGE_MAX_DIM = 512
+            self.DATA.IMAGE_MIN_DIM = 512
+            self.CTRL.QUICK_VERIFY = False
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1
             self.DEV.LOSS_FAC = 1.
             self.DEV.LOSS_CHOICE = 'ot'
-            self.TRAIN.BATCH_SIZE = 16
+            self.TRAIN.BATCH_SIZE = 6
             # self.DEV.DIS_REG_LOSS = True
             self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
             # self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
