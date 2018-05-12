@@ -532,9 +532,15 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
         pos_set_to_zero = -1
 
     # Same for negative proposals
-    neg_ids = torch.nonzero(target_rpn_match == -1).squeeze()
-    neg_extra = neg_ids.size(0) - (config.RPN.TRAIN_ANCHORS_PER_IMAGE -
-                               torch.sum((target_rpn_match == 1).long()).data[0])
+    try:
+        neg_ids = torch.nonzero(target_rpn_match == -1).squeeze()
+        neg_extra = neg_ids.size(0) - (config.RPN.TRAIN_ANCHORS_PER_IMAGE -
+                                   torch.sum((target_rpn_match == 1).long()).data[0])
+    except RuntimeError:
+        import pdb
+        pdb.set_trace()
+        a = 1
+
     if neg_extra > 0:
         # Reset the extra ones to neutral
         _tmp = torch.from_numpy(np.random.permutation(neg_ids.size(0))).cuda()
@@ -552,8 +558,13 @@ def generate_target(config, anchors, gt_class_ids, gt_boxes, *args):
     _neutral_num = torch.sum((target_rpn_match == 0).long()).data[0]
     # check total number of anchor
     if _pos_num + _neg_num != config.RPN.TRAIN_ANCHORS_PER_IMAGE:
+<<<<<<< HEAD
         #import pdb
         #pdb.set_trace()
+=======
+        import pdb
+        pdb.set_trace()
+>>>>>>> 095d4a332574ec705b386f1cbbcdcec589569a1b
         curr_im_name = coco_im_id[curr_sample_id]
         print_log('\n[im: {}][WARNING!!!]'
                   '\tactual_rpn_pos_and_neg_num is {}, config num is {}\n'

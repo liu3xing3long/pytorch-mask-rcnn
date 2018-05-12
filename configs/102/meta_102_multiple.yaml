@@ -2,7 +2,7 @@ TRAIN:
   LR_WARM_UP: False
   CLIP_GRAD: True
   END2END: False
-  BATCH_SIZE: 4
+  BATCH_SIZE: 8
   DO_VALIDATION: True
 DATA:
   IMAGE_MIN_DIM: 800
@@ -11,7 +11,7 @@ DEV:
   SWITCH: True
   BUFFER_SIZE: 1  # use all history
   LOSS_CHOICE: 'kl'
-  LOSS_FAC: 200.
+  LOSS_FAC: 1000.
   MULTI_UPSAMPLER: True
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
