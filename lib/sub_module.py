@@ -534,10 +534,11 @@ class Dev(nn.Module):
             # used for splitting train and test
             train_phase = False if roi_cls_gt is None else True
 
-            # Assign each ROI to a level in the pyramid based on the ROI area.
+            # Step 1. Assign each ROI to a level in the pyramid based on the ROI area.
             y1, x1, y2, x2 = rois.chunk(4, dim=2)   # in normalized coordinate
             h, w = y2 - y1, x2 - x1
             area = w*h
+            total_box = rois.size(0)*rois.size(1)
 
             # use **either** 'roi_level' or 'accu_small_idx' to assign anchors
             if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
@@ -555,12 +556,17 @@ class Dev(nn.Module):
             if SHOW_STAT:
                 print('\tassign ROIs (total num: {:d}) in {:d} scales.'
                       'max box area: {:.4f}, min box area: {:.4f}'.format(
-                        rois.size(0)*rois.size(1), 4, area.max().data[0], area.min().data[0]))
+                        total_box, 4, area.max().data[0], area.min().data[0]))
+
+            # Step 2. LOOP through levels and apply ROI pooling to each.
+            # P2 to P5, with 2 being the most coarse map
             pooled, mask, box_to_level = [], [], []
             big_feat, big_cnt, small_feat, small_cnt = [], [], [], []   # to generate feat_out
             big_loss = []
-            # LOOP through levels and apply ROI pooling to each.
-            # P2 to P5, with 2 being the most coarse map
+            small_output_all = Variable(torch.zeros(total_box, 1024).cuda())
+            small_gt_all = Variable(torch.zeros(total_box).cuda())
+            small_out_cnt = 0
+
             for i, level in enumerate(range(2, 6)):
 
                 curr_feat_maps = x[i]
@@ -641,7 +647,7 @@ class Dev(nn.Module):
                             big_output = _big_out_before_last
 
                         # transfer ins2cls feature
-                        # shape: always 1024 x 81 (cls_num)
+                        # shape: always 1024 x 81 (cls_num); this is an averaged output
                         _b_feat, _b_cnt = self._assign_feat2cls([big_box_gt, big_output])
                         big_feat.append(_b_feat)
                         big_cnt.append(_b_cnt)
@@ -669,11 +675,11 @@ class Dev(nn.Module):
                 _feat_maps = self.upsample[_idx](curr_feat_maps)
                 # _feat_maps = curr_feat_maps
                 assert small_boxes.max().data[0] <= 1.0
+
                 # shape: say 473, 256, 7, 7
                 pooled_features = CropAndResizeFunction(
                     self.pool_size, self.pool_size)(_feat_maps, small_boxes, box_ind)
                 pooled.append(pooled_features)
-
                 # mask and feat features are shared with a RoI
                 # since the output size is the same (mask_pool_size=feat_pool_size)
                 # shape: say 473, 256, 14, 14
@@ -691,6 +697,12 @@ class Dev(nn.Module):
                     small_feat.append(_s_feat)
                     small_cnt.append(_s_cnt)
 
+                    _start_ind = small_out_cnt
+                    _small_num = small_index.size(0)
+                    small_output_all[_start_ind:_small_num+_start_ind, :] = small_output
+                    small_gt_all[_start_ind:_small_num+_start_ind] = small_box_gt
+                    small_out_cnt += _small_num
+
                 if SHOW_STAT:
                     print('\tscale {:d} (thres: {:.4f}), (small) num_box: {:d}, big_box: {:d}, meta_loss: {}'
                           .format(level, _thres, small_index.size(0), big_num, _use_meta))
@@ -704,12 +716,15 @@ class Dev(nn.Module):
                     big_feat = torch.stack(big_feat).unsqueeze(dim=0).detach()
                 else:
                     big_feat = torch.stack(big_feat).unsqueeze(dim=0)
+
                 feat_out = [
                     big_feat,
                     torch.stack(big_cnt).unsqueeze(dim=0),
                     torch.stack(small_feat).unsqueeze(dim=0),
                     torch.stack(small_cnt).unsqueeze(dim=0),
                     torch.stack(big_loss).unsqueeze(dim=0),
+                    small_output_all,
+                    small_gt_all
                 ]
             else:
                 feat_out = []
