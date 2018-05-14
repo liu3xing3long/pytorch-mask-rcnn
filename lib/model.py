@@ -68,7 +68,8 @@ class MaskRCNN(nn.Module):
 
         # FPN Classifier
         self.classifier = \
-            Classifier(depth=256, num_classes=config.DATASET.NUM_CLASSES, pool_size=config.MRCNN.POOL_SIZE)
+            Classifier(depth=256, num_classes=config.DATASET.NUM_CLASSES,
+                       pool_size=config.MRCNN.POOL_SIZE, config=config)
         # FPN Mask
         self.mask = Mask(depth=256, num_classes=config.DATASET.NUM_CLASSES)
 
@@ -143,13 +144,12 @@ class MaskRCNN(nn.Module):
     def meta_loss(self, feat_input):
         """the loss is computed in GPU 0; called in workflow.py *only*."""
         # the direct outcome (feat_out) from 'forward() of Dev class in sub_module.py'
-        [big_feat, big_cnt, small_feat, small_cnt] = feat_input
-        # final_small_feat, 1024 x 81; final_small_cnt, 1 x 81
-        final_small_feat, final_small_cnt = self._merge_feat_vec(small_feat, small_cnt)
-        _big_feat, _big_cnt = self._merge_feat_vec(big_feat, big_cnt)
+        [big_feat, big_cnt, small_feat, small_cnt, small_output_all, small_gt_all] = feat_input
 
         # update buffer (buffer_size x 1024 x 81)
+        # self.buffer/buffer_cnt is Tensor
         buffer_size = self.buffer.size(0)
+        _big_feat, _big_cnt = self._merge_feat_vec(big_feat, big_cnt)
         _big_feat_tensor, _big_cnt_tensor = _big_feat.data, _big_cnt.data
         if buffer_size == 1:
             # use all historic data
@@ -158,7 +158,7 @@ class MaskRCNN(nn.Module):
             self.buffer = feat_sum / (self.buffer_cnt + EPS)
             final_big_feat = self.buffer.squeeze()  # shape: 1024 x 81
         else:
-            # in-place opt. on Tensor
+            # in-place opt.
             self.buffer[:-1] = self.buffer[1:]
             self.buffer[-1, :, :] = _big_feat_tensor
             self.buffer_cnt[:-1] = self.buffer_cnt[1:]
@@ -166,16 +166,33 @@ class MaskRCNN(nn.Module):
             final_big_feat = \
                 torch.sum(self.buffer * self.buffer_cnt, dim=0) / (torch.sum(self.buffer_cnt, dim=0) + EPS)
 
-        final_small_cnt.data[0][0] = 0  # Variable; do not include background cls when computing meta_loss
-        _idx = torch.nonzero(final_small_cnt.squeeze()).squeeze().data
+        if self.config.DEV.INST_LOSS:
+            # _idx_tmp/_idx indexes the instances of small objects
+            # small_gt_all shape: 1200
+            _idx_tmp = torch.nonzero(small_gt_all).squeeze().data
+            buff_cls_idx = torch.nonzero(self.buffer_cnt.squeeze() > 0).squeeze()
+            _idx = [ind for ind in _idx_tmp if small_gt_all[ind].data.cpu().numpy() in buff_cls_idx]
+            _idx = torch.from_numpy(np.array(_idx)).cuda()
+        else:
+            # final_small_feat, 1024 x 81; final_small_cnt, 1 x 81
+            final_small_feat, final_small_cnt = self._merge_feat_vec(small_feat, small_cnt)
+            final_small_cnt.data[0][0] = 0  # Variable; do not include background cls when computing meta_loss
+            # _idx indexes the 81 classes
+            _check = (final_small_cnt.squeeze() > 0) + (Variable(self.buffer_cnt.squeeze()) > 0)
+            _idx = torch.nonzero(_check == 2).squeeze().data
+
         if _idx.size():
-            SMALL = final_small_feat[:, _idx].t()  # say 15 x 1024
-            final_big_feat_var = Variable(final_big_feat)
-            BIG = final_big_feat_var[:, _idx].t()   # also 15 x 1024
-            # if self.config.CTRL.DEBUG:
-            #     print('comp_cls_num in meta-loss: {}'.format(_idx.size(0)))
-            #     print('SMALL mean: {:.4f}'.format(SMALL.mean().data.cpu()[0]))
-            #     print('BIG mean: {:.4f}'.format(BIG.mean().data.cpu()[0]))
+            if self.config.DEV.INST_LOSS:
+                SMALL = small_output_all[_idx, :]
+                BIG = self._assign_from_buffer(final_big_feat, small_gt_all[_idx])
+            else:
+                SMALL = final_small_feat[:, _idx].t()  # say 15 x 1024
+                final_big_feat_var = Variable(final_big_feat)
+                BIG = final_big_feat_var[:, _idx].t()   # also 15 x 1024
+                # if self.config.CTRL.DEBUG:
+                #     print('comp_cls_num in meta-loss: {}'.format(_idx.size(0)))
+                #     print('SMALL mean: {:.4f}'.format(SMALL.mean().data.cpu()[0]))
+                #     print('BIG mean: {:.4f}'.format(BIG.mean().data.cpu()[0]))
 
             # compute meta-loss
             if self.config.DEV.LOSS_CHOICE == 'l2':
@@ -192,6 +209,11 @@ class MaskRCNN(nn.Module):
         else:
             loss = Variable(torch.zeros(1).cuda())
         return loss
+
+    @staticmethod
+    def _assign_from_buffer(buffer, list):
+        out = torch.stack([buffer[:, cls] for cls in list.data.cpu().numpy()])
+        return Variable(out)
 
     @staticmethod
     def _merge_feat_vec(box_feat, box_cnt):
@@ -292,8 +314,10 @@ class MaskRCNN(nn.Module):
         if mode == 'inference':
 
             assert _proposals.sum().data[0] != 0
-            _pooled_cls, _, _ = self.dev_roi(_mrcnn_feature_maps, _proposals)
-            _, mrcnn_class, mrcnn_bbox = self.classifier(_pooled_cls)
+            _pooled_cls, _, _feat_out_test = self.dev_roi(_mrcnn_feature_maps, _proposals)
+            small_output_all, small_gt_all = _feat_out_test
+            _, mrcnn_class, mrcnn_bbox = self.classifier(_pooled_cls, small_output_all, small_gt_all)
+
             # Detections
             # input[1], image_metas, (3, 90), Variable
             _, _, windows, _, _ = parse_image_meta(input[1])
@@ -316,12 +340,6 @@ class MaskRCNN(nn.Module):
         elif mode == 'train':
 
             gt_class_ids, gt_boxes, gt_masks = input[1], input[2], input[3]
-            # 0. init outputs
-            num_rois, mask_sz, num_cls = \
-                self.config.ROIS.TRAIN_ROIS_PER_IMAGE, self.config.MRCNN.MASK_SHAPE[0], self.config.DATASET.NUM_CLASSES
-            mrcnn_class_logits = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls).cuda())
-            mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
-            mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
             # 1. compute RPN targets
             # try:
@@ -349,8 +367,10 @@ class MaskRCNN(nn.Module):
                 # _pooled_cls: 600 (bsx200), 256, 7, 7
                 _pooled_cls, _pooled_mask, _feat_out = \
                     self.dev_roi(_mrcnn_feature_maps, _rois, target_class_ids)
+
                 if self.config.DEV.SWITCH and not self.config.DEV.BASELINE:
-                    [big_feat, big_cnt, small_feat, small_cnt, big_loss] = _feat_out
+                    [big_feat, big_cnt, small_feat, small_cnt, big_loss,
+                     small_output_all, small_gt_all] = _feat_out
                     # if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
                     #     assert big_feat.size() == (1, 4, 1024, 81), 'big_feat size: {}'.format(big_feat.size())
                     #     assert small_feat.size() == big_feat.size(), 'small_feat size: {}'.format(small_feat.size())
@@ -360,7 +380,7 @@ class MaskRCNN(nn.Module):
                     #     print('pooled_cls mean: {:.4f}'.format(_pooled_cls.mean().data.cpu()[0]))
                     #     print('pooled_mask mean: {:.4f}'.format(_pooled_mask.mean().data.cpu()[0]))
                 # classifier
-                mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_pooled_cls)
+                mrcnn_class_logits, _, mrcnn_bbox = self.classifier(_pooled_cls, small_output_all, small_gt_all)
                 # if self.config.CTRL.DEBUG:
                 #     a, b = torch.max(mrcnn_cls_logits, dim=-1)
                 #     print('train classifier, ROIs pred_cls sum: {}'.format(b.sum().data[0]))
@@ -369,7 +389,7 @@ class MaskRCNN(nn.Module):
                 mrcnn_mask = self.mask(_pooled_mask)
 
                 # reshape output
-                mrcnn_class_logits = mrcnn_cls_logits.view(sample_per_gpu, -1, mrcnn_cls_logits.size(1))
+                mrcnn_class_logits = mrcnn_class_logits.view(sample_per_gpu, -1, mrcnn_class_logits.size(1))
                 mrcnn_bbox = mrcnn_bbox.view(sample_per_gpu, -1, mrcnn_bbox.size(1), mrcnn_bbox.size(2))
                 mrcnn_mask = mrcnn_mask.view(
                     sample_per_gpu, -1, mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
@@ -383,6 +403,15 @@ class MaskRCNN(nn.Module):
                 small_feat = Variable(torch.zeros(1, scale_num, 1024, self.config.DATASET.NUM_CLASSES).cuda())
                 small_cnt = Variable(torch.zeros(1, scale_num, 1, self.config.DATASET.NUM_CLASSES).cuda())
                 big_loss = Variable(torch.zeros(1, scale_num, 1).cuda())
+
+                small_output_all = Variable(torch.zeros(1, 1024).cuda())
+                small_gt_all = Variable(torch.zeros(1).cuda())
+
+                num_rois, mask_sz, num_cls = \
+                    self.config.ROIS.TRAIN_ROIS_PER_IMAGE, self.config.MRCNN.MASK_SHAPE[0], self.config.DATASET.NUM_CLASSES
+                mrcnn_class_logits = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls).cuda())
+                mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
+                mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass mask and cls generation'.format(curr_gpu_id))
@@ -399,6 +428,7 @@ class MaskRCNN(nn.Module):
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass loss compute!'.format(curr_gpu_id))
 
-            return loss_merge, big_feat, big_cnt, small_feat, small_cnt, big_loss  # must be Variables
+            # must be Variables
+            return loss_merge, big_feat, big_cnt, small_feat, small_cnt, big_loss, small_output_all, small_gt_all
 
 

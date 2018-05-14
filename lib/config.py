@@ -207,6 +207,8 @@ class Config(object):
     DEV.LOSS_CHOICE = 'l1'
     DEV.OT_ONE_DIM_FORM = 'conv'   # effective if loss_choice is 'ot'
     DEV.LOSS_FAC = 0.5
+    # compute meta_los of small boxes on an instance or class level
+    DEV.INST_LOSS = False
 
     DEV.FEAT_BRANCH_POOL_SIZE = 14
     # ignore regression loss (only for **DEBUG**);
@@ -228,6 +230,10 @@ class Config(object):
     DEV.STRUCTURE = 'alpha'   # 'beta'
     DEV.DIS_UPSAMPLER = False
     DEV.BIG_FEAT_DETACH = True
+    # merge compare_feat output into classifier
+    DEV.CLS_MERGE_FEAT = False
+    DEV.CLS_MERGE_MANNER = 'simple_add'   # 'linear_add'
+    DEV.CLS_MERGE_FAC = .5
 
     # ==============================
     CTRL = AttrDict()
@@ -377,7 +383,7 @@ class CocoConfig(Config):
             self.MISC.USE_VISDOM = True
             self.MISC.VIS.PORT = 8097  # debug
 
-            self.TRAIN.BATCH_SIZE = 6
+            self.TRAIN.BATCH_SIZE = 2
             # self.TRAIN.INIT_LR = 0.005
             # self.DATA.IMAGE_MAX_DIM = 512
             # self.DATA.IMAGE_MIN_DIM = 512
@@ -385,7 +391,7 @@ class CocoConfig(Config):
 
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1
-            self.DEV.LOSS_FAC = 1.
+            self.DEV.LOSS_FAC = 50.
             self.DEV.LOSS_CHOICE = 'l2'
             self.DEV.OT_ONE_DIM_FORM = 'conv'  # 'fc'
 
@@ -401,8 +407,13 @@ class CocoConfig(Config):
             self.DEV.STRUCTURE = 'beta'
             self.DEV.DIS_UPSAMPLER = False
             self.DEV.UPSAMPLE_FAC = 1.0
-            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = True
+            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
             self.DEV.BIG_FEAT_DETACH = True
+            self.DEV.INST_LOSS = False
+
+            self.DEV.CLS_MERGE_FEAT = True
+            self.DEV.CLS_MERGE_MANNER = 'simple_add'
+            # self.DEV.CLS_MERGE_MANNER = 'linear_add'
 
             # self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
             # self.DEV.MULTI_UPSAMPLER = False

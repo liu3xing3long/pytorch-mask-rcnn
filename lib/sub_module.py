@@ -530,13 +530,15 @@ class Dev(nn.Module):
                 feat_out = []
 
         elif self.structure == 'beta':
+            SHOW_STAT = False
             # used for splitting train and test
             train_phase = False if roi_cls_gt is None else True
 
-            # Assign each ROI to a level in the pyramid based on the ROI area.
+            # Step 1. Assign each ROI to a level in the pyramid based on the ROI area.
             y1, x1, y2, x2 = rois.chunk(4, dim=2)   # in normalized coordinate
             h, w = y2 - y1, x2 - x1
             area = w*h
+            total_box = rois.size(0)*rois.size(1)
 
             # use **either** 'roi_level' or 'accu_small_idx' to assign anchors
             if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
@@ -551,15 +553,20 @@ class Dev(nn.Module):
                 accu_small_idx = Variable(torch.ByteTensor(rois.size(0), rois.size(1)).cuda())
                 accu_small_idx[:] = False
 
-            # if self.config.CTRL.DEBUG:
-            #     print('\tassign ROIs (total num: {:d}) in {:d} scales.'
-            #           'max box area: {:.4f}, min box area: {:.4f}'.format(
-            #             rois.size(0)*rois.size(1), 4, area.max().data[0], area.min().data[0]))
+            if SHOW_STAT:
+                print('\tassign ROIs (total num: {:d}) in {:d} scales.'
+                      'max box area: {:.4f}, min box area: {:.4f}'.format(
+                        total_box, 4, area.max().data[0], area.min().data[0]))
+
+            # Step 2. LOOP through levels and apply ROI pooling to each.
+            # P2 to P5, with 2 being the most coarse map
             pooled, mask, box_to_level = [], [], []
             big_feat, big_cnt, small_feat, small_cnt = [], [], [], []   # to generate feat_out
             big_loss = []
-            # LOOP through levels and apply ROI pooling to each.
-            # P2 to P5, with 2 being the most coarse map
+            small_output_all = Variable(torch.zeros(total_box, 1024).cuda())
+            small_gt_all = Variable(torch.zeros(total_box).cuda())
+            small_out_cnt = 0
+
             for i, level in enumerate(range(2, 6)):
 
                 curr_feat_maps = x[i]
@@ -590,9 +597,9 @@ class Dev(nn.Module):
                     small_ix = ((accu_small_idx == 0) + small_ix) > 0
 
                 if not small_ix.any():
-                    # if self.config.CTRL.DEBUG:
-                    #     print('\tscale {:d} (thres: {:.4f}), NO (small) num_box, skip this scale ...'
-                    #           .format(level, _thres))
+                    if SHOW_STAT:
+                        print('\tscale {:d} (thres: {:.4f}), NO (small) num_box, skip this scale ...'
+                              .format(level, _thres))
                     # if there are no "small" boxes, we won't compute stats of *both* small and big on this scale
                     if _use_meta and train_phase and not self.config.DEV.BASELINE:
                         small_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
@@ -640,7 +647,7 @@ class Dev(nn.Module):
                             big_output = _big_out_before_last
 
                         # transfer ins2cls feature
-                        # shape: always 1024 x 81 (cls_num)
+                        # shape: always 1024 x 81 (cls_num); this is an averaged output
                         _b_feat, _b_cnt = self._assign_feat2cls([big_box_gt, big_output])
                         big_feat.append(_b_feat)
                         big_cnt.append(_b_cnt)
@@ -668,11 +675,11 @@ class Dev(nn.Module):
                 _feat_maps = self.upsample[_idx](curr_feat_maps)
                 # _feat_maps = curr_feat_maps
                 assert small_boxes.max().data[0] <= 1.0
+
                 # shape: say 473, 256, 7, 7
                 pooled_features = CropAndResizeFunction(
                     self.pool_size, self.pool_size)(_feat_maps, small_boxes, box_ind)
                 pooled.append(pooled_features)
-
                 # mask and feat features are shared with a RoI
                 # since the output size is the same (mask_pool_size=feat_pool_size)
                 # shape: say 473, 256, 14, 14
@@ -680,18 +687,32 @@ class Dev(nn.Module):
                     self.mask_pool_size, self.mask_pool_size)(_feat_maps, small_boxes, box_ind)
                 mask.append(mask_and_feat)
 
-                if _use_meta and train_phase and not self.config.DEV.BASELINE:
-                    # process big-small-supervise (small part)
-                    small_box_gt = roi_cls_gt[small_index[:, 0].data, small_index[:, 1].data]
+                # Deal with 'small' boxes during train and test
+                if _use_meta and not self.config.DEV.BASELINE:
+                    # shape: say 460, 1024, 1, 1
                     small_output = self.feat_extract(mask_and_feat)
                     if self.config.DEV.LOSS_CHOICE != 'ot':
                         small_output = self.last_op(small_output)
-                    _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
-                    small_feat.append(_s_feat)
-                    small_cnt.append(_s_cnt)
-                # if self.config.CTRL.DEBUG:
-                #     print('\tscale {:d} (thres: {:.4f}), (small) num_box: {:d}, big_box: {:d}, meta_loss: {}'
-                #           .format(level, _thres, small_index.size(0), big_num, _use_meta))
+
+                    _start_ind = small_out_cnt
+                    _small_num = small_index.size(0)
+                    small_output_all[_start_ind:_small_num+_start_ind, :] = small_output
+
+                    if train_phase:
+                        small_box_gt = roi_cls_gt[small_index[:, 0].data, small_index[:, 1].data]
+                        # shape: always 1024 x 81 (cls_num); this is an averaged output
+                        _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
+                        small_feat.append(_s_feat)
+                        small_cnt.append(_s_cnt)
+                        small_gt_all[_start_ind:_small_num+_start_ind] = small_box_gt
+                    else:
+                        small_gt_all[_start_ind:_small_num+_start_ind] = 1
+
+                    small_out_cnt += _small_num
+
+                if SHOW_STAT:
+                    print('\tscale {:d} (thres: {:.4f}), (small) num_box: {:d}, big_box: {:d}, meta_loss: {}'
+                          .format(level, _thres, small_index.size(0), big_num, _use_meta))
             # SCALE LOOP ENDS
 
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
@@ -708,10 +729,15 @@ class Dev(nn.Module):
                     torch.stack(small_feat).unsqueeze(dim=0),
                     torch.stack(small_cnt).unsqueeze(dim=0),
                     torch.stack(big_loss).unsqueeze(dim=0),
+                    small_output_all,
+                    small_gt_all
                 ]
+            elif not train_phase:
+                # test phase in 'beta' structure
+                feat_out = [small_output_all, small_gt_all]
             else:
                 feat_out = []
-
+        # END BETA STRUCTURE
         return pooled_out, mask_out, feat_out
 
     @staticmethod
@@ -761,15 +787,20 @@ class Dev(nn.Module):
 #  Feature Pyramid Network Heads
 ############################################################
 class Classifier(nn.Module):
-    def __init__(self, depth, num_classes, pool_size):
+    def __init__(self, depth, num_classes, pool_size, config):
         super(Classifier, self).__init__()
         self.depth = depth
         self.pool_size = pool_size
         self.num_classes = num_classes
+        self.config = config
+        self.merge_meta = config.DEV.CLS_MERGE_FEAT
+
         self.conv1 = nn.Conv2d(self.depth, 1024, kernel_size=self.pool_size, stride=1)
         self.bn1 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
+
         self.conv2 = nn.Conv2d(1024, 1024, kernel_size=1, stride=1)
         self.bn2 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
+
         self.relu = nn.ReLU(inplace=True)
 
         self.linear_class = nn.Linear(1024, num_classes)
@@ -777,10 +808,19 @@ class Classifier(nn.Module):
 
         self.linear_bbox = nn.Linear(1024, num_classes * 4)
 
-    def forward(self, x):
+    def forward(self, x, small_feat_input, small_gt_index, mode='train'):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
+        if self.config.DEV.SWITCH and self.merge_meta:
+            # TODO: maybe during test, just add a minor delta of meta_feature to original cls_feat
+            if self.config.DEV.CLS_MERGE_MANNER == 'simple_add':
+                x += (small_feat_input*(small_gt_index > 0).float().unsqueeze(1)).view(x.size(0), x.size(1), 1, 1)
+            elif self.config.DEV.CLS_MERGE_MANNER == 'linear_add':
+                _weights = (small_gt_index > 0).float() * self.config.DEV.CLS_MERGE_FAC
+                _weights = _weights.view(x.size(0), 1, 1, 1)
+                x = (1-_weights)*x + _weights*small_feat_input.view(x.size(0), x.size(1), 1, 1)
+
         x = self.conv2(x)
         x = self.bn2(x)
         x = self.relu(x)
