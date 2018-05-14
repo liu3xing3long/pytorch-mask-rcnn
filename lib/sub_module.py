@@ -531,6 +531,7 @@ class Dev(nn.Module):
 
         elif self.structure == 'beta':
             SHOW_STAT = False
+            # TODO (low): haven't considered config.DEV.BASELINE case
             # used for splitting train and test
             train_phase = False if roi_cls_gt is None else True
 
@@ -576,8 +577,6 @@ class Dev(nn.Module):
                     _use_meta = True if level in [2, 3, 4] else False
                 else:
                     _use_meta = True
-                # if self.config.DEV.BASELINE:
-                #     _use_upsample = True
 
                 # Decide "small_ix": bs, num_roi
                 _thres = (self.feat_pool_size / curr_feat_maps.size(-1))**2

@@ -401,14 +401,14 @@ class CocoConfig(Config):
 
             # self.DEV.STRUCTURE = 'alpha'
             self.DEV.BIG_SUPERVISE = False
-            self.DEV.BIG_LOSS_FAC = 1.
+            self.DEV.BIG_LOSS_FAC = .1
             self.DEV.BIG_FC_INIT = 'coco_pretrain'
 
             self.DEV.STRUCTURE = 'beta'
             self.DEV.DIS_UPSAMPLER = False
             self.DEV.UPSAMPLE_FAC = 1.0
             self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
-            self.DEV.BIG_FEAT_DETACH = True
+            self.DEV.BIG_FEAT_DETACH = False
             self.DEV.INST_LOSS = False
 
             self.DEV.CLS_MERGE_FEAT = True
