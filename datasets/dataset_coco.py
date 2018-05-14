@@ -409,6 +409,7 @@ class COCODataset(torch.utils.data.Dataset):
         # Skip images that have no instances. This can happen in cases
         # where we train on a subset of classes and the image doesn't
         # have any of the classes we care about.
+        # UPDATE: never run into this case
         if not np.any(gt_class_ids > 0):
             return None
 

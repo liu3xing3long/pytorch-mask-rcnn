@@ -284,11 +284,11 @@ def train_epoch(input_model, data_loader, optimizer, **args):
             save_model(model, **info_pass)
 
         # for debug; test the model
-        if config.CTRL.DEBUG and iter_ind == (start_iter+100):
-            print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
-                      format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
-            test_model(input_model, args['valset'], args['coco_api'],
-                       during_train=True, epoch=args['epoch'], iter=iter_ind, vis=vis)
+        # if config.CTRL.DEBUG and iter_ind == (start_iter+100):
+        #     print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
+        #               format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
+        #     test_model(input_model, args['valset'], args['coco_api'],
+        #                during_train=True, epoch=args['epoch'], iter=iter_ind, vis=vis)
 
     return loss_data
 
