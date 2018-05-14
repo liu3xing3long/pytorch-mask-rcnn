@@ -349,8 +349,8 @@ class Config(object):
             del self.DEV['BIG_FC_INIT_LIST']
         if self.DEV.LOSS_CHOICE != 'ot':
             del self.DEV['OT_ONE_DIM_FORM']
-        if self.DEV.ASSIGN_BOX_ON_ALL_SCALE:
-            del self.ROIS['ASSIGN_ANCHOR_BASE']
+        # if self.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+        #     del self.ROIS['ASSIGN_ANCHOR_BASE']
 
 
 class CocoConfig(Config):
@@ -401,8 +401,8 @@ class CocoConfig(Config):
             self.DEV.STRUCTURE = 'beta'
             self.DEV.DIS_UPSAMPLER = False
             self.DEV.UPSAMPLE_FAC = 1.0
-            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
-            self.DEV.BIG_FEAT_DETACH = False
+            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = True
+            self.DEV.BIG_FEAT_DETACH = True
 
             # self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
             # self.DEV.MULTI_UPSAMPLER = False
