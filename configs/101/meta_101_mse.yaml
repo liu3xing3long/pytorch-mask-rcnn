@@ -1,8 +1,8 @@
 TRAIN:
-  LR_WARM_UP: False
+  LR_WARM_UP: True
   CLIP_GRAD: True
   END2END: False
-  BATCH_SIZE: 4 #8 # each gpu has one image
+  BATCH_SIZE: 8 # each gpu has one image
   DO_VALIDATION: True
 DATA:
   IMAGE_MIN_DIM: 800
@@ -11,7 +11,7 @@ DEV:
   SWITCH: True
   BUFFER_SIZE: 1  # use all history
   LOSS_CHOICE: 'l2'
-  LOSS_FAC: 50.
+  LOSS_FAC: 100.
 MODEL:
   INIT_FILE_CHOICE: 'coco_pretrain'
 CTRL:
@@ -19,4 +19,4 @@ CTRL:
 MISC:
   USE_VISDOM: True
   VIS:
-    PORT: 2162
+    PORT: 2199
