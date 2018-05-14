@@ -23,4 +23,4 @@ CTRL:
 MISC:
   USE_VISDOM: True
   VIS:
-    PORT: 2042
+    PORT: 2035
