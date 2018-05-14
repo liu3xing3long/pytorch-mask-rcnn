@@ -530,6 +530,7 @@ class Dev(nn.Module):
                 feat_out = []
 
         elif self.structure == 'beta':
+            SHOW_STAT = False
             # used for splitting train and test
             train_phase = False if roi_cls_gt is None else True
 
@@ -551,10 +552,10 @@ class Dev(nn.Module):
                 accu_small_idx = Variable(torch.ByteTensor(rois.size(0), rois.size(1)).cuda())
                 accu_small_idx[:] = False
 
-            # if self.config.CTRL.DEBUG:
-            #     print('\tassign ROIs (total num: {:d}) in {:d} scales.'
-            #           'max box area: {:.4f}, min box area: {:.4f}'.format(
-            #             rois.size(0)*rois.size(1), 4, area.max().data[0], area.min().data[0]))
+            if SHOW_STAT:
+                print('\tassign ROIs (total num: {:d}) in {:d} scales.'
+                      'max box area: {:.4f}, min box area: {:.4f}'.format(
+                        rois.size(0)*rois.size(1), 4, area.max().data[0], area.min().data[0]))
             pooled, mask, box_to_level = [], [], []
             big_feat, big_cnt, small_feat, small_cnt = [], [], [], []   # to generate feat_out
             big_loss = []
@@ -590,9 +591,9 @@ class Dev(nn.Module):
                     small_ix = ((accu_small_idx == 0) + small_ix) > 0
 
                 if not small_ix.any():
-                    # if self.config.CTRL.DEBUG:
-                    #     print('\tscale {:d} (thres: {:.4f}), NO (small) num_box, skip this scale ...'
-                    #           .format(level, _thres))
+                    if SHOW_STAT:
+                        print('\tscale {:d} (thres: {:.4f}), NO (small) num_box, skip this scale ...'
+                              .format(level, _thres))
                     # if there are no "small" boxes, we won't compute stats of *both* small and big on this scale
                     if _use_meta and train_phase and not self.config.DEV.BASELINE:
                         small_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
@@ -689,9 +690,10 @@ class Dev(nn.Module):
                     _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
                     small_feat.append(_s_feat)
                     small_cnt.append(_s_cnt)
-                # if self.config.CTRL.DEBUG:
-                #     print('\tscale {:d} (thres: {:.4f}), (small) num_box: {:d}, big_box: {:d}, meta_loss: {}'
-                #           .format(level, _thres, small_index.size(0), big_num, _use_meta))
+
+                if SHOW_STAT:
+                    print('\tscale {:d} (thres: {:.4f}), (small) num_box: {:d}, big_box: {:d}, meta_loss: {}'
+                          .format(level, _thres, small_index.size(0), big_num, _use_meta))
             # SCALE LOOP ENDS
 
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
