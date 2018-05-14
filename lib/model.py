@@ -68,7 +68,8 @@ class MaskRCNN(nn.Module):
 
         # FPN Classifier
         self.classifier = \
-            Classifier(depth=256, num_classes=config.DATASET.NUM_CLASSES, pool_size=config.MRCNN.POOL_SIZE)
+            Classifier(depth=256, num_classes=config.DATASET.NUM_CLASSES,
+                       pool_size=config.MRCNN.POOL_SIZE, config=config)
         # FPN Mask
         self.mask = Mask(depth=256, num_classes=config.DATASET.NUM_CLASSES)
 
@@ -313,8 +314,10 @@ class MaskRCNN(nn.Module):
         if mode == 'inference':
 
             assert _proposals.sum().data[0] != 0
-            _pooled_cls, _, _ = self.dev_roi(_mrcnn_feature_maps, _proposals)
-            _, mrcnn_class, mrcnn_bbox = self.classifier(_pooled_cls)
+            _pooled_cls, _, _feat_out_test = self.dev_roi(_mrcnn_feature_maps, _proposals)
+            small_output_all, small_gt_all = _feat_out_test
+            _, mrcnn_class, mrcnn_bbox = self.classifier(_pooled_cls, small_output_all, small_gt_all)
+
             # Detections
             # input[1], image_metas, (3, 90), Variable
             _, _, windows, _, _ = parse_image_meta(input[1])
@@ -337,12 +340,6 @@ class MaskRCNN(nn.Module):
         elif mode == 'train':
 
             gt_class_ids, gt_boxes, gt_masks = input[1], input[2], input[3]
-            # 0. init outputs
-            num_rois, mask_sz, num_cls = \
-                self.config.ROIS.TRAIN_ROIS_PER_IMAGE, self.config.MRCNN.MASK_SHAPE[0], self.config.DATASET.NUM_CLASSES
-            mrcnn_class_logits = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls).cuda())
-            mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
-            mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
             # 1. compute RPN targets
             # try:
@@ -383,7 +380,7 @@ class MaskRCNN(nn.Module):
                     #     print('pooled_cls mean: {:.4f}'.format(_pooled_cls.mean().data.cpu()[0]))
                     #     print('pooled_mask mean: {:.4f}'.format(_pooled_mask.mean().data.cpu()[0]))
                 # classifier
-                mrcnn_cls_logits, _, mrcnn_bbox = self.classifier(_pooled_cls)
+                mrcnn_class_logits, _, mrcnn_bbox = self.classifier(_pooled_cls, small_output_all, small_gt_all)
                 # if self.config.CTRL.DEBUG:
                 #     a, b = torch.max(mrcnn_cls_logits, dim=-1)
                 #     print('train classifier, ROIs pred_cls sum: {}'.format(b.sum().data[0]))
@@ -392,7 +389,7 @@ class MaskRCNN(nn.Module):
                 mrcnn_mask = self.mask(_pooled_mask)
 
                 # reshape output
-                mrcnn_class_logits = mrcnn_cls_logits.view(sample_per_gpu, -1, mrcnn_cls_logits.size(1))
+                mrcnn_class_logits = mrcnn_class_logits.view(sample_per_gpu, -1, mrcnn_class_logits.size(1))
                 mrcnn_bbox = mrcnn_bbox.view(sample_per_gpu, -1, mrcnn_bbox.size(1), mrcnn_bbox.size(2))
                 mrcnn_mask = mrcnn_mask.view(
                     sample_per_gpu, -1, mrcnn_mask.size(1), mrcnn_mask.size(2), mrcnn_mask.size(3))
@@ -409,6 +406,12 @@ class MaskRCNN(nn.Module):
 
                 small_output_all = Variable(torch.zeros(1, 1024).cuda())
                 small_gt_all = Variable(torch.zeros(1).cuda())
+
+                num_rois, mask_sz, num_cls = \
+                    self.config.ROIS.TRAIN_ROIS_PER_IMAGE, self.config.MRCNN.MASK_SHAPE[0], self.config.DATASET.NUM_CLASSES
+                mrcnn_class_logits = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls).cuda())
+                mrcnn_bbox = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, 4).cuda())
+                mrcnn_mask = Variable(torch.zeros(sample_per_gpu, num_rois, num_cls, mask_sz, mask_sz).cuda())
 
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass mask and cls generation'.format(curr_gpu_id))

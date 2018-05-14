@@ -230,6 +230,10 @@ class Config(object):
     DEV.STRUCTURE = 'alpha'   # 'beta'
     DEV.DIS_UPSAMPLER = False
     DEV.BIG_FEAT_DETACH = True
+    # merge compare_feat output into classifier
+    DEV.CLS_MERGE_FEAT = False
+    DEV.CLS_MERGE_MANNER = 'simple_add'   # 'linear_add'
+    DEV.CLS_MERGE_FAC = .5
 
     # ==============================
     CTRL = AttrDict()
@@ -379,7 +383,7 @@ class CocoConfig(Config):
             self.MISC.USE_VISDOM = True
             self.MISC.VIS.PORT = 8097  # debug
 
-            self.TRAIN.BATCH_SIZE = 6
+            self.TRAIN.BATCH_SIZE = 2
             # self.TRAIN.INIT_LR = 0.005
             # self.DATA.IMAGE_MAX_DIM = 512
             # self.DATA.IMAGE_MIN_DIM = 512
@@ -406,6 +410,10 @@ class CocoConfig(Config):
             self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
             self.DEV.BIG_FEAT_DETACH = True
             self.DEV.INST_LOSS = False
+
+            self.DEV.CLS_MERGE_FEAT = True
+            self.DEV.CLS_MERGE_MANNER = 'simple_add'
+            # self.DEV.CLS_MERGE_MANNER = 'linear_add'
 
             # self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
             # self.DEV.MULTI_UPSAMPLER = False

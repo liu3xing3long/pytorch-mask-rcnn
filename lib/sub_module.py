@@ -687,20 +687,27 @@ class Dev(nn.Module):
                     self.mask_pool_size, self.mask_pool_size)(_feat_maps, small_boxes, box_ind)
                 mask.append(mask_and_feat)
 
-                if _use_meta and train_phase and not self.config.DEV.BASELINE:
-                    # process big-small-supervise (small part)
-                    small_box_gt = roi_cls_gt[small_index[:, 0].data, small_index[:, 1].data]
+                # Deal with 'small' boxes during train and test
+                if _use_meta and not self.config.DEV.BASELINE:
+                    # shape: say 460, 1024, 1, 1
                     small_output = self.feat_extract(mask_and_feat)
                     if self.config.DEV.LOSS_CHOICE != 'ot':
                         small_output = self.last_op(small_output)
-                    _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
-                    small_feat.append(_s_feat)
-                    small_cnt.append(_s_cnt)
 
                     _start_ind = small_out_cnt
                     _small_num = small_index.size(0)
                     small_output_all[_start_ind:_small_num+_start_ind, :] = small_output
-                    small_gt_all[_start_ind:_small_num+_start_ind] = small_box_gt
+
+                    if train_phase:
+                        small_box_gt = roi_cls_gt[small_index[:, 0].data, small_index[:, 1].data]
+                        # shape: always 1024 x 81 (cls_num); this is an averaged output
+                        _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
+                        small_feat.append(_s_feat)
+                        small_cnt.append(_s_cnt)
+                        small_gt_all[_start_ind:_small_num+_start_ind] = small_box_gt
+                    else:
+                        small_gt_all[_start_ind:_small_num+_start_ind] = 1
+
                     small_out_cnt += _small_num
 
                 if SHOW_STAT:
@@ -716,7 +723,6 @@ class Dev(nn.Module):
                     big_feat = torch.stack(big_feat).unsqueeze(dim=0).detach()
                 else:
                     big_feat = torch.stack(big_feat).unsqueeze(dim=0)
-
                 feat_out = [
                     big_feat,
                     torch.stack(big_cnt).unsqueeze(dim=0),
@@ -726,9 +732,12 @@ class Dev(nn.Module):
                     small_output_all,
                     small_gt_all
                 ]
+            elif not train_phase:
+                # test phase in 'beta' structure
+                feat_out = [small_output_all, small_gt_all]
             else:
                 feat_out = []
-
+        # END BETA STRUCTURE
         return pooled_out, mask_out, feat_out
 
     @staticmethod
@@ -778,15 +787,20 @@ class Dev(nn.Module):
 #  Feature Pyramid Network Heads
 ############################################################
 class Classifier(nn.Module):
-    def __init__(self, depth, num_classes, pool_size):
+    def __init__(self, depth, num_classes, pool_size, config):
         super(Classifier, self).__init__()
         self.depth = depth
         self.pool_size = pool_size
         self.num_classes = num_classes
+        self.config = config
+        self.merge_meta = config.DEV.CLS_MERGE_FEAT
+
         self.conv1 = nn.Conv2d(self.depth, 1024, kernel_size=self.pool_size, stride=1)
         self.bn1 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
+
         self.conv2 = nn.Conv2d(1024, 1024, kernel_size=1, stride=1)
         self.bn2 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
+
         self.relu = nn.ReLU(inplace=True)
 
         self.linear_class = nn.Linear(1024, num_classes)
@@ -794,10 +808,19 @@ class Classifier(nn.Module):
 
         self.linear_bbox = nn.Linear(1024, num_classes * 4)
 
-    def forward(self, x):
+    def forward(self, x, small_feat_input, small_gt_index, mode='train'):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
+        if self.config.DEV.SWITCH and self.merge_meta:
+            # TODO: maybe during test, just add a minor delta of meta_feature to original cls_feat
+            if self.config.DEV.CLS_MERGE_MANNER == 'simple_add':
+                x += (small_feat_input*(small_gt_index > 0).float().unsqueeze(1)).view(x.size(0), x.size(1), 1, 1)
+            elif self.config.DEV.CLS_MERGE_MANNER == 'linear_add':
+                _weights = (small_gt_index > 0).float() * self.config.DEV.CLS_MERGE_FAC
+                _weights = _weights.view(x.size(0), 1, 1, 1)
+                x = (1-_weights)*x + _weights*small_feat_input.view(x.size(0), x.size(1), 1, 1)
+
         x = self.conv2(x)
         x = self.bn2(x)
         x = self.relu(x)
