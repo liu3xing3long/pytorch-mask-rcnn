@@ -331,8 +331,14 @@ class MaskRCNN(nn.Module):
             big_loss = Variable(torch.zeros(1, scale_num, 1).cuda())
 
             # 1. compute RPN targets
+            # try:
             target_rpn_match, target_rpn_bbox = \
                 prepare_rpn_target(self.priors, gt_class_ids, gt_boxes, self.config, curr_coco_im_id)
+            # except RuntimeError:
+            #     import pdb
+            #     pdb.set_trace()
+            #     a = 1
+ 
             if self.config.CTRL.PROFILE_ANALYSIS:
                 print('\t[gpu {:d}] pass rpn_target generation'.format(curr_gpu_id))
 

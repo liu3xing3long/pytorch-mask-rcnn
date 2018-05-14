@@ -195,22 +195,29 @@ class Config(object):
     DEV = AttrDict()
     DEV.SWITCH = False
     DEV.INIT_BUFFER_WEIGHT = 'scratch'
-    # set to <= 0 if trained from the very first iter
-    DEV.EFFECT_AFER_EP_PERCENT = 0.
-    DEV.UPSAMPLE_FAC = 2.
-    DEV.LOSS_CHOICE = 'l1'
-    DEV.OT_ONE_DIM_FORM = 'conv'
-    DEV.LOSS_FAC = 0.5
     # set to 1 if use all historic data
     DEV.BUFFER_SIZE = 1000
+    # set to <= 0 if trained from the very first iter
+    DEV.EFFECT_AFER_EP_PERCENT = 0.
+
+    DEV.MULTI_UPSAMPLER = False   # does not affect much
+    # if 1, standard conv
+    DEV.UPSAMPLE_FAC = 2.
+
+    DEV.LOSS_CHOICE = 'l1'
+    DEV.OT_ONE_DIM_FORM = 'conv'   # effective if loss_choice is 'ot'
+    DEV.LOSS_FAC = 0.5
+
     DEV.FEAT_BRANCH_POOL_SIZE = 14
     # ignore regression loss (only for **DEBUG**);
     # doomed if you use it during deployment
     DEV.DIS_REG_LOSS = False
+
     # assign anchors on all scales and split anchor based on roi-pooling output size
+    # if used, then ROIS.ASSIGN_ANCHOR_BASE is inactivated
     DEV.ASSIGN_BOX_ON_ALL_SCALE = False
+    # provide a baseline (no meta_loss) to compare
     DEV.BASELINE = False
-    DEV.MULTI_UPSAMPLER = False   # does not affect much
 
     DEV.BIG_SUPERVISE = False
     DEV.BIG_LOSS_CHOICE = 'ce'    # default setting (currently only support this)
@@ -218,12 +225,17 @@ class Config(object):
     DEV.BIG_LOSS_FAC = 1.
     DEV.BIG_FC_INIT_LIST = dict()
 
+    DEV.STRUCTURE = 'alpha'   # 'beta'
+    DEV.DIS_UPSAMPLER = False
+    DEV.BIG_FEAT_DETACH = True
+
     # ==============================
     CTRL = AttrDict()
     CTRL.CONFIG_NAME = ''
     CTRL.PHASE = ''
     CTRL.DEBUG = None
-    CTRL.QUICK_VERIFY = False   # train on minival and test also on minival
+    # train on minival and test also on minival
+    CTRL.QUICK_VERIFY = False
 
     CTRL.SHOW_INTERVAL = 50
     CTRL.PROFILE_ANALYSIS = False  # show time for some pass
@@ -250,7 +262,7 @@ class Config(object):
                 value = getattr(self, a)
                 if isinstance(value, AttrDict):
                     print_log("{}:".format(a), log_file, quiet_termi=quiet)
-                    for _, key in enumerate(value):
+                    for _, key in enumerate(sorted(value)):
                         print_log("\t{:30}\t\t{}".format(key, value[key]), log_file, quiet_termi=quiet)
                 else:
                     print_log("{}\t{}".format(a, value), log_file, quiet_termi=quiet)
@@ -337,6 +349,8 @@ class Config(object):
             del self.DEV['BIG_FC_INIT_LIST']
         if self.DEV.LOSS_CHOICE != 'ot':
             del self.DEV['OT_ONE_DIM_FORM']
+        if self.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+            del self.ROIS['ASSIGN_ANCHOR_BASE']
 
 
 class CocoConfig(Config):
@@ -356,29 +370,42 @@ class CocoConfig(Config):
 
         _ignore_yaml = False
         # ================ (CUSTOMIZED CONFIG) =========================
-        if args.config_name == 'local_pc':
+        if args.config_name.startswith('local_pc'):
 
             # debug mode on local pc
             # self.CTRL.PROFILE_ANALYSIS = True
             self.MISC.USE_VISDOM = True
+            self.MISC.VIS.PORT = 8097  # debug
+
+            self.TRAIN.BATCH_SIZE = 6
+            # self.TRAIN.INIT_LR = 0.005
+            # self.DATA.IMAGE_MAX_DIM = 512
+            # self.DATA.IMAGE_MIN_DIM = 512
             self.CTRL.QUICK_VERIFY = True
+
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1
             self.DEV.LOSS_FAC = 1.
-            self.DEV.LOSS_CHOICE = 'ot'
-            self.TRAIN.BATCH_SIZE = 16
+            self.DEV.LOSS_CHOICE = 'l2'
+            self.DEV.OT_ONE_DIM_FORM = 'conv'  # 'fc'
+
             # self.DEV.DIS_REG_LOSS = True
-            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
+            # self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
             # self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
 
-            self.DEV.OT_ONE_DIM_FORM = 'conv'  #'fc'
-
+            # self.DEV.STRUCTURE = 'alpha'
             self.DEV.BIG_SUPERVISE = False
             self.DEV.BIG_LOSS_FAC = 1.
             self.DEV.BIG_FC_INIT = 'coco_pretrain'
 
+            self.DEV.STRUCTURE = 'beta'
+            self.DEV.DIS_UPSAMPLER = False
+            self.DEV.UPSAMPLE_FAC = 1.0
+            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
+            self.DEV.BIG_FEAT_DETACH = False
+
             # self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
-            self.DEV.MULTI_UPSAMPLER = False
+            # self.DEV.MULTI_UPSAMPLER = False
             _ignore_yaml = True
 
         elif args.config_name.startswith('base_101'):
