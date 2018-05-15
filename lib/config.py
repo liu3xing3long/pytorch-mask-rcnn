@@ -197,7 +197,7 @@ class Config(object):
     # ==============================
     DEV = AttrDict()
     DEV.SWITCH = False
-    DEV.INIT_BUFFER_WEIGHT = 'scratch'
+    DEV.INIT_BUFFER_WEIGHT = 'scratch'    # currently only support this
     # set to 1 if use all historic data
     DEV.BUFFER_SIZE = 1000
     # set to <= 0 if trained from the very first iter
