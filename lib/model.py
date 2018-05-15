@@ -52,7 +52,7 @@ class MaskRCNN(nn.Module):
         resnet = ResNet(config.MODEL.BACKBONE, stage5=True)
         C1, C2, C3, C4, C5 = resnet.stages()
         # Top-down Layers
-        self.fpn = FPN(C1, C2, C3, C4, C5, out_channels=256)
+        self.fpn = FPN(config, C1, C2, C3, C4, C5, out_channels=256)
 
         # Generate Anchors (Tensor; do not assign cuda() here)
         self.priors = torch.from_numpy(
@@ -64,7 +64,7 @@ class MaskRCNN(nn.Module):
         # RoI
         self.dev_roi = Dev(config, depth=256)
         if self.config.DEV.LOSS_CHOICE == 'ot':
-            self.ot_loss = OptTrans(self.config, ch_x=1024, ch_y=1024)
+            self.ot_loss = OptTrans(self.config, ch_x=1024)
 
         # FPN Classifier
         self.classifier = \
@@ -278,7 +278,7 @@ class MaskRCNN(nn.Module):
             raise Exception('unknown phase')
 
         # Feature extraction
-        [p2_out, p3_out, p4_out, p5_out, p6_out] = self.fpn(molded_images)
+        [p2_out, p3_out, p4_out, p5_out, p6_out, fpn_ot_loss] = self.fpn(molded_images, mode=mode)
 
         # Note that P6 is used in RPN, but not in the classifier heads.
         _rpn_feature_maps = [p2_out, p3_out, p4_out, p5_out, p6_out]
@@ -371,6 +371,9 @@ class MaskRCNN(nn.Module):
                 if self.config.DEV.SWITCH and not self.config.DEV.BASELINE:
                     [big_feat, big_cnt, small_feat, small_cnt, big_loss,
                      small_output_all, small_gt_all] = _feat_out
+                else:
+                    big_feat, big_cnt, small_feat, small_cnt, big_loss, \
+                        small_output_all, small_gt_all = None, None, None, None, None, None, None
                     # if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
                     #     assert big_feat.size() == (1, 4, 1024, 81), 'big_feat size: {}'.format(big_feat.size())
                     #     assert small_feat.size() == big_feat.size(), 'small_feat size: {}'.format(small_feat.size())
@@ -429,6 +432,9 @@ class MaskRCNN(nn.Module):
                 print('\t[gpu {:d}] pass loss compute!'.format(curr_gpu_id))
 
             # must be Variables
-            return loss_merge, big_feat, big_cnt, small_feat, small_cnt, big_loss, small_output_all, small_gt_all
+            return loss_merge, \
+                   big_feat, big_cnt, small_feat, small_cnt, big_loss, \
+                   small_output_all, small_gt_all, \
+                   fpn_ot_loss
 
 

@@ -189,7 +189,9 @@ def train_epoch(input_model, data_loader, optimizer, **args):
             try:
                 # FORWARD PASS
                 # the loss shape: gpu_num x 5; meta_loss *NOT* included
-                merged_loss, big_feat, big_cnt, small_feat, small_cnt, big_loss, small_output_all, small_gt_all = \
+                merged_loss, \
+                big_feat, big_cnt, small_feat, small_cnt, big_loss, \
+                small_output_all, small_gt_all, fpn_ot_loss = \
                     input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
             except Exception:
                 info_pass = {
@@ -240,7 +242,9 @@ def train_epoch(input_model, data_loader, optimizer, **args):
         else:
             big_loss = 0
 
-        loss = torch.sum(detailed_loss) + meta_loss + big_loss
+        # final loss
+        fpn_ot_loss_avg = config.TRAIN.FPN_OT_LOSS_FAC * torch.mean(fpn_ot_loss)
+        loss = torch.sum(detailed_loss) + meta_loss + big_loss + fpn_ot_loss_avg
         if config.CTRL.PROFILE_ANALYSIS:
             print('forward time: {:.4f}'.format(time.time() - t))
             t = time.time()
@@ -267,6 +271,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
                 'meta_loss': meta_loss,
                 'big_loss': big_loss,
                 'loss': loss,
+                'fpn_ot_loss': fpn_ot_loss_avg,
                 'lr': lr,
                 'detailed_loss': detailed_loss,
                 'stage_name': args['stage_name'],

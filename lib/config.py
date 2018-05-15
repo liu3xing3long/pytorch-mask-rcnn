@@ -11,17 +11,17 @@ import numpy as np
 LAYER_REGEX = {
     # only heads
     "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
-             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
+             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)|(fpn.*\_ot.*)",
 
     # From a specific resnet stage and up
     "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)|(fpn.*\_ot.*)",
 
     "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)|(fpn.*\_ot.*)",
 
     "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
-          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
+          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)|(fpn.*\_ot.*)",
     # All layers
     "all": ".*",
 }
@@ -190,6 +190,9 @@ class Config(object):
     TRAIN.DO_VALIDATION = True
     TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
     TRAIN.FORCE_START_EPOCH = 0   # when you resume training and change the batch size, this is useful
+    # apply OT loss in FPN heads
+    TRAIN.FPN_OT_LOSS = False
+    TRAIN.FPN_OT_LOSS_FAC = 1.
 
     # ==============================
     DEV = AttrDict()
@@ -268,7 +271,7 @@ class Config(object):
                 value = getattr(self, a)
                 if isinstance(value, AttrDict):
                     print_log("{}:".format(a), log_file, quiet_termi=quiet)
-                    for _, key in enumerate(sorted(value)):
+                    for _, key in enumerate(value):
                         print_log("\t{:30}\t\t{}".format(key, value[key]), log_file, quiet_termi=quiet)
                 else:
                     print_log("{}\t{}".format(a, value), log_file, quiet_termi=quiet)
@@ -298,7 +301,7 @@ class Config(object):
 
         self.TEST.BATCH_SIZE = 2 * self.TRAIN.BATCH_SIZE
 
-        # MUST be left at the end
+        # MUST be left **at the end**
         # The strides of each layer of the FPN Pyramid.
         if self.MODEL.BACKBONE == 'resnet101':
             self.MODEL.BACKBONE_STRIDES = [4, 8, 16, 32, 64]
@@ -332,6 +335,8 @@ class Config(object):
                 self.MISC.VIS.LOSS_LEGEND.append('meta_loss')
             if self.DEV.SWITCH and self.DEV.BIG_SUPERVISE:
                 self.MISC.VIS.LOSS_LEGEND.append('big_loss')
+            if self.TRAIN.FPN_OT_LOSS:
+                self.MISC.VIS.LOSS_LEGEND.append('fpn_ot_loss')
 
         if self.MISC.GPU_COUNT == 8:
             self.DATA.LOADER_WORKER_NUM = 32
@@ -383,7 +388,7 @@ class CocoConfig(Config):
             self.MISC.USE_VISDOM = True
             self.MISC.VIS.PORT = 8097  # debug
 
-            self.TRAIN.BATCH_SIZE = 2
+            self.TRAIN.BATCH_SIZE = 4
             # self.TRAIN.INIT_LR = 0.005
             # self.DATA.IMAGE_MAX_DIM = 512
             # self.DATA.IMAGE_MIN_DIM = 512
@@ -414,6 +419,8 @@ class CocoConfig(Config):
             self.DEV.CLS_MERGE_FEAT = True
             self.DEV.CLS_MERGE_MANNER = 'simple_add'
             # self.DEV.CLS_MERGE_MANNER = 'linear_add'
+            self.TRAIN.FPN_OT_LOSS = True
+            self.TRAIN.FPN_OT_LOSS_FAC = .1
 
             # self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
             # self.DEV.MULTI_UPSAMPLER = False

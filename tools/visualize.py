@@ -461,6 +461,8 @@ class Visualizer(object):
             loss = torch.cat((loss, args['meta_loss']))
         if self.opt.DEV.SWITCH and self.opt.DEV.BIG_SUPERVISE:
             loss = torch.cat((loss, args['big_loss']))
+        if self.opt.TRAIN.FPN_OT_LOSS:
+            loss = torch.cat((loss, args['fpn_ot_loss']))
         assert loss.size(0) == y_num
 
         x_progress = [curr_ep - 1 + float(iter_ind/total_iter) for _ in range(y_num)]

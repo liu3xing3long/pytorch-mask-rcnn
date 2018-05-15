@@ -2,6 +2,7 @@ from lib.layers import pyramid_roi_align
 from lib.roialign.roi_align.crop_and_resize import CropAndResizeFunction
 import torch.nn.functional as F
 from tools.utils import *
+from .OT_module import OptTrans
 
 
 class SamePad2d(nn.Module):
@@ -143,8 +144,9 @@ class ResNet(nn.Module):
 #         x = self.conv1(x)
 #         return self.conv2(self.padding2(x+y))
 class FPN(nn.Module):
-    def __init__(self, C1, C2, C3, C4, C5, out_channels):
+    def __init__(self, config, C1, C2, C3, C4, C5, out_channels):
         super(FPN, self).__init__()
+        self.config = config
         self.out_channels = out_channels
         self.C1 = C1
         self.C2 = C2
@@ -173,7 +175,19 @@ class FPN(nn.Module):
             nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
         )
 
-    def forward(self, x):
+        if self.config.TRAIN.FPN_OT_LOSS:
+            self.ot = True
+            base_size = int(self.config.DATA.IMAGE_SHAPE[0] / 4)
+            self.p2_ot = OptTrans(config, ch_x=256, spatial_x=base_size/2, spatial_y=base_size)
+            self.p3_ot = OptTrans(config, ch_x=256, spatial_x=base_size/4, spatial_y=base_size/2)
+            self.p4_ot = OptTrans(config, ch_x=256, spatial_x=base_size/8, spatial_y=base_size/4)
+            # self.p5_ot = OptTrans(config, ch_x=256, spatial_x=base_size/16, spatial_y=base_size/8)
+        else:
+            self.ot = False
+
+    def forward(self, x, mode):
+        bs = x.size(0)
+        ot_loss = Variable(torch.zeros(bs, 3).cuda())
         x = self.C1(x)
         x = self.C2(x)
         c2_out = x
@@ -183,9 +197,23 @@ class FPN(nn.Module):
         c4_out = x
         x = self.C5(x)
         p5_out = self.P5_conv1(x)
-        p4_out = self.P4_conv1(c4_out) + F.upsample(p5_out, scale_factor=2)
-        p3_out = self.P3_conv1(c3_out) + F.upsample(p4_out, scale_factor=2)
-        p2_out = self.P2_conv1(c2_out) + F.upsample(p3_out, scale_factor=2)
+
+        if self.ot and mode == 'train':
+            tmp = self.P4_conv1(c4_out)
+            ot_loss[:, 0] = self.p4_ot(p5_out, tmp)
+            p4_out = tmp + F.upsample(p5_out, scale_factor=2)
+
+            tmp = self.P3_conv1(c3_out)
+            ot_loss[:, 1] = self.p3_ot(p4_out, tmp)
+            p3_out = tmp + F.upsample(p4_out, scale_factor=2)
+
+            tmp = self.P2_conv1(c2_out)
+            ot_loss[:, 2] = self.p2_ot(p3_out, tmp)
+            p2_out = tmp + F.upsample(p3_out, scale_factor=2)
+        else:
+            p4_out = self.P4_conv1(c4_out) + F.upsample(p5_out, scale_factor=2)
+            p3_out = self.P3_conv1(c3_out) + F.upsample(p4_out, scale_factor=2)
+            p2_out = self.P2_conv1(c2_out) + F.upsample(p3_out, scale_factor=2)
 
         p5_out = self.P5_conv2(p5_out)
         p4_out = self.P4_conv2(p4_out)
@@ -196,7 +224,7 @@ class FPN(nn.Module):
         # subsampling from P5 with stride of 2.
         p6_out = self.P6(p5_out)
 
-        return [p2_out, p3_out, p4_out, p5_out, p6_out]
+        return [p2_out, p3_out, p4_out, p5_out, p6_out, ot_loss]
 
 
 ############################################################
@@ -528,7 +556,6 @@ class Dev(nn.Module):
                 ]
             else:
                 feat_out = []
-
         elif self.structure == 'beta':
             SHOW_STAT = False
             # TODO (low): haven't considered config.DEV.BASELINE case
