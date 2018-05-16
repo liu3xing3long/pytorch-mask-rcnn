@@ -11,17 +11,17 @@ import numpy as np
 LAYER_REGEX = {
     # only heads
     "heads": r"(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
-             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
+             r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)|(fpn.*\_ot.*)",
 
     # From a specific resnet stage and up
     "3+": r"(fpn.C3.*)|(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)|(fpn.*\_ot.*)",
 
     "4+": r"(fpn.C4.*)|(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|"
-          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
+          r"(fpn.P3\_.*)|(fpn.P2\_.*)|(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)|(fpn.*\_ot.*)",
 
     "5+": r"(fpn.C5.*)|(fpn.P5\_.*)|(fpn.P4\_.*)|(fpn.P3\_.*)|(fpn.P2\_.*)|"
-          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)",
+          r"(rpn.*)|(classifier.*)|(mask.*)|(dev_roi.*)|(ot_loss.*)|(fpn.*\_ot.*)",
     # All layers
     "all": ".*",
 }
@@ -190,27 +190,39 @@ class Config(object):
     TRAIN.DO_VALIDATION = True
     TRAIN.SAVE_FREQ_WITHIN_EPOCH = 10
     TRAIN.FORCE_START_EPOCH = 0   # when you resume training and change the batch size, this is useful
+    # apply OT loss in FPN heads
+    TRAIN.FPN_OT_LOSS = False
+    TRAIN.FPN_OT_LOSS_FAC = 1.
 
     # ==============================
     DEV = AttrDict()
     DEV.SWITCH = False
-    DEV.INIT_BUFFER_WEIGHT = 'scratch'
-    # set to <= 0 if trained from the very first iter
-    DEV.EFFECT_AFER_EP_PERCENT = 0.
-    DEV.UPSAMPLE_FAC = 2.
-    DEV.LOSS_CHOICE = 'l1'
-    DEV.OT_ONE_DIM_FORM = 'conv'
-    DEV.LOSS_FAC = 0.5
+    DEV.INIT_BUFFER_WEIGHT = 'scratch'    # currently only support this
     # set to 1 if use all historic data
     DEV.BUFFER_SIZE = 1000
+    # set to <= 0 if trained from the very first iter
+    DEV.EFFECT_AFER_EP_PERCENT = 0.
+
+    DEV.MULTI_UPSAMPLER = False   # does not affect much
+    # if 1, standard conv
+    DEV.UPSAMPLE_FAC = 2.
+
+    DEV.LOSS_CHOICE = 'l1'
+    DEV.OT_ONE_DIM_FORM = 'conv'   # effective if loss_choice is 'ot'
+    DEV.LOSS_FAC = 0.5
+    # compute meta_los of small boxes on an instance or class level
+    DEV.INST_LOSS = False
+
     DEV.FEAT_BRANCH_POOL_SIZE = 14
     # ignore regression loss (only for **DEBUG**);
     # doomed if you use it during deployment
     DEV.DIS_REG_LOSS = False
+
     # assign anchors on all scales and split anchor based on roi-pooling output size
+    # if used, then ROIS.ASSIGN_ANCHOR_BASE is inactivated
     DEV.ASSIGN_BOX_ON_ALL_SCALE = False
+    # provide a baseline (no meta_loss) to compare
     DEV.BASELINE = False
-    DEV.MULTI_UPSAMPLER = False   # does not affect much
 
     DEV.BIG_SUPERVISE = False
     DEV.BIG_LOSS_CHOICE = 'ce'    # default setting (currently only support this)
@@ -218,12 +230,21 @@ class Config(object):
     DEV.BIG_LOSS_FAC = 1.
     DEV.BIG_FC_INIT_LIST = dict()
 
+    DEV.STRUCTURE = 'alpha'   # 'beta'
+    DEV.DIS_UPSAMPLER = False
+    DEV.BIG_FEAT_DETACH = True
+    # merge compare_feat output into classifier
+    DEV.CLS_MERGE_FEAT = False
+    DEV.CLS_MERGE_MANNER = 'simple_add'   # 'linear_add'
+    DEV.CLS_MERGE_FAC = .5
+
     # ==============================
     CTRL = AttrDict()
     CTRL.CONFIG_NAME = ''
     CTRL.PHASE = ''
     CTRL.DEBUG = None
-    CTRL.QUICK_VERIFY = False   # train on minival and test also on minival
+    # train on minival and test also on minival
+    CTRL.QUICK_VERIFY = False
 
     CTRL.SHOW_INTERVAL = 50
     CTRL.PROFILE_ANALYSIS = False  # show time for some pass
@@ -280,7 +301,7 @@ class Config(object):
 
         self.TEST.BATCH_SIZE = 2 * self.TRAIN.BATCH_SIZE
 
-        # MUST be left at the end
+        # MUST be left **at the end**
         # The strides of each layer of the FPN Pyramid.
         if self.MODEL.BACKBONE == 'resnet101':
             self.MODEL.BACKBONE_STRIDES = [4, 8, 16, 32, 64]
@@ -314,6 +335,8 @@ class Config(object):
                 self.MISC.VIS.LOSS_LEGEND.append('meta_loss')
             if self.DEV.SWITCH and self.DEV.BIG_SUPERVISE:
                 self.MISC.VIS.LOSS_LEGEND.append('big_loss')
+            if self.TRAIN.FPN_OT_LOSS:
+                self.MISC.VIS.LOSS_LEGEND.append('fpn_ot_loss')
 
         if self.MISC.GPU_COUNT == 8:
             self.DATA.LOADER_WORKER_NUM = 32
@@ -337,6 +360,8 @@ class Config(object):
             del self.DEV['BIG_FC_INIT_LIST']
         if self.DEV.LOSS_CHOICE != 'ot':
             del self.DEV['OT_ONE_DIM_FORM']
+        # if self.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+        #     del self.ROIS['ASSIGN_ANCHOR_BASE']
 
 
 class CocoConfig(Config):
@@ -356,33 +381,49 @@ class CocoConfig(Config):
 
         _ignore_yaml = False
         # ================ (CUSTOMIZED CONFIG) =========================
-        if args.config_name == 'local_pc':
+        if args.config_name.startswith('local_pc'):
 
             # debug mode on local pc
             # self.CTRL.PROFILE_ANALYSIS = True
             self.MISC.USE_VISDOM = True
             self.MISC.VIS.PORT = 8097  # debug
 
-            self.DATA.IMAGE_MAX_DIM = 512
-            self.DATA.IMAGE_MIN_DIM = 512
-            self.CTRL.QUICK_VERIFY = False
+            self.TRAIN.BATCH_SIZE = 4
+            # self.TRAIN.INIT_LR = 0.005
+            # self.DATA.IMAGE_MAX_DIM = 512
+            # self.DATA.IMAGE_MIN_DIM = 512
+            self.CTRL.QUICK_VERIFY = True
+
             self.DEV.SWITCH = True
             self.DEV.BUFFER_SIZE = 1
-            self.DEV.LOSS_FAC = 1.
-            self.DEV.LOSS_CHOICE = 'ot'
-            self.TRAIN.BATCH_SIZE = 6
+            self.DEV.LOSS_FAC = 50.
+            self.DEV.LOSS_CHOICE = 'l2'
+            self.DEV.OT_ONE_DIM_FORM = 'conv'  # 'fc'
+
             # self.DEV.DIS_REG_LOSS = True
-            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
+            # self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
             # self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
 
-            self.DEV.OT_ONE_DIM_FORM = 'conv'  #'fc'
-
+            # self.DEV.STRUCTURE = 'alpha'
             self.DEV.BIG_SUPERVISE = False
-            self.DEV.BIG_LOSS_FAC = 1.
+            self.DEV.BIG_LOSS_FAC = .1
             self.DEV.BIG_FC_INIT = 'coco_pretrain'
 
+            self.DEV.STRUCTURE = 'beta'
+            self.DEV.DIS_UPSAMPLER = False
+            self.DEV.UPSAMPLE_FAC = 1.0
+            self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
+            self.DEV.BIG_FEAT_DETACH = False
+            self.DEV.INST_LOSS = False
+
+            self.DEV.CLS_MERGE_FEAT = True
+            self.DEV.CLS_MERGE_MANNER = 'simple_add'
+            # self.DEV.CLS_MERGE_MANNER = 'linear_add'
+            self.TRAIN.FPN_OT_LOSS = True
+            self.TRAIN.FPN_OT_LOSS_FAC = .1
+
             # self.DEV.BASELINE = True  # apply up-sampling op. in original Mask-RCNN
-            self.DEV.MULTI_UPSAMPLER = False
+            # self.DEV.MULTI_UPSAMPLER = False
             _ignore_yaml = True
 
         elif args.config_name.startswith('base_101'):

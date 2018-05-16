@@ -18,7 +18,7 @@ if __name__ == '__main__':
     parser.add_argument('--config_name',
                         required=False,
                         # default='')
-                        default='local_pc')
+                        default='local_pc_beta_1.3')
                         # default='base_101_quick')
 
     parser.add_argument('--config_file',

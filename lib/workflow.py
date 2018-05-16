@@ -189,7 +189,9 @@ def train_epoch(input_model, data_loader, optimizer, **args):
             try:
                 # FORWARD PASS
                 # the loss shape: gpu_num x 5; meta_loss *NOT* included
-                merged_loss, big_feat, big_cnt, small_feat, small_cnt, big_loss = \
+                merged_loss, \
+                big_feat, big_cnt, small_feat, small_cnt, big_loss, \
+                small_output_all, small_gt_all, fpn_ot_loss = \
                     input_model([images, gt_class_ids, gt_boxes, gt_masks, image_metas], 'train')
             except Exception:
                 info_pass = {
@@ -209,8 +211,13 @@ def train_epoch(input_model, data_loader, optimizer, **args):
                 detailed_loss.data[1] = 0  # rpn_bbox
                 detailed_loss.data[4] = 0  # mask
 
-            # big_feat: gpu_num x scale_num x 1024 x 81; also update the buffer
-            meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt])
+            # big_feat/small_feat: gpu_num x scale_num x 1024 x 81; also update the buffer
+            if small_feat.sum().data[0] != 0:
+                meta_loss = model.meta_loss([big_feat, big_cnt, small_feat, small_cnt,
+                                             small_output_all, small_gt_all])
+            else:
+                meta_loss = Variable(torch.zeros(1).cuda())
+
             _meta_loss_value = meta_loss.data.cpu()[0]
             if _meta_loss_value < 0:
                 # TODO: seriously consider (meta loss < 0) case in KL option
@@ -235,7 +242,9 @@ def train_epoch(input_model, data_loader, optimizer, **args):
         else:
             big_loss = 0
 
-        loss = torch.sum(detailed_loss) + meta_loss + big_loss
+        # final loss
+        fpn_ot_loss_avg = config.TRAIN.FPN_OT_LOSS_FAC * torch.mean(fpn_ot_loss)
+        loss = torch.sum(detailed_loss) + meta_loss + big_loss + fpn_ot_loss_avg
         if config.CTRL.PROFILE_ANALYSIS:
             print('forward time: {:.4f}'.format(time.time() - t))
             t = time.time()
@@ -262,6 +271,7 @@ def train_epoch(input_model, data_loader, optimizer, **args):
                 'meta_loss': meta_loss,
                 'big_loss': big_loss,
                 'loss': loss,
+                'fpn_ot_loss': fpn_ot_loss_avg,
                 'lr': lr,
                 'detailed_loss': detailed_loss,
                 'stage_name': args['stage_name'],
@@ -283,12 +293,12 @@ def train_epoch(input_model, data_loader, optimizer, **args):
             }
             save_model(model, **info_pass)
 
-        # for debug; test the model
-        if config.CTRL.DEBUG and iter_ind == (start_iter+100):
-            print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
-                      format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
-            test_model(input_model, args['valset'], args['coco_api'],
-                       during_train=True, epoch=args['epoch'], iter=iter_ind, vis=vis)
+        # # for debug; test the model
+        # if config.CTRL.DEBUG and iter_ind == (start_iter+2):
+        #     print_log('\n[DEBUG] Do validation at stage [{:s}] (model ep {:d} iter {:d}) ...'.
+        #               format(args['stage_name'].upper(), args['epoch'], iter_ind), config.MISC.LOG_FILE)
+        #     test_model(input_model, args['valset'], args['coco_api'],
+        #                during_train=True, epoch=args['epoch'], iter=iter_ind, vis=vis)
 
     return loss_data
 

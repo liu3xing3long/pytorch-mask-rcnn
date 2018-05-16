@@ -10,21 +10,21 @@ DATA:
 DEV:
   SWITCH: True
   BUFFER_SIZE: 1  # use all history
-  LOSS_CHOICE: 'ot'
-  OT_ONE_DIM_FORM: 'conv'
-  LOSS_FAC: 10.
+  LOSS_CHOICE: 'l2'
+  LOSS_FAC: 50.
+  STRUCTURE: 'beta'
   ASSIGN_BOX_ON_ALL_SCALE: False
-  BIG_SUPERVISE: False
-  BIG_LOSS_FAC: 1.
-  BIG_FC_INIT: 'coco_pretrain'
-  MULTI_UPSAMPLER: False
-ROIS:
-  ASSIGN_ANCHOR_BASE: 224.  # default
-MODEL:
-  INIT_FILE_CHOICE: 'coco_pretrain'
+  DIS_UPSAMPLER: False
+  UPSAMPLE_FAC: 1.
+  BIG_FEAT_DETACH: True
+  INST_LOSS: True
+  CLS_MERGE_FEAT: True
+  CLS_MERGE_MANNER: 'linear_add'
+  CLS_MERGE_FAC: .2
 CTRL:
   QUICK_VERIFY: True
 MISC:
   USE_VISDOM: True
   VIS:
-    PORT: 2035
+    PORT: 2042
+

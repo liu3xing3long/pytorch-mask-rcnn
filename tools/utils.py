@@ -505,10 +505,13 @@ def show_loss_terminal(config, **args):
     # additional loss fill up here
     meta_loss = args['meta_loss']
     big_loss = args['big_loss']
+    fpn_ot_loss = args['fpn_ot_loss']
     suffix = ' - meta_loss: {:.3f}' if config.DEV.SWITCH and not config.DEV.BASELINE else '{:s}'
     suffix += ' - big_loss: {:.3f}' if config.DEV.SWITCH and config.DEV.BIG_SUPERVISE else '{:s}'
+    suffix += ' - fpn_ot: {:.3f}' if config.TRAIN.FPN_OT_LOSS else '{:s}'
     last_out_1 = meta_loss.data.cpu()[0] if config.DEV.SWITCH and not config.DEV.BASELINE else ''
     last_out_2 = big_loss.data.cpu()[0] if config.DEV.SWITCH and config.DEV.BIG_SUPERVISE else ''
+    last_out_3 = fpn_ot_loss.data.cpu()[0] if config.TRAIN.FPN_OT_LOSS else ''
 
     progress_str = '[{:s}][{:s}]{:s} {:06d}/{} [est. left: {:d} days, {:.2f} hrs] (iter_t: {:.2f})' \
                    '\tlr: {:.6f} | loss: {:.3f} - rpn_cls: {:.3f} - rpn_bbox: {:.3f} ' \
@@ -524,7 +527,7 @@ def show_loss_terminal(config, **args):
         detailed_loss[0].data.cpu()[0], detailed_loss[1].data.cpu()[0],
         detailed_loss[2].data.cpu()[0], detailed_loss[3].data.cpu()[0],
         detailed_loss[4].data.cpu()[0],
-        last_out_1, last_out_2),
+        last_out_1, last_out_2, last_out_3),
         config.MISC.LOG_FILE)
 
 

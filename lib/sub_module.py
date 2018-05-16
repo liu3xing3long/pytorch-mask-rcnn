@@ -2,6 +2,7 @@ from lib.layers import pyramid_roi_align
 from lib.roialign.roi_align.crop_and_resize import CropAndResizeFunction
 import torch.nn.functional as F
 from tools.utils import *
+from .OT_module import OptTrans
 
 
 class SamePad2d(nn.Module):
@@ -143,8 +144,9 @@ class ResNet(nn.Module):
 #         x = self.conv1(x)
 #         return self.conv2(self.padding2(x+y))
 class FPN(nn.Module):
-    def __init__(self, C1, C2, C3, C4, C5, out_channels):
+    def __init__(self, config, C1, C2, C3, C4, C5, out_channels):
         super(FPN, self).__init__()
+        self.config = config
         self.out_channels = out_channels
         self.C1 = C1
         self.C2 = C2
@@ -173,7 +175,19 @@ class FPN(nn.Module):
             nn.Conv2d(self.out_channels, self.out_channels, kernel_size=3, stride=1),
         )
 
-    def forward(self, x):
+        if self.config.TRAIN.FPN_OT_LOSS:
+            self.ot = True
+            base_size = int(self.config.DATA.IMAGE_SHAPE[0] / 4)
+            self.p2_ot = OptTrans(config, ch_x=256, spatial_x=base_size/2, spatial_y=base_size)
+            self.p3_ot = OptTrans(config, ch_x=256, spatial_x=base_size/4, spatial_y=base_size/2)
+            self.p4_ot = OptTrans(config, ch_x=256, spatial_x=base_size/8, spatial_y=base_size/4)
+            # self.p5_ot = OptTrans(config, ch_x=256, spatial_x=base_size/16, spatial_y=base_size/8)
+        else:
+            self.ot = False
+
+    def forward(self, x, mode):
+        bs = x.size(0)
+        ot_loss = Variable(torch.zeros(bs, 3).cuda())
         x = self.C1(x)
         x = self.C2(x)
         c2_out = x
@@ -183,9 +197,23 @@ class FPN(nn.Module):
         c4_out = x
         x = self.C5(x)
         p5_out = self.P5_conv1(x)
-        p4_out = self.P4_conv1(c4_out) + F.upsample(p5_out, scale_factor=2)
-        p3_out = self.P3_conv1(c3_out) + F.upsample(p4_out, scale_factor=2)
-        p2_out = self.P2_conv1(c2_out) + F.upsample(p3_out, scale_factor=2)
+
+        if self.ot and mode == 'train':
+            tmp = self.P4_conv1(c4_out)
+            ot_loss[:, 0] = self.p4_ot(p5_out, tmp)
+            p4_out = tmp + F.upsample(p5_out, scale_factor=2)
+
+            tmp = self.P3_conv1(c3_out)
+            ot_loss[:, 1] = self.p3_ot(p4_out, tmp)
+            p3_out = tmp + F.upsample(p4_out, scale_factor=2)
+
+            tmp = self.P2_conv1(c2_out)
+            ot_loss[:, 2] = self.p2_ot(p3_out, tmp)
+            p2_out = tmp + F.upsample(p3_out, scale_factor=2)
+        else:
+            p4_out = self.P4_conv1(c4_out) + F.upsample(p5_out, scale_factor=2)
+            p3_out = self.P3_conv1(c3_out) + F.upsample(p4_out, scale_factor=2)
+            p2_out = self.P2_conv1(c2_out) + F.upsample(p3_out, scale_factor=2)
 
         p5_out = self.P5_conv2(p5_out)
         p4_out = self.P4_conv2(p4_out)
@@ -196,7 +224,7 @@ class FPN(nn.Module):
         # subsampling from P5 with stride of 2.
         p6_out = self.P6(p5_out)
 
-        return [p2_out, p3_out, p4_out, p5_out, p6_out]
+        return [p2_out, p3_out, p4_out, p5_out, p6_out, ot_loss]
 
 
 ############################################################
@@ -266,6 +294,8 @@ class Dev(nn.Module):
         self.image_shape = config.DATA.IMAGE_SHAPE
         self.num_classs = config.DATASET.NUM_CLASSES
         self.config = config
+        self.dis_upsample = config.DEV.DIS_UPSAMPLER
+        self.structure = config.DEV.STRUCTURE
 
         if self.use_dev:
             # for now it's the same size with mask_pool_size (14)
@@ -274,20 +304,24 @@ class Dev(nn.Module):
             assert self.feat_pool_size % 2 == 0, 'pool size of feature branch has to be even'
 
             # define **upsampler**
-            if self.upsample_fac == 2.0:
+            if not self.dis_upsample:
+                if self.config.DEV.UPSAMPLE_FAC == 1.:
+                    conv_opt = nn.Conv2d(self.depth, self.depth, kernel_size=3, padding=1)
+                elif self.config.DEV.UPSAMPLE_FAC == 2.:
+                    conv_opt = nn.ConvTranspose2d(self.depth, self.depth, kernel_size=3,
+                                                  stride=2, padding=1, output_padding=1)
                 upsample_num = 4 if self.config.DEV.MULTI_UPSAMPLER else 1
+
                 self.upsample = nn.ModuleList()
                 for i in range(upsample_num):
                     self.upsample.append(nn.Sequential(*[
-                        nn.ConvTranspose2d(self.depth, self.depth, kernel_size=3, stride=2, padding=1, output_padding=1),
+                        conv_opt,
                         nn.BatchNorm2d(self.depth),
                         nn.ReLU(inplace=True),
                         # nn.Conv2d(self.depth, self.depth, kernel_size=3, stride=1, padding=1),
                         # nn.BatchNorm2d(self.depth),
                         # nn.ReLU(inplace=True)
                     ]))
-            else:
-                raise Exception('unsupported upsampling factor')
 
             # define **feature extractor** to be compared
             if not self.config.DEV.BASELINE:
@@ -299,10 +333,13 @@ class Dev(nn.Module):
                     nn.Conv2d(512, 1024, kernel_size=_ksize, stride=1),
                     nn.BatchNorm2d(1024),  # TODO: what's the meaning of doing BN on a 1x1 spatial size?
                     nn.ReLU(inplace=True),
-                    # nn.Conv2d(1024, 1024, kernel_size=1, stride=1),
+                    nn.Conv2d(1024, 1024, kernel_size=1, stride=1),
+                    nn.BatchNorm2d(1024),
+                    nn.ReLU(inplace=True)
                 ]
                 # shape: say 40, 1024, 1, 1
                 self.feat_extract = nn.Sequential(*_layer_list)
+                # define last_op, for ot, there is none
                 if config.DEV.LOSS_CHOICE == 'l2' or config.DEV.LOSS_CHOICE == 'l1':
                     self.last_op = nn.Sigmoid()
                 elif config.DEV.LOSS_CHOICE == 'kl':
@@ -318,8 +355,21 @@ class Dev(nn.Module):
         elif level == 3:
             big_ix = (roi_level == 5)
         else:
-            # TODO: think this in detail
-            # for now, higher scale 4, 5 do not apply the new rule
+            # for now, higher scale 4, 5 do not apply meta_loss
+            big_ix = (roi_level == -1)
+        return big_ix
+
+    @staticmethod
+    def _find_big_box2(level, roi_level):
+        """called in structure='beta' or above"""
+        if level == 2:
+            big_ix = (roi_level == 3) + (roi_level == 4) + (roi_level == 5)
+            # big_ix = (roi_level == 4) + (roi_level == 5)
+        elif level == 3:
+            big_ix = (roi_level == 4) + (roi_level == 5)
+        elif level == 4:
+            big_ix = (roi_level == 5)
+        elif level == 5:
             big_ix = (roi_level == -1)
         return big_ix
 
@@ -332,7 +382,7 @@ class Dev(nn.Module):
             pooled_out = pyramid_roi_align([rois] + x, self.pool_size, self.image_shape, base=base)
             mask_out = pyramid_roi_align([rois] + x, self.mask_pool_size, self.image_shape, base=base)
             feat_out = None
-        else:
+        elif self.structure == 'alpha':
             # used for splitting train and test
             train_phase = False if roi_cls_gt is None else True
 
@@ -507,6 +557,214 @@ class Dev(nn.Module):
             else:
                 feat_out = []
 
+        elif self.structure == 'beta':
+            SHOW_STAT = False
+            # TODO (low): haven't considered config.DEV.BASELINE case
+            # used for splitting train and test
+            train_phase = False if roi_cls_gt is None else True
+
+            # Step 1. Assign each ROI to a level in the pyramid based on the ROI area.
+            y1, x1, y2, x2 = rois.chunk(4, dim=2)   # in normalized coordinate
+            h, w = y2 - y1, x2 - x1
+            area = w*h
+            total_box = rois.size(0)*rois.size(1)
+
+            # use **either** 'roi_level' or 'accu_small_idx' to assign anchors
+            if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                # original plan
+                _image_area = Variable(torch.FloatTensor(
+                    [float(self.image_shape[0]*self.image_shape[1])]), requires_grad=False).cuda()
+                roi_level = 4 + log2(torch.sqrt(area)/(base/torch.sqrt(_image_area)))
+                roi_level = roi_level.round().int()
+                # in case batch size =1, we keep that dim
+                roi_level = roi_level.clamp(2, 5).squeeze(dim=-1)   # size: [bs, num_roi], say [3, 200]
+            else:
+                accu_small_idx = Variable(torch.ByteTensor(rois.size(0), rois.size(1)).cuda())
+                accu_small_idx[:] = False
+
+            if SHOW_STAT:
+                print('\tassign ROIs (total num: {:d}) in {:d} scales.'
+                      'max box area: {:.4f}, min box area: {:.4f}'.format(
+                        total_box, 4, area.max().data[0], area.min().data[0]))
+
+            # Step 2. LOOP through levels and apply ROI pooling to each.
+            # P2 to P5, with 2 being the most coarse map
+            pooled, mask, box_to_level = [], [], []
+            big_feat, big_cnt, small_feat, small_cnt = [], [], [], []   # to generate feat_out
+            big_loss = []
+            small_output_all = Variable(torch.zeros(total_box, 1024).cuda())
+            small_gt_all = Variable(torch.zeros(total_box).cuda())
+            small_out_cnt = 0
+
+            for i, level in enumerate(range(2, 6)):
+
+                curr_feat_maps = x[i]
+
+                # decide if use meta-loss on current scale
+                if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                    _use_meta = True if level in [2, 3, 4] else False
+                else:
+                    _use_meta = True
+
+                # Decide "small_ix": bs, num_roi
+                _thres = (self.feat_pool_size / curr_feat_maps.size(-1))**2
+                if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                    small_ix = roi_level == level
+                else:
+                    # new plan: these boxes is smaller than RoI output
+                    # Note: on the last scale (5), there might have some big boxes; deem it as supervision (target).
+                    _temp = area.squeeze(-1) <= _thres
+                    small_ix = _temp - accu_small_idx
+                    accu_small_idx = _temp
+
+                # for inference, merge the big box index with small on the last scale
+                if self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE and not train_phase and level == 5:
+                    # can't use big_ix during inference (since it's not generated)
+                    # small_ix = (small_ix + big_ix) > 0
+                    small_ix = ((accu_small_idx == 0) + small_ix) > 0
+
+                if not small_ix.any():
+                    if SHOW_STAT:
+                        print('\tscale {:d} (thres: {:.4f}), NO (small) num_box, skip this scale ...'
+                              .format(level, _thres))
+                    # if there are no "small" boxes, we won't compute stats of *both* small and big on this scale
+                    if _use_meta and train_phase and not self.config.DEV.BASELINE:
+                        small_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
+                        small_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
+                        big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
+                        big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
+                        big_loss.append(Variable(torch.zeros(1).cuda()))
+                    continue
+
+                # Decide "big_ix"; deal with 'big' boxes during train
+                if train_phase and not self.config.DEV.BASELINE:
+                    if not self.config.DEV.ASSIGN_BOX_ON_ALL_SCALE:
+                        big_ix = self._find_big_box2(level, roi_level)
+                    else:
+                        big_ix = accu_small_idx == 0
+
+                    if not big_ix.any():
+                        if _use_meta:
+                            # there is no "big" boxes; never mind, we use historic data
+                            big_feat.append(Variable(torch.zeros(1024, self.num_classs).cuda()))
+                            big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
+                            big_loss.append(Variable(torch.zeros(1).cuda()))
+                        big_num = 0
+                    else:
+                        # process big-small-supervise (big part)
+                        big_index = torch.nonzero(big_ix)
+                        big_boxes = rois[big_index[:, 0].data, big_index[:, 1].data, :]
+                        big_box_gt = roi_cls_gt[big_index[:, 0].data, big_index[:, 1].data]
+                        # for big boxes, ROI-pool on original map
+                        big_box_ind = big_index[:, 0].int()
+
+                        # NOT working below
+                        # _idx = i if self.config.DEV.MULTI_UPSAMPLER else 0
+                        # _feat_maps = self.upsample[_idx](curr_feat_maps)
+                        _feat_maps = curr_feat_maps
+                        # shape: say 20, 256, 14, 14
+                        big_feat_pooled = CropAndResizeFunction(
+                            self.feat_pool_size, self.feat_pool_size)(_feat_maps, big_boxes, big_box_ind)
+
+                        # shape: say 20, 1024, 1, 1
+                        _big_out_before_last = self.feat_extract(big_feat_pooled)
+                        if self.config.DEV.LOSS_CHOICE != 'ot':
+                            big_output = self.last_op(_big_out_before_last)
+                        else:
+                            big_output = _big_out_before_last
+
+                        # transfer ins2cls feature
+                        # shape: always 1024 x 81 (cls_num); this is an averaged output
+                        _b_feat, _b_cnt = self._assign_feat2cls([big_box_gt, big_output])
+                        big_feat.append(_b_feat)
+                        big_cnt.append(_b_cnt)
+                        big_num = big_index.size(0)
+
+                        if self.config.DEV.BIG_SUPERVISE:
+                            big_x = _big_out_before_last.view(-1, 1024)
+                            big_feat_cls_digits = self.big_fc_layer(big_x)   # big_num x 81
+                            curr_big_loss = F.cross_entropy(big_feat_cls_digits, big_box_gt.long())
+                            big_loss.append(curr_big_loss)
+                        else:
+                            big_loss.append(Variable(torch.zeros(1).cuda()))
+
+                # "SMALL" boxes (or simply boxes on scale 4,5) exist
+                # small_index: say, 2670 (actual boxes found in this level) x 2
+                small_index = torch.nonzero(small_ix)
+                # Keep track of which box is mapped to which level
+                box_to_level.append(small_index.data)
+                # rois: [bs, num_roi, 4] -> small_boxes [index[0], 4]
+                small_boxes = rois[small_index[:, 0].data, small_index[:, 1].data, :]
+
+                # scale up feature map of "smaller" boxes
+                box_ind = small_index[:, 0].int()
+                _idx = i if self.config.DEV.MULTI_UPSAMPLER else 0
+                _feat_maps = self.upsample[_idx](curr_feat_maps)
+                # _feat_maps = curr_feat_maps
+                assert small_boxes.max().data[0] <= 1.0
+
+                # shape: say 473, 256, 7, 7
+                pooled_features = CropAndResizeFunction(
+                    self.pool_size, self.pool_size)(_feat_maps, small_boxes, box_ind)
+                pooled.append(pooled_features)
+                # mask and feat features are shared with a RoI
+                # since the output size is the same (mask_pool_size=feat_pool_size)
+                # shape: say 473, 256, 14, 14
+                mask_and_feat = CropAndResizeFunction(
+                    self.mask_pool_size, self.mask_pool_size)(_feat_maps, small_boxes, box_ind)
+                mask.append(mask_and_feat)
+
+                # Deal with 'small' boxes during train and test
+                if _use_meta and not self.config.DEV.BASELINE:
+                    # shape: say 460, 1024, 1, 1
+                    small_output = self.feat_extract(mask_and_feat)
+                    if self.config.DEV.LOSS_CHOICE != 'ot':
+                        small_output = self.last_op(small_output)
+
+                    _start_ind = small_out_cnt
+                    _small_num = small_index.size(0)
+                    small_output_all[_start_ind:_small_num+_start_ind, :] = small_output
+
+                    if train_phase:
+                        small_box_gt = roi_cls_gt[small_index[:, 0].data, small_index[:, 1].data]
+                        # shape: always 1024 x 81 (cls_num); this is an averaged output
+                        _s_feat, _s_cnt = self._assign_feat2cls([small_box_gt, small_output])
+                        small_feat.append(_s_feat)
+                        small_cnt.append(_s_cnt)
+                        small_gt_all[_start_ind:_small_num+_start_ind] = small_box_gt
+                    else:
+                        small_gt_all[_start_ind:_small_num+_start_ind] = 1
+
+                    small_out_cnt += _small_num
+
+                if SHOW_STAT:
+                    print('\tscale {:d} (thres: {:.4f}), (small) num_box: {:d}, big_box: {:d}, meta_loss: {}'
+                          .format(level, _thres, small_index.size(0), big_num, _use_meta))
+            # SCALE LOOP ENDS
+
+            pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
+
+            if train_phase and not self.config.DEV.BASELINE:
+                if self.config.DEV.BIG_FEAT_DETACH:
+                    # do *NOT* pass gradient of big_feat
+                    big_feat = torch.stack(big_feat).unsqueeze(dim=0).detach()
+                else:
+                    big_feat = torch.stack(big_feat).unsqueeze(dim=0)
+                feat_out = [
+                    big_feat,
+                    torch.stack(big_cnt).unsqueeze(dim=0),
+                    torch.stack(small_feat).unsqueeze(dim=0),
+                    torch.stack(small_cnt).unsqueeze(dim=0),
+                    torch.stack(big_loss).unsqueeze(dim=0),
+                    small_output_all,
+                    small_gt_all
+                ]
+            elif not train_phase:
+                # test phase in 'beta' structure
+                feat_out = [small_output_all, small_gt_all]
+            else:
+                feat_out = []
+        # END BETA STRUCTURE
         return pooled_out, mask_out, feat_out
 
     @staticmethod
@@ -556,15 +814,20 @@ class Dev(nn.Module):
 #  Feature Pyramid Network Heads
 ############################################################
 class Classifier(nn.Module):
-    def __init__(self, depth, num_classes, pool_size):
+    def __init__(self, depth, num_classes, pool_size, config):
         super(Classifier, self).__init__()
         self.depth = depth
         self.pool_size = pool_size
         self.num_classes = num_classes
+        self.config = config
+        self.merge_meta = config.DEV.CLS_MERGE_FEAT
+
         self.conv1 = nn.Conv2d(self.depth, 1024, kernel_size=self.pool_size, stride=1)
         self.bn1 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
+
         self.conv2 = nn.Conv2d(1024, 1024, kernel_size=1, stride=1)
         self.bn2 = nn.BatchNorm2d(1024, eps=0.001, momentum=0.01)
+
         self.relu = nn.ReLU(inplace=True)
 
         self.linear_class = nn.Linear(1024, num_classes)
@@ -572,10 +835,19 @@ class Classifier(nn.Module):
 
         self.linear_bbox = nn.Linear(1024, num_classes * 4)
 
-    def forward(self, x):
+    def forward(self, x, small_feat_input, small_gt_index, mode='train'):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
+        if self.config.DEV.SWITCH and self.merge_meta and self.config.DEV.STRUCTURE == 'beta':
+            # TODO: maybe during test, just add a minor delta of meta_feature to original cls_feat
+            if self.config.DEV.CLS_MERGE_MANNER == 'simple_add':
+                x += (small_feat_input*(small_gt_index > 0).float().unsqueeze(1)).view(x.size(0), x.size(1), 1, 1)
+            elif self.config.DEV.CLS_MERGE_MANNER == 'linear_add':
+                _weights = (small_gt_index > 0).float() * self.config.DEV.CLS_MERGE_FAC
+                _weights = _weights.view(x.size(0), 1, 1, 1)
+                x = (1-_weights)*x + _weights*small_feat_input.view(x.size(0), x.size(1), 1, 1)
+
         x = self.conv2(x)
         x = self.bn2(x)
         x = self.relu(x)
