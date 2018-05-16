@@ -556,6 +556,7 @@ class Dev(nn.Module):
                 ]
             else:
                 feat_out = []
+
         elif self.structure == 'beta':
             SHOW_STAT = False
             # TODO (low): haven't considered config.DEV.BASELINE case
@@ -838,7 +839,7 @@ class Classifier(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        if self.config.DEV.SWITCH and self.merge_meta:
+        if self.config.DEV.SWITCH and self.merge_meta and self.config.DEV.STRUCTURE == 'beta':
             # TODO: maybe during test, just add a minor delta of meta_feature to original cls_feat
             if self.config.DEV.CLS_MERGE_MANNER == 'simple_add':
                 x += (small_feat_input*(small_gt_index > 0).float().unsqueeze(1)).view(x.size(0), x.size(1), 1, 1)

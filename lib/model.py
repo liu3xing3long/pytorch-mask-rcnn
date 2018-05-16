@@ -315,7 +315,10 @@ class MaskRCNN(nn.Module):
 
             assert _proposals.sum().data[0] != 0
             _pooled_cls, _, _feat_out_test = self.dev_roi(_mrcnn_feature_maps, _proposals)
-            small_output_all, small_gt_all = _feat_out_test
+            if self.config.DEV.STRUCTURE == 'beta':
+                small_output_all, small_gt_all = _feat_out_test
+            else:
+                small_output_all, small_gt_all = None, None
             _, mrcnn_class, mrcnn_bbox = self.classifier(_pooled_cls, small_output_all, small_gt_all)
 
             # Detections
@@ -369,8 +372,12 @@ class MaskRCNN(nn.Module):
                     self.dev_roi(_mrcnn_feature_maps, _rois, target_class_ids)
 
                 if self.config.DEV.SWITCH and not self.config.DEV.BASELINE:
-                    [big_feat, big_cnt, small_feat, small_cnt, big_loss,
-                     small_output_all, small_gt_all] = _feat_out
+                    if self.config.DEV.STRUCTURE == 'beta':
+                        [big_feat, big_cnt, small_feat, small_cnt, big_loss,
+                         small_output_all, small_gt_all] = _feat_out
+                    elif self.config.DEV.STRUCTURE == 'alpha':
+                        [big_feat, big_cnt, small_feat, small_cnt, big_loss] = _feat_out
+                        small_output_all, small_gt_all = None, None
                 else:
                     big_feat, big_cnt, small_feat, small_cnt, big_loss, \
                         small_output_all, small_gt_all = None, None, None, None, None, None, None
