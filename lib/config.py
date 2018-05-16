@@ -388,14 +388,14 @@ class CocoConfig(Config):
             self.MISC.USE_VISDOM = True
             self.MISC.VIS.PORT = 8097  # debug
 
-            self.TRAIN.BATCH_SIZE = 4
+            self.TRAIN.BATCH_SIZE = 2
             # self.TRAIN.INIT_LR = 0.005
             # self.DATA.IMAGE_MAX_DIM = 512
             # self.DATA.IMAGE_MIN_DIM = 512
             self.CTRL.QUICK_VERIFY = True
 
             self.DEV.SWITCH = True
-            self.DEV.BUFFER_SIZE = 1
+            self.DEV.BUFFER_SIZE = 20
             self.DEV.LOSS_FAC = 50.
             self.DEV.LOSS_CHOICE = 'l2'
             self.DEV.OT_ONE_DIM_FORM = 'conv'  # 'fc'

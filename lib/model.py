@@ -158,7 +158,7 @@ class MaskRCNN(nn.Module):
             self.buffer = feat_sum / (self.buffer_cnt + EPS)
             final_big_feat = self.buffer.squeeze()  # shape: 1024 x 81
         else:
-            # in-place opt.
+            # in-place opt. on Tensor (cannot be done on Variable)
             self.buffer[:-1] = self.buffer[1:]
             self.buffer[-1, :, :] = _big_feat_tensor
             self.buffer_cnt[:-1] = self.buffer_cnt[1:]
