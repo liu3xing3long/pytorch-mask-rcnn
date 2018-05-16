@@ -414,7 +414,7 @@ class CocoConfig(Config):
             self.DEV.UPSAMPLE_FAC = 1.0
             self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
             self.DEV.BIG_FEAT_DETACH = False
-            self.DEV.INST_LOSS = False
+            self.DEV.INST_LOSS = True
 
             self.DEV.CLS_MERGE_FEAT = True
             self.DEV.CLS_MERGE_MANNER = 'simple_add'
