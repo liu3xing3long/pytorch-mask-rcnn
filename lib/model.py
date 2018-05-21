@@ -158,7 +158,7 @@ class MaskRCNN(nn.Module):
             self.buffer = feat_sum / (self.buffer_cnt + EPS)
             final_big_feat = self.buffer.squeeze()  # shape: 1024 x 81
         else:
-            # in-place opt.
+            # in-place opt. on Tensor (cannot be done on Variable)
             self.buffer[:-1] = self.buffer[1:]
             self.buffer[-1, :, :] = _big_feat_tensor
             self.buffer_cnt[:-1] = self.buffer_cnt[1:]
@@ -170,7 +170,7 @@ class MaskRCNN(nn.Module):
             # _idx_tmp/_idx indexes the instances of small objects
             # small_gt_all shape: 1200
             _idx_tmp = torch.nonzero(small_gt_all).squeeze().data
-            buff_cls_idx = torch.nonzero(self.buffer_cnt.squeeze() > 0).squeeze()
+            buff_cls_idx = torch.nonzero(torch.sum(self.buffer_cnt, dim=0).squeeze() > 0).squeeze()
             _idx = [ind for ind in _idx_tmp if small_gt_all[ind].data.cpu().numpy() in buff_cls_idx]
             _idx = torch.from_numpy(np.array(_idx)).cuda()
         else:
