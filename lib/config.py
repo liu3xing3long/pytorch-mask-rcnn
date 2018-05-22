@@ -401,8 +401,7 @@ class CocoConfig(Config):
             self.DEV.OT_ONE_DIM_FORM = 'conv'  # 'fc'
 
             # self.DEV.DIS_REG_LOSS = True
-            # self.DEV.ASSIGN_BOX_ON_ALL_SCALE = False
-            # self.ROIS.ASSIGN_ANCHOR_BASE = 26.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
+            # self.ROIS.ASSIGN_ANCHOR_BASE = 40.  # useless when ASSIGN_BOX_ON_ALL_SCALE is True
 
             # self.DEV.STRUCTURE = 'alpha'
             self.DEV.BIG_SUPERVISE = False

@@ -558,7 +558,7 @@ class Dev(nn.Module):
                 feat_out = []
 
         elif self.structure == 'beta':
-            SHOW_STAT = False
+            SHOW_STAT = True
             # TODO (low): haven't considered config.DEV.BASELINE case
             # used for splitting train and test
             train_phase = False if roi_cls_gt is None else True
@@ -650,6 +650,8 @@ class Dev(nn.Module):
                             big_cnt.append(Variable(torch.zeros(1, self.num_classs).cuda(), requires_grad=False))
                             big_loss.append(Variable(torch.zeros(1).cuda()))
                         big_num = 0
+                        big_no_need = 0
+                        big_need = 0
                     else:
                         # process big-small-supervise (big part)
                         big_index = torch.nonzero(big_ix)
@@ -679,6 +681,13 @@ class Dev(nn.Module):
                         big_feat.append(_b_feat)
                         big_cnt.append(_b_cnt)
                         big_num = big_index.size(0)
+                        if SHOW_STAT:
+                            big_area = (big_boxes[:, 0] - big_boxes[:, 2])*(big_boxes[:, 1] - big_boxes[:, 3])
+                            big_no_need = torch.nonzero(big_area >= _thres).size(0)
+                            try:
+                                big_need = torch.nonzero(big_area < _thres).size(0)
+                            except RuntimeError:
+                                big_need = 0
 
                         if self.config.DEV.BIG_SUPERVISE:
                             big_x = _big_out_before_last.view(-1, 1024)
@@ -738,8 +747,20 @@ class Dev(nn.Module):
                     small_out_cnt += _small_num
 
                 if SHOW_STAT:
-                    print('\tscale {:d} (thres: {:.4f}), (small) num_box: {:d}, big_box: {:d}, meta_loss: {}'
-                          .format(level, _thres, small_index.size(0), big_num, _use_meta))
+                    small_area = (small_boxes[:, 0] - small_boxes[:, 2])*(small_boxes[:, 1] - small_boxes[:, 3])
+                    try:
+                        no_need = torch.nonzero(small_area >= _thres).size(0)
+                    except RuntimeError:
+                        no_need = 0
+                    try:
+                        small_need = torch.nonzero(small_area < _thres).size(0)
+                    except RuntimeError:
+                        small_need = 0
+                    print('\tscale {:d} (thres: {:.4f}), (small) num_box: {:d}, big_box: {:d}, meta_loss: {}\n\t\t'
+                          'larger than thres: {:d}, smaller than thres {:d}\t\tFor big: larger: {:d}, smaller {:d}'
+                          .format(level, _thres, small_index.size(0), big_num, _use_meta,
+                                  no_need, small_need, big_no_need, big_need))
+                    a = 1
             # SCALE LOOP ENDS
 
             pooled_out, mask_out = self._reshape_result(pooled, mask, box_to_level, rois.size())
