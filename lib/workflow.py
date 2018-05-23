@@ -452,7 +452,8 @@ def test_model(input_model, valset, coco_api, limit=-1, image_ids=None, **args):
               format(model.config.CTRL.CONFIG_NAME, model_file_name, mAP),
               log_file, additional_file=train_log_file)
     print_log('Done!', log_file, additional_file=train_log_file)
-    vis.show_mAP(model_file=model_file_name, mAP=mAP)
+    if model.config.MISC.USE_VISDOM:
+        vis.show_mAP(model_file=model_file_name, mAP=mAP)
 
 
 def _mold_inputs(model, image_ids, dataset):
