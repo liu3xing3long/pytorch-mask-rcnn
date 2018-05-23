@@ -558,7 +558,7 @@ class Dev(nn.Module):
                 feat_out = []
 
         elif self.structure == 'beta':
-            SHOW_STAT = True
+            SHOW_STAT = False
             # TODO (low): haven't considered config.DEV.BASELINE case
             # used for splitting train and test
             train_phase = False if roi_cls_gt is None else True
