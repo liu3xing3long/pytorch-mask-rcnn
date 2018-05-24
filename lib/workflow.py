@@ -199,7 +199,8 @@ def train_epoch(input_model, data_loader, optimizer, **args):
                     'curr_ep': curr_ep,
                     'iter_ind': iter_ind,
                 }
-                vis.show_dynamic_info(**info_pass)
+                if config.MISC.USE_VISDOM: 
+                    vis.show_dynamic_info(**info_pass)
                 raise RuntimeError('whoops, some error pops up...')
 
         detailed_loss = torch.mean(merged_loss, dim=0)
