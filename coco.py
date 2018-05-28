@@ -42,7 +42,8 @@ from pycocotools.cocoeval import COCOeval
 from pycocotools import mask as maskUtils
 
 import zipfile
-import urllib.request
+# import urllib.request
+from urllib2 import urlopen
 import shutil
 
 from config import Config
@@ -50,6 +51,7 @@ import utils
 import model as modellib
 
 import torch
+from torch.nn import DataParallel
 
 # Root directory of the project
 ROOT_DIR = os.getcwd()
@@ -80,6 +82,7 @@ class CocoConfig(Config):
 
     # Uncomment to train on 8 GPUs (default is 1)
     # GPU_COUNT = 8
+    GPU_COUNT = 4
 
     # Number of classes (including background)
     NUM_CLASSES = 1 + 80  # COCO has 80 classes
@@ -172,7 +175,8 @@ class CocoDataset(utils.Dataset):
         if not os.path.exists(imgDir):
             os.makedirs(imgDir)
             print("Downloading images to " + imgZipFile + " ...")
-            with urllib.request.urlopen(imgURL) as resp, open(imgZipFile, 'wb') as out:
+            # with urllib.request.urlopen(imgURL) as resp, open(imgZipFile, 'wb') as out:
+            with urlopen(imgURL) as resp, open(imgZipFile, 'wb') as out:
                 shutil.copyfileobj(resp, out)
             print("... done downloading.")
             print("Unzipping " + imgZipFile)
@@ -206,7 +210,8 @@ class CocoDataset(utils.Dataset):
         if not os.path.exists(annFile):
             if not os.path.exists(annZipFile):
                 print("Downloading zipped annotations to " + annZipFile + " ...")
-                with urllib.request.urlopen(annURL) as resp, open(annZipFile, 'wb') as out:
+                # with urllib.request.urlopen(annURL) as resp, open(annZipFile, 'wb') as out:
+                with urlopen(annURL) as resp, open(annZipFile, 'wb') as out:
                     shutil.copyfileobj(resp, out)
                 print("... done downloading.")
             print("Unzipping " + annZipFile)
@@ -394,6 +399,8 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
 
 if __name__ == '__main__':
     import argparse
+    import os
+    os.environ['CUDA_VISIBLE_DEVICES'] = "0,1,2,3"
 
     # Parse command line arguments
     parser = argparse.ArgumentParser(
@@ -452,6 +459,7 @@ if __name__ == '__main__':
     else:
         model = modellib.MaskRCNN(config=config,
                                   model_dir=args.logs)
+
     if config.GPU_COUNT:
         model = model.cuda()
 
