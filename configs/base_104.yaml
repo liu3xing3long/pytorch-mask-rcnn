@@ -1,0 +1,7 @@
+TRAIN:
+  LR_WARM_UP: True
+  CLIP_GRAD: False
+  END2END: False    # turn on set_trainable option
+  BATCH_SIZE: 8
+MODEL:
+  INIT_FILE_CHOICE: 'coco_pretrain'
